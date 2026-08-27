@@ -41,6 +41,15 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 53211;
 const JWT_SECRET = getJwtSecret();
 
+// Helper to normalize origins (remove trailing slashes)
+const normalizeOrigin = (o) => (o ? String(o).trim().replace(/\/+$/, '') : '');
+
+const rawFrontendUrl = process.env.FRONTEND_URL || '';
+const customFrontendOrigins = rawFrontendUrl
+  .split(',')
+  .map(o => normalizeOrigin(o))
+  .filter(Boolean);
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -49,22 +58,36 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'https://quickr-vendors-friendly-mac.onrender.com',
-  process.env.FRONTEND_URL
-].filter(Boolean);
+  'https://quickr-vendors-friendly-service.onrender.com',
+  ...customFrontendOrigins
+].map(o => normalizeOrigin(o)).filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow non-browser requests (mobile apps, curl, etc.) or matching allowed origins
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      // Return CORS policy error for unauthorized origin preflight/requests
-      callback(new Error('Not allowed by CORS origin policy'));
+    // Allow non-browser requests (mobile apps, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
     }
+
+    const cleanOrigin = normalizeOrigin(origin);
+
+    // Check exact match in allowedOrigins
+    if (allowedOrigins.includes(cleanOrigin)) {
+      return callback(null, true);
+    }
+
+    // Check if origin ends with .vercel.app (for preview/production Vercel deployments)
+    if (cleanOrigin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+
+    console.warn(`[CORS Policy Warning] Rejected origin: ${origin} (Normalized: ${cleanOrigin})`);
+    return callback(new Error('Not allowed by CORS origin policy'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-media-type', 'x-file-name']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'x-media-type', 'x-file-name'],
+  optionsSuccessStatus: 204
 }));
 
 app.use(express.json());
