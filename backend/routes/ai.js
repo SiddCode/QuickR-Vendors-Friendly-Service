@@ -86,12 +86,14 @@ async function executeGenerateAI(prompt, options = {}) {
         ],
         temperature,
         max_completion_tokens: maxTokens,
-        reasoning_format: 'hidden'
+        reasoning_format: 'hidden',
+        reasoning_effort: 'none'
       };
 
       console.log(`[QuickR Groq AI Request Config]
 model=${payload.model}
 reasoning_format=${payload.reasoning_format}
+reasoning_effort=${payload.reasoning_effort}
 temperature=${payload.temperature}
 max_completion_tokens=${payload.max_completion_tokens}`);
 
@@ -126,10 +128,28 @@ max_completion_tokens=${payload.max_completion_tokens}`);
       }
 
       const data = await apiRes.json().catch(() => null);
-      const generatedText = data?.choices?.[0]?.message?.content;
+      const choice = data?.choices?.[0];
+      const message = choice?.message;
+      const generatedText = message?.content;
+
+      console.log(`[QuickR Groq AI Response Metadata]
+HTTP Status: ${apiRes.status}
+Choices Count: ${data?.choices?.length || 0}
+Content Length: ${typeof generatedText === 'string' ? generatedText.length : 0}
+Finish Reason: ${choice?.finish_reason || 'N/A'}
+Has Reasoning: ${!!message?.reasoning}
+Reasoning Length: ${typeof message?.reasoning === 'string' ? message.reasoning.length : 0}
+Has Refusal: ${!!message?.refusal}
+Has Tool Calls: ${Array.isArray(message?.tool_calls) && message.tool_calls.length > 0}`);
 
       if (!generatedText || typeof generatedText !== 'string' || !generatedText.trim()) {
-        console.error(`[QuickR Groq AI Error] Empty response content for model ${groqModel}.`);
+        console.error(`[QuickR Groq AI Error] Empty response content for model ${groqModel}. Response Metadata:`, {
+          choicesCount: data?.choices?.length || 0,
+          finishReason: choice?.finish_reason || 'N/A',
+          hasReasoning: !!message?.reasoning,
+          hasRefusal: !!message?.refusal,
+          hasToolCalls: Array.isArray(message?.tool_calls) && message.tool_calls.length > 0
+        });
         const err = new Error('Groq API returned an empty response');
         err.status = 503;
         err.userMessage = 'AI returned an empty response.';
