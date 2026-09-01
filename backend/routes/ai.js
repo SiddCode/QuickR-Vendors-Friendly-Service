@@ -5,6 +5,7 @@ import { Customer } from '../models/Customer.js';
 import { Enquiry } from '../models/Enquiry.js';
 import { FollowUp } from '../models/FollowUp.js';
 import { Sale } from '../models/Sale.js';
+import { Product } from '../models/Product.js';
 
 const router = express.Router();
 
@@ -850,6 +851,27 @@ ${JSON.stringify(salesPayload, null, 2)}`;
     const recommendedTiming = validTimings.includes(parsedJson.recommendedTiming) ? parsedJson.recommendedTiming : 'TOMORROW';
     const reason = typeof parsedJson.reason === 'string' && parsedJson.reason ? parsedJson.reason : 'Based on customer enquiry and sales history.';
 
+    // Fetch authoritative product stock from MongoDB for the latest enquiry
+    let productInfo = null;
+    const latestEnquiryWithProduct = enquiries.find(e => e.productId);
+    if (latestEnquiryWithProduct) {
+      const dbProduct = await Product.findOne({ id: latestEnquiryWithProduct.productId, shopId }).lean();
+      if (dbProduct) {
+        const rawAvail = dbProduct.availability;
+        const hasValidAvail = typeof rawAvail === 'number' && !isNaN(rawAvail);
+        const currentStock = hasValidAvail ? Math.max(0, rawAvail) : null;
+        const inStock = hasValidAvail ? currentStock > 0 : null;
+
+        productInfo = {
+          id: dbProduct.id,
+          name: dbProduct.name,
+          size: latestEnquiryWithProduct.size || 'N/A',
+          currentStock,
+          inStock
+        };
+      }
+    }
+
     return res.json({
       success: true,
       opportunity: {
@@ -857,7 +879,8 @@ ${JSON.stringify(salesPayload, null, 2)}`;
         leadLevel,
         recommendedAction,
         recommendedTiming,
-        reason
+        reason,
+        product: productInfo
       }
     });
 

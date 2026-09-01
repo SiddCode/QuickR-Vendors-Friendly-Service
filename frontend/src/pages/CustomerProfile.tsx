@@ -82,6 +82,13 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     recommendedAction: string;
     recommendedTiming: 'TODAY' | 'TOMORROW' | 'WITHIN_3_DAYS' | 'WAIT' | 'NO_FOLLOW_UP';
     reason: string;
+    product?: {
+      id: string;
+      name: string;
+      size?: string;
+      currentStock: number | null;
+      inStock: boolean | null;
+    } | null;
   } | null>(null);
 
   const customer = customers.find(c => c.id === customerId);
@@ -655,6 +662,25 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                     {oppResult.recommendedTiming.replace(/_/g, ' ')}
                   </span>
                 </div>
+
+                {oppResult.product && (
+                  <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px]">
+                    <span className="font-semibold text-slate-400">Product Inventory</span>
+                    {oppResult.product.inStock === true ? (
+                      <span className="font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md">
+                        In Stock ({oppResult.product.currentStock != null ? `Available: ${oppResult.product.currentStock}` : 'Available'})
+                      </span>
+                    ) : oppResult.product.inStock === false ? (
+                      <span className="font-extrabold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-md">
+                        Out of Stock
+                      </span>
+                    ) : (
+                      <span className="font-semibold text-slate-500 bg-white border border-slate-200 px-2.5 py-0.5 rounded-md">
+                        Stock unavailable
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Reason</span>

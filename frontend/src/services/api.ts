@@ -577,6 +577,13 @@ export const api = {
       recommendedAction: string;
       recommendedTiming: 'TODAY' | 'TOMORROW' | 'WITHIN_3_DAYS' | 'WAIT' | 'NO_FOLLOW_UP';
       reason: string;
+      product?: {
+        id: string;
+        name: string;
+        size?: string;
+        currentStock: number | null;
+        inStock: boolean | null;
+      } | null;
     };
     error?: string;
   }> {
@@ -594,6 +601,13 @@ export const api = {
         recommendedAction: string;
         recommendedTiming: 'TODAY' | 'TOMORROW' | 'WITHIN_3_DAYS' | 'WAIT' | 'NO_FOLLOW_UP';
         reason: string;
+        product?: {
+          id: string;
+          name: string;
+          size?: string;
+          currentStock: number | null;
+          inStock: boolean | null;
+        } | null;
       };
       error?: string;
     }>(res);

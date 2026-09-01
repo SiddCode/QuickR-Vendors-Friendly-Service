@@ -35,6 +35,7 @@ import { PrivacyNotice } from './pages/PrivacyNotice';
 import { PrivacyDashboard } from './pages/PrivacyDashboard';
 import { AdminPrivacy } from './pages/AdminPrivacy';
 import { CustomerReengagement } from './pages/CustomerReengagement';
+import { InstallPwaPrompt } from './components/InstallPwaPrompt';
 import { X, Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -225,6 +226,9 @@ const AppContent: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-grow flex flex-col min-w-0 min-h-screen">
+        {/* PWA Install & Offline Banner */}
+        <InstallPwaPrompt />
+
         {/* Top Header */}
         <Header 
           title={pageTitles[currentPage] || 'Dashboard'} 
@@ -234,7 +238,7 @@ const AppContent: React.FC = () => {
         />
 
         {/* Page Content */}
-        <main className="flex-1 flex flex-col w-full min-w-0 min-h-0 bg-slate-50 pb-16 lg:pb-0">
+        <main className="flex-1 flex flex-col w-full min-w-0 min-h-0 bg-slate-50 pb-16 lg:pb-0 pt-safe pb-safe">
           {renderPage()}
         </main>
 
