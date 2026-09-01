@@ -85,12 +85,20 @@ async function executeGenerateAI(prompt, options = {}) {
           }
         ],
         temperature,
-        max_completion_tokens: maxTokens
+        max_completion_tokens: maxTokens,
+        reasoning_format: 'hidden'
       };
 
       if (responseSchema) {
         payload.response_format = { type: 'json_object' };
       }
+
+      console.log(`[QuickR Groq AI Request Config]
+model=${payload.model}
+response_format=${payload.response_format ? JSON.stringify(payload.response_format) : 'none'}
+reasoning_format=${payload.reasoning_format}
+temperature=${payload.temperature}
+max_completion_tokens=${payload.max_completion_tokens}`);
 
       const apiRes = await fetch(groqUrl, {
         method: 'POST',
