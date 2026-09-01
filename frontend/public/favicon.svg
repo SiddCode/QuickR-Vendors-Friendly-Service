@@ -1,18 +1,14 @@
 <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background Container -->
-  <rect width="512" height="512" rx="96" fill="#f8fafc"/>
+  <!-- Clean white background container with rounded app corners -->
+  <rect width="512" height="512" rx="96" fill="#ffffff"/>
   
-  <!-- Icon Mark centered: Stylized Q with Speed Lines + Bold R -->
-  <g transform="translate(16, 80) scale(0.94)">
-    <!-- Speed Lines on left of Q -->
-    <path d="M 40 180 H 170 L 150 205 H 40 Z" fill="#0055ff"/>
-    <path d="M 15 230 H 180 L 160 255 H 15 Z" fill="#0066ff"/>
-    <path d="M 50 280 H 160 L 140 305 H 50 Z" fill="#3b82f6"/>
+  <!-- Speed lines on left of Q -->
+  <path d="M 30 200 H 170 L 140 225 H 30 Z" fill="#2563eb" opacity="0.9"/>
+  <path d="M 10 245 H 190 L 160 270 H 10 Z" fill="#3b82f6"/>
+  <path d="M 40 290 H 160 L 130 315 H 40 Z" fill="#60a5fa" opacity="0.8"/>
 
-    <!-- Stylized Q Letter -->
-    <path d="M 230 140 C 160 140 120 180 120 250 C 120 320 160 360 230 360 C 265 360 295 345 315 320 L 345 365 L 385 365 L 345 305 C 360 290 370 270 370 250 C 370 180 330 140 230 140 Z M 230 185 C 290 185 320 205 320 250 C 320 295 290 315 230 315 C 170 315 165 295 165 250 C 165 205 170 185 230 185 Z" fill="#030712"/>
-
-    <!-- Dynamic Stylized Blue R -->
-    <path d="M 360 145 H 455 C 495 145 515 165 515 200 C 515 230 495 250 460 255 L 515 365 H 460 L 415 265 H 395 V 365 H 350 V 145 Z M 395 185 V 228 H 445 C 465 228 475 220 475 205 C 475 190 465 185 445 185 H 395 Z" fill="#0066ff"/>
-  </g>
+  <!-- Italic QuickR logo text centered -->
+  <text x="140" y="315" fill="#0f172a" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-style="italic" font-size="145" letter-spacing="-4px">
+    Quick<tspan fill="#2563eb">R</tspan>
+  </text>
 </svg>
