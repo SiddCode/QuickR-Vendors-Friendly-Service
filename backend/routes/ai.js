@@ -1091,8 +1091,15 @@ If the data does not support a specific recommendation, recommend a safe action 
 - review enquiry conversion
 - monitor product enquiry activity
 
-RETURN VALID JSON ONLY:
+CRITICAL RESPONSE FORMAT INSTRUCTIONS:
+You MUST return ONLY one valid JSON object.
+Do NOT use Markdown code block formatting or ```json fences.
+Do NOT add any text, explanations, notes, or comments before or after the JSON object.
+Use double quotes for all JSON property names and string values.
+Do NOT use trailing commas.
+If the provided business data or arrays are empty, return a valid JSON object using the required schema with empty arrays [] and an appropriate summary. Never return an empty response.
 
+JSON SCHEMA TO RETURN:
 {
   "summary": "Short overall shop performance summary.",
   "insights": [
@@ -1111,8 +1118,8 @@ RETURN VALID JSON ONLY:
 
 Rules:
 - Allowed insight types: SALES_OPPORTUNITY, PRODUCT, FOLLOW_UP, CUSTOMER, CONVERSION, GENERAL
-- Maximum 4 insights.
-- Maximum 3 recommendations.
+- Maximum 4 insights. If no data, return empty array [].
+- Maximum 3 recommendations. If no data, return empty array [].
 - Keep description concise under 25 words.
 
 Data:
@@ -1343,8 +1350,15 @@ Do NOT invent discounts, offers, promotions, stock, pricing, delivery informatio
 
 Recommendations MUST be safe operational recommendations based strictly on supplied statistics (e.g. review shops with low conversion, focus on shops with pending follow-ups, monitor sales activity).
 
-RETURN VALID JSON ONLY:
+CRITICAL RESPONSE FORMAT INSTRUCTIONS:
+You MUST return ONLY one valid JSON object.
+Do NOT use Markdown code block formatting or ```json fences.
+Do NOT add any text, explanations, notes, or comments before or after the JSON object.
+Use double quotes for all JSON property names and string values.
+Do NOT use trailing commas.
+If the provided business data or arrays are empty, return a valid JSON object using the required schema with empty arrays [] and an appropriate summary. Never return an empty response.
 
+JSON SCHEMA TO RETURN:
 {
   "summary": "Short overall platform summary.",
   "insights": [
@@ -1362,8 +1376,8 @@ RETURN VALID JSON ONLY:
 
 Rules:
 - Allowed insight types: TOP_PERFORMER, ATTENTION, OPPORTUNITY, CONVERSION, FOLLOW_UP, SALES, GENERAL
-- Maximum 5 insights.
-- Maximum 4 recommendations.
+- Maximum 5 insights. If no data, return empty array [].
+- Maximum 4 recommendations. If no data, return empty array [].
 - Keep description concise under 20 words.
 
 Data:
