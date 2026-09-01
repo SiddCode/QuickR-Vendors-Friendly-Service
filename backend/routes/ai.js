@@ -70,11 +70,15 @@ async function executeGenerateAI(prompt, options = {}) {
     controller.abort();
   }, timeoutMs);
 
-  try {
-    console.log(`[QuickR Ollama AI Diagnostic]
-OLLAMA BASE URL: ${baseUrl}
-OLLAMA MODEL: ${modelName}`);
+  console.log(`[OLLAMA NODE DEBUG]
+OLLAMA_BASE_URL_FROM_ENV: ${process.env.OLLAMA_BASE_URL || '(not set)'}
+OLLAMA_MODEL_FROM_ENV: ${process.env.OLLAMA_MODEL || '(not set)'}
+URL: ${baseUrl}/api/chat
+MODEL: ${modelName}
+FETCH_STARTED: true`);
 
+  let apiRes;
+  try {
     const payload = {
       model: modelName,
       messages: [
@@ -94,7 +98,7 @@ OLLAMA MODEL: ${modelName}`);
       payload.format = 'json';
     }
 
-    const apiRes = await fetch(`${baseUrl}/api/chat`, {
+    apiRes = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -104,6 +108,11 @@ OLLAMA MODEL: ${modelName}`);
     });
 
     clearTimeout(timeoutId);
+
+    console.log(`[OLLAMA NODE DEBUG]
+FETCH_COMPLETED: true
+STATUS: ${apiRes.status}
+OK: ${apiRes.ok}`);
 
     if (!apiRes.ok) {
       const errorText = await apiRes.text().catch(() => '');
@@ -135,6 +144,13 @@ OLLAMA MODEL: ${modelName}`);
     return generatedText.trim();
   } catch (err) {
     clearTimeout(timeoutId);
+
+    console.error(`[OLLAMA NODE DEBUG ERROR]
+ERROR_NAME: ${err.name || 'N/A'}
+ERROR_CODE: ${err.code || 'N/A'}
+ERROR_CAUSE: ${err.cause?.code || err.cause?.message || 'N/A'}
+ERROR_MESSAGE: ${err.message || 'N/A'}`);
+
     if (err.name === 'AbortError') {
       console.error(`[QuickR Ollama AI Timeout] Timed out after ${timeoutMs}ms for model ${modelName}`);
       const timeoutErr = new Error('AI generation timed out');
