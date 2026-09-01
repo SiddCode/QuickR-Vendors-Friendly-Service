@@ -107,6 +107,7 @@ async function executeGenerateAI(prompt, options = {}) {
       if (!apiRes.ok) {
         const errorText = await apiRes.text().catch(() => '');
         console.error(`[QuickR Groq AI Error] Status: ${apiRes.status}`);
+        console.error(`[QuickR Groq AI Error] Body: ${errorText}`);
 
         const err = new Error(`Groq API error: ${apiRes.status}`);
         err.status = apiRes.status || 503;
