@@ -55,9 +55,6 @@ export async function generateAI(prompt, options = {}) {
 }
 
 async function executeGenerateAI(prompt, options = {}) {
-  const baseUrl = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').trim().replace(/\/+$/, '');
-  const modelName = (process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
-
   const {
     maxTokens = 800,
     temperature = 0.7,
@@ -70,14 +67,96 @@ async function executeGenerateAI(prompt, options = {}) {
     controller.abort();
   }, timeoutMs);
 
-  console.log(`[OLLAMA NODE DEBUG]
-OLLAMA_BASE_URL_FROM_ENV: ${process.env.OLLAMA_BASE_URL || '(not set)'}
-OLLAMA_MODEL_FROM_ENV: ${process.env.OLLAMA_MODEL || '(not set)'}
-URL: ${baseUrl}/api/chat
-MODEL: ${modelName}
-FETCH_STARTED: true`);
+  const groqApiKey = process.env.GROQ_API_KEY ? String(process.env.GROQ_API_KEY).trim() : '';
 
-  let apiRes;
+  if (groqApiKey) {
+    const groqModel = (process.env.GROQ_MODEL || 'qwen/qwen3.6-27b').trim();
+    const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
+
+    try {
+      console.log(`[QuickR Groq AI Call] Model: ${groqModel}, ResponseFormat: ${responseSchema ? 'json_object' : 'text'}`);
+
+      const payload = {
+        model: groqModel,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature,
+        max_completion_tokens: maxTokens
+      };
+
+      if (responseSchema) {
+        payload.response_format = { type: 'json_object' };
+      }
+
+      const apiRes = await fetch(groqUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${groqApiKey}`
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!apiRes.ok) {
+        const errorText = await apiRes.text().catch(() => '');
+        console.error(`[QuickR Groq AI Error] Status: ${apiRes.status}`);
+
+        const err = new Error(`Groq API error: ${apiRes.status}`);
+        err.status = apiRes.status || 503;
+        err.errorBody = errorText;
+        if (apiRes.status === 401) {
+          err.userMessage = 'AI service authentication failed. Please check backend configuration.';
+        } else if (apiRes.status === 429) {
+          err.userMessage = 'AI service is currently rate limited. Please try again shortly.';
+        } else {
+          err.userMessage = 'AI service returned an error. Please try again.';
+        }
+        throw err;
+      }
+
+      const data = await apiRes.json().catch(() => null);
+      const generatedText = data?.choices?.[0]?.message?.content;
+
+      if (!generatedText || typeof generatedText !== 'string' || !generatedText.trim()) {
+        console.error(`[QuickR Groq AI Error] Empty response content for model ${groqModel}.`);
+        const err = new Error('Groq API returned an empty response');
+        err.status = 503;
+        err.userMessage = 'AI returned an empty response.';
+        throw err;
+      }
+
+      return generatedText.trim();
+    } catch (err) {
+      clearTimeout(timeoutId);
+
+      if (err.name === 'AbortError') {
+        console.error(`[QuickR Groq AI Timeout] Timed out after ${timeoutMs}ms`);
+        const timeoutErr = new Error('AI generation timed out');
+        timeoutErr.status = 504;
+        timeoutErr.userMessage = 'AI generation timed out. Please try again.';
+        throw timeoutErr;
+      }
+
+      if (!err.status) {
+        err.status = 503;
+        err.userMessage = 'AI service returned an error. Please try again.';
+      }
+
+      throw err;
+    }
+  }
+
+  // Fallback to local Ollama if GROQ_API_KEY is not configured
+  const baseUrl = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').trim().replace(/\/+$/, '');
+  const modelName = (process.env.OLLAMA_MODEL || 'qwen2.5:3b').trim();
+
   try {
     const payload = {
       model: modelName,
@@ -98,7 +177,7 @@ FETCH_STARTED: true`);
       payload.format = 'json';
     }
 
-    apiRes = await fetch(`${baseUrl}/api/chat`, {
+    const apiRes = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -108,11 +187,6 @@ FETCH_STARTED: true`);
     });
 
     clearTimeout(timeoutId);
-
-    console.log(`[OLLAMA NODE DEBUG]
-FETCH_COMPLETED: true
-STATUS: ${apiRes.status}
-OK: ${apiRes.ok}`);
 
     if (!apiRes.ok) {
       const errorText = await apiRes.text().catch(() => '');
@@ -144,12 +218,6 @@ OK: ${apiRes.ok}`);
     return generatedText.trim();
   } catch (err) {
     clearTimeout(timeoutId);
-
-    console.error(`[OLLAMA NODE DEBUG ERROR]
-ERROR_NAME: ${err.name || 'N/A'}
-ERROR_CODE: ${err.code || 'N/A'}
-ERROR_CAUSE: ${err.cause?.code || err.cause?.message || 'N/A'}
-ERROR_MESSAGE: ${err.message || 'N/A'}`);
 
     if (err.name === 'AbortError') {
       console.error(`[QuickR Ollama AI Timeout] Timed out after ${timeoutMs}ms for model ${modelName}`);
