@@ -13,6 +13,7 @@ export interface Shop {
   address: string;
   isGstRegistered?: boolean;
   gstin?: string;
+  stateCode?: string;
   createdAt: string;
 }
 

@@ -27,7 +27,7 @@ interface AppContextType {
       convertedCount: number;
     };
   } | null;
-  shopProfile: { isGstRegistered: boolean; gstin: string; state?: string; stateCode?: string } | null;
+  shopProfile: { isGstRegistered: boolean; gstin: string; stateCode?: string } | null;
   shopName: string;
   isLoading: boolean;
   error: string | null;
@@ -44,7 +44,7 @@ interface AppContextType {
   updateEnquiry: (id: string, updates: Partial<Enquiry>) => Promise<void>;
   updateFollowUpStatus: (id: string, status: FollowUp['status'], outcome?: FollowUp['outcome']) => Promise<void>;
   sendWhatsAppMock: (followUpId: string, customMessage: string) => Promise<boolean>;
-  createSale: (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'>) => Promise<Sale | null>;
+ createSale : (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'>) => Promise<Sale | null>;
   deleteSales: (ids: string[]) => Promise<boolean>;
   handleOutcomeStillInterested: (followUpId: string, nextDateStr: string) => Promise<void>;
   handleOutcomeNotInterested: (followUpId: string) => Promise<void>;
@@ -70,7 +70,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notes, setNotes] = useState<Note[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [todayWork, setTodayWork] = useState<any>(null);
-  const [shopProfile, setShopProfile] = useState<{ isGstRegistered: boolean; gstin: string; state?: string; stateCode?: string } | null>(null);
+  const [shopProfile, setShopProfile] = useState<{ isGstRegistered: boolean; gstin: string } | null>(null);
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error] = useState<string | null>(null);
@@ -124,9 +124,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (profileData) {
         setShopProfile({
           isGstRegistered: !!profileData.isGstRegistered,
-          gstin: profileData.gstin || '',
-          state: profileData.gst?.state || 'Tamil Nadu',
-          stateCode: profileData.gst?.stateCode || '33'
+          gstin: profileData.gstin || ''
         });
       }
     } catch (err: any) {
@@ -451,9 +449,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         setShopProfile({
           isGstRegistered: !!res.shop.isGstRegistered,
-          gstin: res.shop.gstin || '',
-          state: res.shop.gst?.state || 'Tamil Nadu',
-          stateCode: res.shop.gst?.stateCode || '33'
+          gstin: res.shop.gstin || ''
         });
         await loadBusinessData();
         return true;
