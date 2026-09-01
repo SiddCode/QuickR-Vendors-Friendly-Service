@@ -22,18 +22,28 @@ export const InstallPwaPrompt: React.FC = () => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
+    const handleTriggerInstall = () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+      } else {
+        alert('To install QuickR on your device:\n\n1. Mobile (Chrome/Edge): Tap (⋮) menu -> "Add to Home screen" or "Install App".\n2. Mobile (Safari iOS): Tap Share icon -> "Add to Home Screen".\n3. Desktop (Chrome/Edge): Click the Install icon on the right side of the address bar.');
+      }
+    };
+
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('trigger-pwa-install', handleTriggerInstall);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('trigger-pwa-install', handleTriggerInstall);
     };
-  }, []);
+  }, [deferredPrompt]);
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) return;
@@ -59,9 +69,7 @@ export const InstallPwaPrompt: React.FC = () => {
       {showBanner && deferredPrompt && (
         <div className="bg-slate-900 text-white px-4 py-2.5 text-xs font-medium flex items-center justify-between gap-3 border-b border-slate-800 shadow-md z-40 animate-fadeIn">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-primary-600 flex items-center justify-center font-bold text-white shrink-0">
-              Q
-            </div>
+            <img src="/pwa-192x192.png" alt="QuickR" className="w-8 h-8 rounded-lg object-contain bg-white p-0.5 shrink-0 shadow-2xs" />
             <div>
               <p className="font-bold text-white leading-tight">Install QuickR App</p>
               <p className="text-[11px] text-slate-300">Fast, standalone access for your shop</p>

@@ -651,22 +651,28 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
           </div>
         </div>
 
-        {/* Activity & Security Section (Shop Owner Only) */}
+        {/* App & Device Installation Section */}
         <div className="flex items-start gap-4 pt-6 border-t border-slate-100">
-          <ShieldCheck className="w-5 h-5 text-violet-600 mt-0.5 shrink-0" />
+          <Store className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
           <div className="flex-1 space-y-3 min-w-0">
             <div>
-              <h3 className="text-sm font-bold text-slate-800">Activity & Security</h3>
-              <p className="text-xs text-slate-400">Shop audit logs for logins, logouts, security changes & privacy actions</p>
+              <h3 className="text-sm font-bold text-slate-800">QuickR Mobile & Desktop App</h3>
+              <p className="text-xs text-slate-400">Install QuickR directly on your phone or computer for fast, standalone access</p>
             </div>
-            <div className="flex flex-wrap gap-3 pt-1">
+            <div className="flex flex-wrap items-center gap-3 pt-1">
               <button
-                onClick={() => setCurrentPage && setCurrentPage('privacy')}
-                className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                onClick={() => {
+                  const event = new CustomEvent('trigger-pwa-install');
+                  window.dispatchEvent(event);
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
               >
-                <span>View Activity & Security Logs</span>
+                <span>Install QuickR App</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
+              <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl">
+                Supported on Chrome, Edge & Safari
+              </span>
             </div>
           </div>
         </div>
