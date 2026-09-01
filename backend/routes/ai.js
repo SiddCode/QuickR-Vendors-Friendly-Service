@@ -1093,7 +1093,7 @@ If the data does not support a specific recommendation, recommend a safe action 
 
 CRITICAL RESPONSE FORMAT INSTRUCTIONS:
 You MUST return ONLY one valid JSON object.
-Do NOT use Markdown code block formatting or ```json fences.
+Do NOT wrap the JSON response in Markdown code fences.
 Do NOT add any text, explanations, notes, or comments before or after the JSON object.
 Use double quotes for all JSON property names and string values.
 Do NOT use trailing commas.
@@ -1352,7 +1352,7 @@ Recommendations MUST be safe operational recommendations based strictly on suppl
 
 CRITICAL RESPONSE FORMAT INSTRUCTIONS:
 You MUST return ONLY one valid JSON object.
-Do NOT use Markdown code block formatting or ```json fences.
+Do NOT wrap the JSON response in Markdown code fences.
 Do NOT add any text, explanations, notes, or comments before or after the JSON object.
 Use double quotes for all JSON property names and string values.
 Do NOT use trailing commas.
