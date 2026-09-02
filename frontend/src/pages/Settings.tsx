@@ -186,53 +186,14 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
     setTranslatedText('');
 
     try {
-      if (direction === 'en-to-ta') {
-        const lower = textToTranslate.toLowerCase();
-        let result = textToTranslate;
-        
-        const dictionary: Record<string, string> = {
-          'hello': 'வணக்கம்',
-          'welcome': 'நல்வரவு',
-          'thank you': 'நன்றி',
-          'good morning': 'காலை வணக்கம்',
-          'good evening': 'மாலை வணக்கம்',
-          'how are you': 'எப்படி இருக்கிறீர்கள்',
-          'price': 'விலை',
-          'discount': 'தள்ளுபடி',
-          'total': 'மொத்தம்',
-          'available': 'இருப்பில் உள்ளது',
-          'stock': 'இருப்பு',
-          'order': 'ஆர்டர்',
-          'customer': 'வாடிக்கையாளர்'
-        };
-
-        if (dictionary[lower]) {
-          result = dictionary[lower];
-        } else {
-          result = `[தமிழ்] ${textToTranslate}`;
-        }
-        setTranslatedText(result);
+      const res = await api.translateText({ text: textToTranslate, direction });
+      if (res.success && res.translatedText) {
+        setTranslatedText(res.translatedText);
       } else {
-        const dictionary: Record<string, string> = {
-          'வணக்கம்': 'Hello',
-          'நன்றி': 'Thank you',
-          'காலை வணக்கம்': 'Good morning',
-          'விலை': 'Price',
-          'தள்ளுபடி': 'Discount',
-          'மொத்தம்': 'Total',
-          'ஆர்டர்': 'Order'
-        };
-
-        let result = textToTranslate;
-        if (dictionary[textToTranslate.trim()]) {
-          result = dictionary[textToTranslate.trim()];
-        } else {
-          result = textToTranslate.replace(/^\[தமிழ்\]\s*/i, '');
-        }
-        setTranslatedText(result);
+        setErrorMessage(res.error || 'Unable to translate right now. Please try again.');
       }
     } catch (err: any) {
-      setErrorMessage('Unable to translate right now. Please try again.');
+      setErrorMessage(err.message || 'Unable to translate right now. Please check network connection.');
     } finally {
       setIsTranslating(false);
     }

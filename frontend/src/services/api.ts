@@ -998,6 +998,16 @@ export const api = {
     return handleResponse<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; isGstRegistered?: boolean; gstin?: string }>(res);
   },
 
+  async translateText(data: { text: string; direction?: 'en-to-ta' | 'ta-to-en' }): Promise<{ success: boolean; translatedText?: string; error?: string }> {
+    const res = await fetch(`${API_BASE_URL}/ai/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ success: boolean; translatedText?: string; error?: string }>(res);
+  },
+
   async updateShopProfile(data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }): Promise<{ success: boolean; message: string; shop: any }> {
     const res = await fetch(`${API_BASE_URL}/shop/profile`, {
       method: 'PATCH',

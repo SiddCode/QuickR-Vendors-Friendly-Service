@@ -303,6 +303,52 @@ router.post('/test-openrouter', async (req, res) => {
   return router.handle(req, res);
 });
 
+// Protected endpoint: POST /api/ai/translate
+router.post('/translate', requireAuth, async (req, res) => {
+  try {
+    const { text, direction = 'en-to-ta' } = req.body || {};
+    const cleanText = typeof text === 'string' ? text.trim() : '';
+
+    if (!cleanText) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please enter or paste text to translate.'
+      });
+    }
+
+    const sourceLang = direction === 'ta-to-en' ? 'Tamil' : 'English';
+    const targetLang = direction === 'ta-to-en' ? 'English' : 'Tamil';
+
+    const prompt = `You are a professional retail translator.
+Translate the following text from ${sourceLang} to ${targetLang}.
+
+RULES:
+1. Return ONLY the translated text.
+2. Do NOT add explanations, notes, metadata, or markdown.
+3. Preserve numbers, prices, discounts, and brand terms accurately.
+4. Use clear, natural retail language suitable for customer messages.
+
+Text to translate:
+"${cleanText}"`;
+
+    const translatedText = await generateAI(prompt, {
+      maxTokens: 1000,
+      temperature: 0.2
+    });
+
+    return res.json({
+      success: true,
+      translatedText
+    });
+  } catch (err) {
+    console.error('[AI Translation Error]:', err.message);
+    return res.status(err.status || 503).json({
+      success: false,
+      error: err.userMessage || 'Translation service is currently unavailable. Please try again.'
+    });
+  }
+});
+
 // Protected endpoint: POST /api/ai/followup-message
 router.post('/followup-message', requireAuth, async (req, res) => {
   try {
