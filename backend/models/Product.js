@@ -15,7 +15,7 @@ const productSchema = new mongoose.Schema(
     image: { type: String, default: '' },
     gstRate: { type: Number, default: 0, min: 0 },
     hsnCode: { type: String, trim: true, default: '' },
-    priceIncludesGst: { type: Boolean, default: false },
+    priceIncludesGst: { type: Boolean, default: true },
     isActive: { type: Boolean, default: true },
     shopId: { type: String, required: true, default: 'demo-shop', index: true }
   },

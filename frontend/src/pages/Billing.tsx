@@ -150,7 +150,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     const prod = products.find(p => p.id === item.productId);
     const lineTotal = item.quantity * item.rate;
     const itemGstRate = (isGstRegistered && prod && prod.gstRate !== undefined) ? prod.gstRate : 0;
-    const priceIncludesGst = prod?.priceIncludesGst !== undefined ? prod.priceIncludesGst : false;
+    const priceIncludesGst = prod?.priceIncludesGst !== undefined ? prod.priceIncludesGst : true;
     
     // Proportional taxable amount after discount
     let itemGstAmount = 0;
