@@ -11,7 +11,7 @@ export const Logo: React.FC<{ className?: string; variant?: 'light' | 'dark'; si
 
   return (
     <svg 
-      viewBox="0 0 340 90" 
+      viewBox="0 0 290 90" 
       fill="none" 
       xmlns="http://www.w3.org/2000/svg" 
       className={className}
@@ -49,7 +49,7 @@ export const Logo: React.FC<{ className?: string; variant?: 'light' | 'dark'; si
       </text>
 
       {/* Stylized R with Speed Slash Notch */}
-      <g transform="translate(252, 12)">
+      <g transform="translate(216, 12)">
         <path 
           d="M 10 54 L 10 12 L 40 12 C 55 12, 65 19, 65 31 C 65 41, 56 48, 44 50 L 64 74 L 46 74 L 28 52 L 24 52 L 24 74 L 10 74 Z M 24 23 L 24 41 L 38 41 C 46 41, 51 37, 51 31 C 51 25, 46 23, 38 23 Z" 
           fill="url(#rBlueGrad)" 
