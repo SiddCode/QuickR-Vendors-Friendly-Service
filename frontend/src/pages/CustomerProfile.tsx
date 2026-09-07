@@ -28,6 +28,7 @@ import {
 import { api } from '../services/api';
 import { messageGenerationService } from '../services/messageGenerationService';
 import { openWhatsApp } from '../utils/whatsapp';
+import { useAiRateLimit } from '../hooks/useAiRateLimit';
 
 interface CustomerProfileProps {
   customerId: string;
@@ -52,6 +53,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     shopName
   } = useApp();
 
+  const { rateLimitInfo, remainingSeconds, triggerRateLimit, clearRateLimit } = useAiRateLimit();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -552,16 +554,20 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                         setOppError(res.error || 'Local AI is currently unavailable.');
                       }
                     } catch (err: any) {
-                      setOppError(err.message || 'Local AI is currently unavailable.');
+                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
+                        triggerRateLimit(err);
+                      } else {
+                        setOppError(err.message || 'AI service is currently unavailable.');
+                      }
                     } finally {
                       setOppLoading(false);
                     }
                   }}
-                  disabled={oppLoading}
+                  disabled={oppLoading || (rateLimitInfo.isRateLimited && remainingSeconds > 0)}
                   className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3 h-3 ${oppLoading ? 'animate-spin' : ''}`} />
-                  Refresh Analysis
+                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
                 </button>
               ) : null}
             </div>
@@ -577,20 +583,39 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                       const res = await api.generateSalesOpportunity(customer.id);
                       if (res.success && res.opportunity) {
                         setOppResult(res.opportunity);
+                        clearRateLimit();
                       } else {
-                        setOppError(res.error || 'Local AI is currently unavailable.');
+                        setOppError(res.error || 'AI service is currently unavailable.');
                       }
                     } catch (err: any) {
-                      setOppError(err.message || 'Local AI is currently unavailable.');
+                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
+                        triggerRateLimit(err);
+                      } else {
+                        setOppError(err.message || 'AI service is currently unavailable.');
+                      }
                     } finally {
                       setOppLoading(false);
                     }
                   }}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+                  disabled={rateLimitInfo.isRateLimited && remainingSeconds > 0}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <TrendingUp className="w-4 h-4" />
-                  Analyze Opportunity
+                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze Opportunity'}
                 </button>
+              </div>
+            )}
+
+            {rateLimitInfo.isRateLimited && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-800 font-semibold animate-fadeIn">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span>
+                  {rateLimitInfo.isQuotaExceeded
+                    ? "Today's AI usage limit has been reached. Please try again after the quota resets."
+                    : remainingSeconds > 0
+                    ? `AI is temporarily rate limited. Try again in ${remainingSeconds} seconds.`
+                    : "AI should be available now. Try again."}
+                </span>
               </div>
             )}
 
@@ -712,23 +737,27 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                         setAiError(res.error || 'Local AI is currently unavailable.');
                       }
                     } catch (err: any) {
-                      setAiError(err.message || 'Local AI is currently unavailable.');
+                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
+                        triggerRateLimit(err);
+                      } else {
+                        setAiError(err.message || 'AI service is currently unavailable.');
+                      }
                     } finally {
                       setAiLoading(false);
                     }
                   }}
-                  disabled={aiLoading}
+                  disabled={aiLoading || (rateLimitInfo.isRateLimited && remainingSeconds > 0)}
                   className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 hover:bg-primary-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3 h-3 ${aiLoading ? 'animate-spin' : ''}`} />
-                  Refresh Analysis
+                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
                 </button>
               ) : null}
             </div>
 
             {!aiResult && !aiLoading && !aiError && (
               <div className="text-center py-4 space-y-3">
-                <p className="text-xs text-slate-500">Analyze business history & engagement signals using local AI.</p>
+                <p className="text-xs text-slate-500 font-medium">Analyze business history & engagement signals using QuickR AI.</p>
                 <button
                   onClick={async () => {
                     setAiLoading(true);
@@ -737,19 +766,25 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                       const res = await api.generateCustomerIntelligence(customer.id);
                       if (res.success && res.intelligence) {
                         setAiResult(res.intelligence);
+                        clearRateLimit();
                       } else {
-                        setAiError(res.error || 'Local AI is currently unavailable.');
+                        setAiError(res.error || 'AI service is currently unavailable.');
                       }
                     } catch (err: any) {
-                      setAiError(err.message || 'Local AI is currently unavailable.');
+                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
+                        triggerRateLimit(err);
+                      } else {
+                        setAiError(err.message || 'AI service is currently unavailable.');
+                      }
                     } finally {
                       setAiLoading(false);
                     }
                   }}
-                  className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+                  disabled={rateLimitInfo.isRateLimited && remainingSeconds > 0}
+                  className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <Sparkles className="w-4 h-4" />
-                  Analyze with AI
+                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze with AI'}
                 </button>
               </div>
             )}

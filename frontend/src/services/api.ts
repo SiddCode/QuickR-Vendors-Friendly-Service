@@ -14,8 +14,14 @@ export interface UserSession {
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    const error = new Error(errorData.error || `HTTP error ${response.status}`);
+    const error = new Error(errorData.message || errorData.error || `HTTP error ${response.status}`);
     (error as any).status = response.status;
+    (error as any).error = errorData.error;
+    (error as any).errorCode = errorData.error;
+    (error as any).userMessage = errorData.message || errorData.error;
+    (error as any).retryAfterSeconds = errorData.retryAfterSeconds;
+    (error as any).retryAt = errorData.retryAt;
+    (error as any).errorBody = errorData;
     throw error;
   }
   return response.json();

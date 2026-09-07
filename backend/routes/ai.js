@@ -27,7 +27,131 @@ function processAiQueue() {
   }
 }
 
-// Helper: Call Local Ollama API (qwen2.5:3b) with concurrency limiter, timeout, max output tokens, temperature, and error handling
+export function handleAiError(res, err, defaultMessage = 'AI service is currently unavailable.') {
+  const status = err.status || 503;
+  if (status === 429 || err.isRateLimited) {
+    if (err.errorCode === 'QUOTA_EXCEEDED') {
+      return res.status(429).json({
+        success: false,
+        error: 'QUOTA_EXCEEDED',
+        message: "Today's AI usage limit has been reached. Please try again after the quota resets.",
+        retryAfterSeconds: null,
+        retryAt: null
+      });
+    }
+    return res.status(429).json({
+      success: false,
+      error: 'RATE_LIMITED',
+      message: 'AI service is temporarily rate limited.',
+      retryAfterSeconds: err.retryAfterSeconds ?? 60,
+      retryAt: err.retryAt || new Date(Date.now() + (err.retryAfterSeconds ?? 60) * 1000).toISOString()
+    });
+  }
+
+  return res.status(status).json({
+    success: false,
+    error: err.userMessage || err.message || defaultMessage
+  });
+}
+
+// Helper: Parse duration string (e.g., '37s', '1m', '1m2s', '1500ms', '42') into integer seconds
+export function parseGroqResetDuration(value) {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  if (!str) return null;
+
+  // Pure number check (seconds or string number)
+  if (/^\d+$/.test(str)) {
+    const parsed = parseInt(str, 10);
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  let totalSeconds = 0;
+  let matched = false;
+
+  // Match milliseconds: e.g., '1500ms'
+  const msMatch = str.match(/^(\d+(?:\.\d+)?)ms$/i);
+  if (msMatch) {
+    const ms = parseFloat(msMatch[1]);
+    if (!isNaN(ms)) {
+      return Math.ceil(ms / 1000);
+    }
+  }
+
+  // Match minutes: e.g., '1m' or '2.5m'
+  const mMatch = str.match(/(\d+(?:\.\d+)?)m/i);
+  if (mMatch) {
+    const m = parseFloat(mMatch[1]);
+    if (!isNaN(m)) {
+      totalSeconds += m * 60;
+      matched = true;
+    }
+  }
+
+  // Match seconds: e.g., '37s' or '2s'
+  const sMatch = str.match(/(\d+(?:\.\d+)?)s/i);
+  if (sMatch) {
+    const s = parseFloat(sMatch[1]);
+    if (!isNaN(s)) {
+      totalSeconds += s;
+      matched = true;
+    }
+  }
+
+  if (matched) {
+    return Math.ceil(totalSeconds);
+  }
+
+  // Fallback float parse
+  const num = parseFloat(str);
+  return !isNaN(num) ? Math.ceil(num) : null;
+}
+
+export function getGroqResetInfo(responseHeaders, errorText = '') {
+  const getHeader = (name) => {
+    if (!responseHeaders) return null;
+    if (typeof responseHeaders.get === 'function') {
+      return responseHeaders.get(name) || responseHeaders.get(name.toLowerCase());
+    }
+    const key = Object.keys(responseHeaders).find(k => k.toLowerCase() === name.toLowerCase());
+    return key ? responseHeaders[key] : null;
+  };
+
+  const retryAfterHeader = getHeader('retry-after');
+  const resetRequestsHeader = getHeader('x-ratelimit-reset-requests');
+  const resetTokensHeader = getHeader('x-ratelimit-reset-tokens');
+
+  // Check if error body indicates daily/quota exhaustion
+  const lowerBody = (errorText || '').toLowerCase();
+  const isQuotaExceeded = lowerBody.includes('quota') || 
+                         lowerBody.includes('daily limit') || 
+                         lowerBody.includes('limit reached for the day') ||
+                         lowerBody.includes('exceeded your current quota');
+
+  let parsedSeconds = null;
+  if (retryAfterHeader !== null) {
+    parsedSeconds = parseGroqResetDuration(retryAfterHeader);
+  }
+  if (parsedSeconds === null && resetRequestsHeader !== null) {
+    parsedSeconds = parseGroqResetDuration(resetRequestsHeader);
+  }
+  if (parsedSeconds === null && resetTokensHeader !== null) {
+    parsedSeconds = parseGroqResetDuration(resetTokensHeader);
+  }
+
+  const hasHeader = retryAfterHeader !== null || resetRequestsHeader !== null || resetTokensHeader !== null;
+
+  return {
+    retryAfterHeader,
+    resetRequestsHeader,
+    resetTokensHeader,
+    parsedSeconds,
+    hasHeader,
+    isQuotaExceeded
+  };
+}
+
+// Helper: Call Local Ollama API (qwen2.5:3b) or Groq API with concurrency limiter, timeout, max output tokens, temperature, and error handling
 export async function generateAI(prompt, options = {}) {
   // Concurrency & queue check
   if (activeAiRequests >= MAX_CONCURRENT_AI_REQUESTS) {
@@ -115,13 +239,58 @@ max_completion_tokens=${payload.max_completion_tokens}`);
         console.error(`[QuickR Groq AI Error] Status: ${apiRes.status}`);
         console.error(`[QuickR Groq AI Error] Body: ${errorText}`);
 
+        if (apiRes.status === 429) {
+          const resetInfo = getGroqResetInfo(apiRes.headers, errorText);
+          
+          let retryAfterSeconds = null;
+          let isQuotaExceeded = false;
+
+          if (resetInfo.isQuotaExceeded) {
+            isQuotaExceeded = true;
+          } else if (resetInfo.parsedSeconds !== null) {
+            retryAfterSeconds = Math.max(1, resetInfo.parsedSeconds);
+          } else {
+            // Default safe fallback if no reset headers available
+            retryAfterSeconds = 60;
+          }
+
+          let retryAtIso = null;
+          if (retryAfterSeconds) {
+            retryAtIso = new Date(Date.now() + retryAfterSeconds * 1000).toISOString();
+          }
+
+          console.log(`[Groq Rate Limit]
+Status: 429
+Retry-After: ${resetInfo.retryAfterHeader || 'N/A'}
+Reset-Requests: ${resetInfo.resetRequestsHeader || 'N/A'}
+Reset-Tokens: ${resetInfo.resetTokensHeader || 'N/A'}
+Calculated retryAfterSeconds: ${retryAfterSeconds}`);
+
+          const err = new Error('AI service rate limited');
+          err.status = 429;
+          err.errorBody = errorText;
+          err.isRateLimited = true;
+
+          if (isQuotaExceeded) {
+            err.errorCode = 'QUOTA_EXCEEDED';
+            err.userMessage = "Today's AI usage limit has been reached. Please try again after the quota resets.";
+            err.retryAfterSeconds = null;
+            err.retryAt = null;
+          } else {
+            err.errorCode = 'RATE_LIMITED';
+            err.userMessage = `AI is temporarily rate limited. Try again in ${retryAfterSeconds} seconds.`;
+            err.retryAfterSeconds = retryAfterSeconds;
+            err.retryAt = retryAtIso;
+          }
+
+          throw err;
+        }
+
         const err = new Error(`Groq API error: ${apiRes.status}`);
         err.status = apiRes.status || 503;
         err.errorBody = errorText;
         if (apiRes.status === 401) {
           err.userMessage = 'AI service authentication failed. Please check backend configuration.';
-        } else if (apiRes.status === 429) {
-          err.userMessage = 'AI service is currently rate limited. Please try again shortly.';
         } else {
           err.userMessage = 'AI service returned an error. Please try again.';
         }
@@ -342,10 +511,7 @@ Text to translate:
     });
   } catch (err) {
     console.error('[AI Translation Error]:', err.message);
-    return res.status(err.status || 503).json({
-      success: false,
-      error: err.userMessage || 'Translation service is currently unavailable. Please try again.'
-    });
+    return handleAiError(res, err, 'Translation service is currently unavailable. Please try again.');
   }
 });
 
@@ -449,10 +615,7 @@ Rules:
       generatedText = await generateAI(prompt, { maxTokens: 200, temperature: 0.7 });
     } catch (aiErr) {
       console.error('[AI Route - followup-message Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI generation service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI generation service is currently unavailable.');
     }
 
     let cleanedMessage = cleanResponseText(generatedText);
@@ -655,10 +818,7 @@ ${JSON.stringify(salesPayload, null, 2)}`;
       });
     } catch (aiErr) {
       console.error('[AI Intelligence Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI customer intelligence service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI customer intelligence service is currently unavailable.');
     }
 
     // Strip markdown code fences if present (e.g., ```json ... ```)
@@ -860,10 +1020,7 @@ ${JSON.stringify(salesPayload, null, 2)}`;
       });
     } catch (aiErr) {
       console.error('[AI Sales Opportunity Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI sales opportunity service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI sales opportunity service is currently unavailable.');
     }
 
     let rawText = generatedText.trim();
@@ -1258,10 +1415,7 @@ ${JSON.stringify(recentSalesPayload, null, 2)}`;
       });
     } catch (aiErr) {
       console.error('[AI Shop Insights Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI shop insights service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI shop insights service is currently unavailable.');
     }
 
     let rawText = generatedText.trim();
@@ -1487,10 +1641,7 @@ ${JSON.stringify(rankingPayload, null, 2)}`;
       generatedText = await generateAI(prompt, { maxTokens: 500, temperature: 0.2 });
     } catch (aiErr) {
       console.error('[AI Admin Insights Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI admin insights service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI admin insights service is currently unavailable.');
     }
 
     let rawText = generatedText.trim();
@@ -1822,10 +1973,7 @@ ${isAdmin ? `SHOP LEADERS & PLATFORM HIGHLIGHTS:\n${JSON.stringify(shopLeaders, 
       });
     } catch (aiErr) {
       console.error('[AI Trends Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI trend analysis service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI trend analysis service is currently unavailable.');
     }
 
     let rawText = generatedText.trim();

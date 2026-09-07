@@ -19,6 +19,7 @@ import {
 import confetti from 'canvas-confetti';
 import { api } from '../services/api';
 import { openWhatsApp } from '../utils/whatsapp';
+import { useAiRateLimit } from '../hooks/useAiRateLimit';
 
 interface SmartFollowUpProps {
   setCurrentPage: (page: string) => void;
@@ -29,6 +30,7 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
   setCurrentPage, 
   setSelectedCustomerId 
 }) => {
+  const { rateLimitInfo, remainingSeconds, triggerRateLimit, clearRateLimit } = useAiRateLimit();
   const { 
     customers, 
     products, 
@@ -377,26 +379,35 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
                           purchaseStatus: currentEnquiry?.purchaseStatus,
                           followUpReason: currentFollowUp?.reason
                         });
-                        console.log("AI FOLLOWUP RESPONSE:", res);
                         if (res.success && res.message) {
                           setCustomMsg(res.message);
                           setHasAiGenerated(true);
+                          clearRateLimit();
                         } else {
                           setAiError(res.error || 'AI generation is currently unavailable.');
                         }
                       } catch (err: any) {
-                        setAiError(err.message || 'Local AI is currently unavailable.');
+                        if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
+                          triggerRateLimit(err);
+                        } else {
+                          setAiError(err.message || 'AI service is currently unavailable.');
+                        }
                       } finally {
                         setIsAiGenerating(false);
                       }
                     }}
-                    disabled={isAiGenerating}
+                    disabled={isAiGenerating || (rateLimitInfo.isRateLimited && remainingSeconds > 0)}
                     className="flex items-center gap-1.5 text-xs font-bold text-primary-600 bg-primary-50 border border-primary-200 rounded-lg px-3 py-1.5 hover:bg-primary-100 transition-colors disabled:opacity-50"
                   >
                     {isAiGenerating ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                         Generating...
+                      </>
+                    ) : rateLimitInfo.isRateLimited && remainingSeconds > 0 ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 opacity-50" />
+                        Retry in {remainingSeconds}s
                       </>
                     ) : hasAiGenerated ? (
                       <>
@@ -412,7 +423,20 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
                   </button>
                 </div>
 
-                {aiError && (
+                {rateLimitInfo.isRateLimited && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-800 font-semibold animate-fadeIn">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                    <span>
+                      {rateLimitInfo.isQuotaExceeded
+                        ? "Today's AI usage limit has been reached. Please try again after the quota resets."
+                        : remainingSeconds > 0
+                        ? `AI is temporarily rate limited. Try again in ${remainingSeconds} seconds.`
+                        : "AI should be available now. Try again."}
+                    </span>
+                  </div>
+                )}
+
+                {!rateLimitInfo.isRateLimited && aiError && (
                   <div className="p-3 bg-danger-50 border border-danger-200 rounded-xl flex items-center gap-2 text-xs text-danger-700 font-semibold animate-fadeIn">
                     <AlertCircle className="w-4 h-4 shrink-0" />
                     <span>{aiError}</span>
