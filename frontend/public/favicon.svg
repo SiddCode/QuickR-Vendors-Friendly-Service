@@ -1,14 +1,54 @@
-<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Clean white background container with rounded app corners -->
-  <rect width="512" height="512" rx="96" fill="#ffffff"/>
-  
-  <!-- Speed lines on left of Q -->
-  <path d="M 30 200 H 170 L 140 225 H 30 Z" fill="#2563eb" opacity="0.9"/>
-  <path d="M 10 245 H 190 L 160 270 H 10 Z" fill="#3b82f6"/>
-  <path d="M 40 290 H 160 L 130 315 H 40 Z" fill="#60a5fa" opacity="0.8"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <defs>
+    <linearGradient id="topBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d4ed8"/>
+      <stop offset="50%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1e40af"/>
+    </linearGradient>
+    <linearGradient id="botRed" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dc2626"/>
+      <stop offset="50%" stop-color="#b91c1c"/>
+      <stop offset="100%" stop-color="#801010"/>
+    </linearGradient>
+    <linearGradient id="badgeGloss" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.4"/>
+      <stop offset="35%" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.3"/>
+    </linearGradient>
+    <filter id="badgeShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="badgeClip">
+      <rect x="50" y="50" width="400" height="400" rx="90" ry="90" />
+    </clipPath>
+  </defs>
 
-  <!-- Italic QuickR logo text centered -->
-  <text x="140" y="315" fill="#0f172a" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-style="italic" font-size="145" letter-spacing="-4px">
-    Quick<tspan fill="#2563eb">R</tspan>
-  </text>
+  <!-- Badge background container -->
+  <g filter="url(#badgeShadow)">
+    <rect x="50" y="50" width="400" height="400" rx="90" ry="90" fill="#1e293b" />
+    <g clip-path="url(#badgeClip)">
+      <!-- Top-left Blue fill -->
+      <polygon points="20,20 480,20 20,480" fill="url(#topBlue)" />
+      <!-- Bottom-right Red fill -->
+      <polygon points="480,20 480,480 20,480" fill="url(#botRed)" />
+      <!-- Seam divider shadow line -->
+      <line x1="480" y1="20" x2="20" y2="480" stroke="#000000" stroke-width="8" opacity="0.35"/>
+      <line x1="480" y1="20" x2="20" y2="480" stroke="#ffffff" stroke-width="2.5" opacity="0.4"/>
+      <!-- Overlay Gloss -->
+      <rect x="50" y="50" width="400" height="400" fill="url(#badgeGloss)" />
+    </g>
+    <!-- Outer Rim Highlight -->
+    <rect x="50" y="50" width="400" height="400" rx="90" ry="90" fill="none" stroke="#ffffff" stroke-width="5" stroke-opacity="0.35" />
+  </g>
+
+  <!-- Checkmark (Top Left) -->
+  <path d="M105 240 L195 325 L345 145" fill="none" stroke="#ffffff" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" filter="drop-shadow(2px 4px 6px stroke-opacity=0.3)" />
+
+  <!-- User Avatar (Bottom Right) -->
+  <g transform="translate(290, 270)">
+    <!-- Circle Head -->
+    <circle cx="60" cy="45" r="34" fill="#ffffff" />
+    <!-- Shoulders / Body -->
+    <path d="M 12 125 C 12 85, 30 75, 60 75 C 90 75, 108 85, 108 125 Z" fill="#ffffff" />
+  </g>
 </svg>
