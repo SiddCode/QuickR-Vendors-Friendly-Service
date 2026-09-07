@@ -36,15 +36,22 @@ export function handleAiError(res, err, defaultMessage = 'AI service is currentl
         error: 'QUOTA_EXCEEDED',
         message: "Today's AI usage limit has been reached. Please try again after the quota resets.",
         retryAfterSeconds: null,
+        resetAt: null,
         retryAt: null
       });
     }
+    const retrySecs = (typeof err.retryAfterSeconds === 'number' && !isNaN(err.retryAfterSeconds) && err.retryAfterSeconds > 0)
+      ? err.retryAfterSeconds
+      : null;
+    const resetTime = err.retryAt || (retrySecs ? new Date(Date.now() + retrySecs * 1000).toISOString() : null);
+
     return res.status(429).json({
       success: false,
       error: 'RATE_LIMITED',
-      message: 'AI service is temporarily rate limited.',
-      retryAfterSeconds: err.retryAfterSeconds ?? 60,
-      retryAt: err.retryAt || new Date(Date.now() + (err.retryAfterSeconds ?? 60) * 1000).toISOString()
+      message: retrySecs ? `AI is temporarily rate limited. Try again in ${retrySecs} seconds.` : 'AI rate limit reached. Please try again shortly.',
+      retryAfterSeconds: retrySecs,
+      resetAt: resetTime,
+      retryAt: resetTime
     });
   }
 
@@ -54,16 +61,37 @@ export function handleAiError(res, err, defaultMessage = 'AI service is currentl
   });
 }
 
-// Helper: Parse duration string (e.g., '37s', '1m', '1m2s', '1500ms', '42') into integer seconds
+// Helper: Parse duration string or timestamp (e.g., '37s', '1m', '1m2s', '1500ms', '42', or ISO/Unix timestamp) into integer seconds
 export function parseGroqResetDuration(value) {
   if (value === null || value === undefined) return null;
   const str = String(value).trim();
   if (!str) return null;
 
-  // Pure number check (seconds or string number)
+  // Check if it's a date timestamp (e.g. ISO string or Unix timestamp in seconds/ms)
+  if (str.includes('T') || str.includes('Z') || str.includes('-')) {
+    const timeMs = Date.parse(str);
+    if (!isNaN(timeMs)) {
+      const diffSecs = Math.ceil((timeMs - Date.now()) / 1000);
+      return diffSecs > 0 ? diffSecs : 1;
+    }
+  }
+
+  // Pure number check (could be seconds or Unix timestamp in seconds/ms)
   if (/^\d+$/.test(str)) {
     const parsed = parseInt(str, 10);
-    return isNaN(parsed) ? null : parsed;
+    if (isNaN(parsed)) return null;
+
+    // If number looks like a future Unix timestamp in seconds (e.g. 1700000000+)
+    if (parsed > 1600000000 && parsed < 4000000000) {
+      const diff = Math.ceil(parsed - (Date.now() / 1000));
+      return diff > 0 ? diff : 1;
+    }
+    // If number looks like a future Unix timestamp in milliseconds
+    if (parsed > 1600000000000) {
+      const diff = Math.ceil((parsed - Date.now()) / 1000);
+      return diff > 0 ? diff : 1;
+    }
+    return parsed > 0 ? parsed : null;
   }
 
   let totalSeconds = 0;
@@ -74,7 +102,7 @@ export function parseGroqResetDuration(value) {
   if (msMatch) {
     const ms = parseFloat(msMatch[1]);
     if (!isNaN(ms)) {
-      return Math.ceil(ms / 1000);
+      return Math.max(1, Math.ceil(ms / 1000));
     }
   }
 
@@ -99,12 +127,12 @@ export function parseGroqResetDuration(value) {
   }
 
   if (matched) {
-    return Math.ceil(totalSeconds);
+    return Math.max(1, Math.ceil(totalSeconds));
   }
 
   // Fallback float parse
   const num = parseFloat(str);
-  return !isNaN(num) ? Math.ceil(num) : null;
+  return !isNaN(num) && num > 0 ? Math.ceil(num) : null;
 }
 
 export function getGroqResetInfo(responseHeaders, errorText = '') {
@@ -120,6 +148,7 @@ export function getGroqResetInfo(responseHeaders, errorText = '') {
   const retryAfterHeader = getHeader('retry-after');
   const resetRequestsHeader = getHeader('x-ratelimit-reset-requests');
   const resetTokensHeader = getHeader('x-ratelimit-reset-tokens');
+  const resetHeader = getHeader('x-ratelimit-reset');
 
   // Check if error body indicates daily/quota exhaustion
   const lowerBody = (errorText || '').toLowerCase();
@@ -132,6 +161,9 @@ export function getGroqResetInfo(responseHeaders, errorText = '') {
   if (retryAfterHeader !== null) {
     parsedSeconds = parseGroqResetDuration(retryAfterHeader);
   }
+  if (parsedSeconds === null && resetHeader !== null) {
+    parsedSeconds = parseGroqResetDuration(resetHeader);
+  }
   if (parsedSeconds === null && resetRequestsHeader !== null) {
     parsedSeconds = parseGroqResetDuration(resetRequestsHeader);
   }
@@ -139,13 +171,14 @@ export function getGroqResetInfo(responseHeaders, errorText = '') {
     parsedSeconds = parseGroqResetDuration(resetTokensHeader);
   }
 
-  const hasHeader = retryAfterHeader !== null || resetRequestsHeader !== null || resetTokensHeader !== null;
+  const hasHeader = retryAfterHeader !== null || resetHeader !== null || resetRequestsHeader !== null || resetTokensHeader !== null;
 
   return {
     retryAfterHeader,
+    resetHeader,
     resetRequestsHeader,
     resetTokensHeader,
-    parsedSeconds,
+    parsedSeconds: (typeof parsedSeconds === 'number' && !isNaN(parsedSeconds) && parsedSeconds > 0) ? parsedSeconds : null,
     hasHeader,
     isQuotaExceeded
   };
@@ -250,8 +283,8 @@ max_completion_tokens=${payload.max_completion_tokens}`);
           } else if (resetInfo.parsedSeconds !== null) {
             retryAfterSeconds = Math.max(1, resetInfo.parsedSeconds);
           } else {
-            // Default safe fallback if no reset headers available
-            retryAfterSeconds = 60;
+            // No reset information available from provider
+            retryAfterSeconds = null;
           }
 
           let retryAtIso = null;
@@ -260,8 +293,9 @@ max_completion_tokens=${payload.max_completion_tokens}`);
           }
 
           console.log(`[Groq Rate Limit]
-Status: 429
+Provider Status Code: 429
 Retry-After: ${resetInfo.retryAfterHeader || 'N/A'}
+x-ratelimit-reset: ${resetInfo.resetHeader || 'N/A'}
 Reset-Requests: ${resetInfo.resetRequestsHeader || 'N/A'}
 Reset-Tokens: ${resetInfo.resetTokensHeader || 'N/A'}
 Calculated retryAfterSeconds: ${retryAfterSeconds}`);
@@ -278,7 +312,7 @@ Calculated retryAfterSeconds: ${retryAfterSeconds}`);
             err.retryAt = null;
           } else {
             err.errorCode = 'RATE_LIMITED';
-            err.userMessage = `AI is temporarily rate limited. Try again in ${retryAfterSeconds} seconds.`;
+            err.userMessage = retryAfterSeconds ? `AI is temporarily rate limited. Try again in ${retryAfterSeconds} seconds.` : 'AI rate limit reached. Please try again shortly.';
             err.retryAfterSeconds = retryAfterSeconds;
             err.retryAt = retryAtIso;
           }

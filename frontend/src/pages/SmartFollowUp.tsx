@@ -396,7 +396,7 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
                         setIsAiGenerating(false);
                       }
                     }}
-                    disabled={isAiGenerating || (rateLimitInfo.isRateLimited && remainingSeconds > 0)}
+                    disabled={isAiGenerating || (rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0)}
                     className="flex items-center gap-1.5 text-xs font-bold text-primary-600 bg-primary-50 border border-primary-200 rounded-lg px-3 py-1.5 hover:bg-primary-100 transition-colors disabled:opacity-50"
                   >
                     {isAiGenerating ? (
@@ -404,7 +404,7 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                         Generating...
                       </>
-                    ) : rateLimitInfo.isRateLimited && remainingSeconds > 0 ? (
+                    ) : rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 opacity-50" />
                         Retry in {remainingSeconds}s
@@ -429,9 +429,11 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
                     <span>
                       {rateLimitInfo.isQuotaExceeded
                         ? "Today's AI usage limit has been reached. Please try again after the quota resets."
-                        : remainingSeconds > 0
-                        ? `AI is temporarily rate limited. Try again in ${remainingSeconds} seconds.`
-                        : "AI should be available now. Try again."}
+                        : remainingSeconds !== null && remainingSeconds > 0
+                        ? `Try again in ${remainingSeconds} seconds`
+                        : remainingSeconds === 0
+                        ? "You can try again now"
+                        : "Rate limit reached. Please try again shortly."}
                     </span>
                   </div>
                 )}

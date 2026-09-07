@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 export interface RateLimitInfo {
   isRateLimited: boolean;
   message: string | null;
-  retryAfterSeconds: number;
+  retryAfterSeconds: number | null;
+  resetAt: string | null;
   retryAt: string | null;
   isQuotaExceeded?: boolean;
 }
@@ -12,68 +13,87 @@ export function useAiRateLimit() {
   const [rateLimitInfo, setRateLimitInfo] = useState<RateLimitInfo>({
     isRateLimited: false,
     message: null,
-    retryAfterSeconds: 0,
+    retryAfterSeconds: null,
+    resetAt: null,
     retryAt: null,
     isQuotaExceeded: false
   });
 
-  const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   // Set rate limit state from API error response or Error object
   const triggerRateLimit = (err: any) => {
     const errorBody = err?.errorBody || err?.response || err;
-    const retryAfter = err?.retryAfterSeconds ?? errorBody?.retryAfterSeconds ?? 60;
-    const retryAtIso = err?.retryAt ?? errorBody?.retryAt ?? null;
-    const isQuota = err?.error === 'QUOTA_EXCEEDED' || errorBody?.error === 'QUOTA_EXCEEDED';
-    const msg = err?.userMessage || err?.message || errorBody?.message || 'AI service is temporarily rate limited.';
+    
+    // Extract retryAfterSeconds if valid number
+    let rawSecs: number | null = null;
+    const candidateSecs = err?.retryAfterSeconds ?? errorBody?.retryAfterSeconds;
+    if (typeof candidateSecs === 'number' && !isNaN(candidateSecs) && candidateSecs > 0) {
+      rawSecs = candidateSecs;
+    }
+
+    const resetAtIso = err?.resetAt ?? errorBody?.resetAt ?? err?.retryAt ?? errorBody?.retryAt ?? null;
+    const isQuota = err?.errorCode === 'QUOTA_EXCEEDED' || errorBody?.error === 'QUOTA_EXCEEDED';
+    const msg = err?.userMessage || err?.message || errorBody?.message || 'Rate limit reached. Please try again shortly.';
+
+    let calculatedSecs: number | null = rawSecs;
+
+    if (resetAtIso && !isQuota) {
+      const parsedTime = Date.parse(resetAtIso);
+      if (!isNaN(parsedTime)) {
+        const diff = Math.max(0, Math.ceil((parsedTime - Date.now()) / 1000));
+        calculatedSecs = diff > 0 ? diff : (rawSecs || null);
+      }
+    }
 
     setRateLimitInfo({
       isRateLimited: true,
       message: msg,
-      retryAfterSeconds: isQuota ? 0 : retryAfter,
-      retryAt: retryAtIso,
+      retryAfterSeconds: isQuota ? null : calculatedSecs,
+      resetAt: resetAtIso,
+      retryAt: resetAtIso,
       isQuotaExceeded: isQuota
     });
 
-    if (!isQuota) {
-      if (retryAtIso) {
-        const secs = Math.max(0, Math.ceil((new Date(retryAtIso).getTime() - Date.now()) / 1000));
-        setRemainingSeconds(secs > 0 ? secs : retryAfter);
-      } else {
-        setRemainingSeconds(retryAfter);
-      }
-    } else {
-      setRemainingSeconds(0);
-    }
+    setRemainingSeconds(isQuota ? null : calculatedSecs);
   };
 
   const clearRateLimit = () => {
     setRateLimitInfo({
       isRateLimited: false,
       message: null,
-      retryAfterSeconds: 0,
+      retryAfterSeconds: null,
+      resetAt: null,
       retryAt: null,
       isQuotaExceeded: false
     });
-    setRemainingSeconds(0);
+    setRemainingSeconds(null);
   };
 
   useEffect(() => {
-    if (!rateLimitInfo.isRateLimited || rateLimitInfo.isQuotaExceeded || remainingSeconds <= 0) {
+    if (!rateLimitInfo.isRateLimited || rateLimitInfo.isQuotaExceeded || remainingSeconds === null) {
+      return;
+    }
+
+    if (remainingSeconds <= 0) {
       return;
     }
 
     const timer = setInterval(() => {
-      if (rateLimitInfo.retryAt) {
-        const secs = Math.max(0, Math.ceil((new Date(rateLimitInfo.retryAt).getTime() - Date.now()) / 1000));
-        setRemainingSeconds(secs);
-      } else {
-        setRemainingSeconds((prev) => Math.max(0, prev - 1));
+      if (rateLimitInfo.resetAt || rateLimitInfo.retryAt) {
+        const targetTime = rateLimitInfo.resetAt || rateLimitInfo.retryAt;
+        const parsedTime = Date.parse(targetTime!);
+        if (!isNaN(parsedTime)) {
+          const secs = Math.max(0, Math.ceil((parsedTime - Date.now()) / 1000));
+          setRemainingSeconds(secs);
+          return;
+        }
       }
+      setRemainingSeconds((prev) => (prev !== null && prev > 0 ? prev - 1 : 0));
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [rateLimitInfo.isRateLimited, rateLimitInfo.isQuotaExceeded, rateLimitInfo.retryAt, remainingSeconds]);
+  }, [rateLimitInfo.isRateLimited, rateLimitInfo.isQuotaExceeded, rateLimitInfo.resetAt, rateLimitInfo.retryAt, remainingSeconds]);
 
   return {
     rateLimitInfo,

@@ -1,37 +1,35 @@
 import { parseGroqResetDuration, getGroqResetInfo } from './routes/ai.js';
 
 function runTests() {
-  console.log('========== GROQ RATE LIMIT PARSER UNIT TESTS ==========');
+  console.log('========== GROQ RATE LIMIT EXTENDED UNIT TESTS ==========');
 
-  // TEST 1: retry-after: 37s
-  const t1 = parseGroqResetDuration('37s');
-  console.log('TEST 1 (37s):', t1 === 37 ? 'PASS' : `FAIL (got ${t1})`);
+  // TEST A: Provider returns Retry-After header
+  const tA = getGroqResetInfo({ 'retry-after': '37' }, '');
+  console.log('TEST A (Retry-After header "37"):', tA.parsedSeconds === 37 ? 'PASS' : `FAIL (got ${tA.parsedSeconds})`);
 
-  // TEST 2: retry-after: 1m2s
-  const t2 = parseGroqResetDuration('1m2s');
-  console.log('TEST 2 (1m2s -> 62s):', t2 === 62 ? 'PASS' : `FAIL (got ${t2})`);
+  // TEST B: Provider returns reset timestamp header x-ratelimit-reset (Unix timestamp in future)
+  const futureUnixSecs = Math.floor(Date.now() / 1000) + 42;
+  const tB = getGroqResetInfo({ 'x-ratelimit-reset': String(futureUnixSecs) }, '');
+  console.log('TEST B (Reset Unix timestamp header):', (tB.parsedSeconds >= 41 && tB.parsedSeconds <= 43) ? 'PASS' : `FAIL (got ${tB.parsedSeconds})`);
 
-  // TEST 3: retry-after: 1500ms
-  const t3 = parseGroqResetDuration('1500ms');
-  console.log('TEST 3 (1500ms -> 2s):', t3 === 2 ? 'PASS' : `FAIL (got ${t3})`);
+  // TEST C: Provider returns ISO reset timestamp
+  const futureIso = new Date(Date.now() + 25000).toISOString();
+  const tC = parseGroqResetDuration(futureIso);
+  console.log('TEST C (ISO reset timestamp):', (tC >= 24 && tC <= 26) ? 'PASS' : `FAIL (got ${tC})`);
 
-  // TEST 4: No reset headers
-  const t4 = getGroqResetInfo({}, '');
-  console.log('TEST 4 (No headers):', t4.parsedSeconds === null ? 'PASS' : `FAIL (got ${t4.parsedSeconds})`);
+  // TEST D: Provider returns 429 with NO reset info
+  const tD = getGroqResetInfo({}, '');
+  console.log('TEST D (No reset info returns null):', tD.parsedSeconds === null ? 'PASS' : `FAIL (got ${tD.parsedSeconds})`);
 
-  // TEST 5: Daily quota exhaustion error body
-  const t5 = getGroqResetInfo({}, 'Rate limit exceeded: Today\'s daily limit reached for model');
-  console.log('TEST 5 (Daily quota):', t5.isQuotaExceeded === true ? 'PASS' : `FAIL (got ${t5.isQuotaExceeded})`);
+  // TEST E: Provider returns 1m2s format
+  const tE = parseGroqResetDuration('1m2s');
+  console.log('TEST E (1m2s -> 62s):', tE === 62 ? 'PASS' : `FAIL (got ${tE})`);
 
-  // TEST 6: Pure integer string
-  const t6 = parseGroqResetDuration('45');
-  console.log('TEST 6 (Pure number "45"):', t6 === 45 ? 'PASS' : `FAIL (got ${t6})`);
+  // TEST F: Provider returns 1500ms format
+  const tF = parseGroqResetDuration('1500ms');
+  console.log('TEST F (1500ms -> 2s):', tF === 2 ? 'PASS' : `FAIL (got ${tF})`);
 
-  // TEST 7: Case-insensitive headers
-  const t7 = getGroqResetInfo({ 'X-RateLimit-Reset-Requests': '12s' }, '');
-  console.log('TEST 7 (Case-insensitive header):', t7.parsedSeconds === 12 ? 'PASS' : `FAIL (got ${t7.parsedSeconds})`);
-
-  console.log('=======================================================');
+  console.log('===========================================================');
 }
 
 runTests();

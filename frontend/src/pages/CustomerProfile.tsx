@@ -563,11 +563,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                       setOppLoading(false);
                     }
                   }}
-                  disabled={oppLoading || (rateLimitInfo.isRateLimited && remainingSeconds > 0)}
+                  disabled={oppLoading || (rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0)}
                   className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3 h-3 ${oppLoading ? 'animate-spin' : ''}`} />
-                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
+                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
                 </button>
               ) : null}
             </div>
@@ -597,11 +597,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                       setOppLoading(false);
                     }
                   }}
-                  disabled={rateLimitInfo.isRateLimited && remainingSeconds > 0}
+                  disabled={rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0}
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <TrendingUp className="w-4 h-4" />
-                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze Opportunity'}
+                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze Opportunity'}
                 </button>
               </div>
             )}
@@ -612,9 +612,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 <span>
                   {rateLimitInfo.isQuotaExceeded
                     ? "Today's AI usage limit has been reached. Please try again after the quota resets."
-                    : remainingSeconds > 0
-                    ? `AI is temporarily rate limited. Try again in ${remainingSeconds} seconds.`
-                    : "AI should be available now. Try again."}
+                    : remainingSeconds !== null && remainingSeconds > 0
+                    ? `Try again in ${remainingSeconds} seconds`
+                    : remainingSeconds === 0
+                    ? "You can try again now"
+                    : "Rate limit reached. Please try again shortly."}
                 </span>
               </div>
             )}
@@ -746,11 +748,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                       setAiLoading(false);
                     }
                   }}
-                  disabled={aiLoading || (rateLimitInfo.isRateLimited && remainingSeconds > 0)}
+                  disabled={aiLoading || (rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0)}
                   className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 hover:bg-primary-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3 h-3 ${aiLoading ? 'animate-spin' : ''}`} />
-                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
+                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
                 </button>
               ) : null}
             </div>
@@ -780,11 +782,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                       setAiLoading(false);
                     }
                   }}
-                  disabled={rateLimitInfo.isRateLimited && remainingSeconds > 0}
+                  disabled={rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0}
                   className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <Sparkles className="w-4 h-4" />
-                  {rateLimitInfo.isRateLimited && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze with AI'}
+                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze with AI'}
                 </button>
               </div>
             )}
