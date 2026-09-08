@@ -138,6 +138,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   // USB / Bluetooth Scanner Keyboard Wedge Event Listener
   const keyBufferRef = useRef<string>('');
   const lastKeyTimeRef = useRef<number>(0);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!barcodeEnabled) return;
@@ -156,20 +157,36 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
       }
       lastKeyTimeRef.current = currentTime;
 
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+
       if (e.key === 'Enter') {
         const barcodeVal = keyBufferRef.current.trim();
-        if (barcodeVal && barcodeVal.startsWith('QKR-')) {
+        if (barcodeVal) {
           e.preventDefault();
           processScannedBarcode(barcodeVal);
         }
         keyBufferRef.current = '';
       } else if (e.key.length === 1) {
         keyBufferRef.current += e.key;
+
+        // Fallback for hardware scanners that do NOT send an Enter key
+        debounceTimerRef.current = setTimeout(() => {
+          const barcodeVal = keyBufferRef.current.trim();
+          if (barcodeVal.length >= 6 && barcodeVal.startsWith('QKR-')) {
+            processScannedBarcode(barcodeVal);
+            keyBufferRef.current = '';
+          }
+        }, 180);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
   }, [barcodeEnabled, products]);
 
   // Handle outside click to close customer dropdown
