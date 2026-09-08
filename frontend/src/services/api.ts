@@ -28,7 +28,23 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export const api = {
+  // Health & Warm-up
+  async healthCheck(): Promise<{ status: string; timestamp: string; database: string }> {
+    const startTime = Date.now();
+    try {
+      const res = await fetch(`${API_BASE_URL}/health`, { method: 'GET' });
+      const duration = Date.now() - startTime;
+      console.log(`[PERF] GET /api/health: ${duration}ms`);
+      return handleResponse<{ status: string; timestamp: string; database: string }>(res);
+    } catch (err) {
+      const duration = Date.now() - startTime;
+      console.warn(`[PERF] GET /api/health failed after ${duration}ms`);
+      throw err;
+    }
+  },
+
   // Auth
+
   async register(data: { ownerName: string; shopName: string; email: string; password: string }): Promise<{ user: UserSession; token?: string }> {
     const res = await fetch(`${API_BASE_URL}/auth/register`, {
       method: 'POST',
@@ -249,15 +265,21 @@ export const api = {
     return handleResponse<Sale[]>(res);
   },
 
-  async createSale(data: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'>): Promise<Sale> {
+  async createSale(data: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string }): Promise<Sale> {
     const res = await fetch(`${API_BASE_URL}/sales`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify(data),
     });
-    return handleResponse<Sale>(res);
+    const parsed = await handleResponse<any>(res);
+    // If backend wraps in { success: true, sale: Sale, duplicate: boolean }
+    if (parsed && parsed.sale) {
+      return parsed.sale;
+    }
+    return parsed;
   },
+
 
   async deleteSales(ids: string[]): Promise<{ success: boolean; deletedIds: string[] }> {
     const res = await fetch(`${API_BASE_URL}/sales`, {

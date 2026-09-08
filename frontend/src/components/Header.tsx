@@ -13,7 +13,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchValue, setCurrentPage, setSelectedCustomerId, onOpenMobileMenu }) => {
-  const { shopName, customers, products, enquiries, sales, currentUser } = useApp();
+  const { shopName, customers, products, enquiries, sales, currentUser, connectionState } = useApp();
   const { t } = useLanguage();
   const [localSearch, setLocalSearch] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
@@ -71,9 +71,22 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
         <h1 className="text-sm sm:text-xl font-bold text-slate-800 tracking-tight truncate">
           {title || `${t('header.goodMorning')}, ${shopName}`}
         </h1>
+        {connectionState === 'checking' && (
+          <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            Connecting to QuickR...
+          </span>
+        )}
+        {connectionState === 'ready' && (
+          <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            Connected
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+
         {/* Global Search Bar */}
         <div ref={searchRef} className="relative w-36 sm:w-64">
           <div className="relative">

@@ -44,13 +44,17 @@ interface AppContextType {
   updateEnquiry: (id: string, updates: Partial<Enquiry>) => Promise<void>;
   updateFollowUpStatus: (id: string, status: FollowUp['status'], outcome?: FollowUp['outcome']) => Promise<void>;
   sendWhatsAppMock: (followUpId: string, customMessage: string) => Promise<boolean>;
- createSale : (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'>) => Promise<Sale | null>;
+  createSale: (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string }) => Promise<Sale | null>;
   deleteSales: (ids: string[]) => Promise<boolean>;
+
+
   handleOutcomeStillInterested: (followUpId: string, nextDateStr: string) => Promise<void>;
   handleOutcomeNotInterested: (followUpId: string) => Promise<void>;
   handleOutcomeNoResponse: (followUpId: string, scheduleNext: boolean) => Promise<void>;
   addNote: (customerId: string, content: string) => void;
   updateShopProfile: (data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }) => Promise<boolean>;
+  connectionState: 'checking' | 'ready' | 'offline';
+  checkHealth: () => Promise<boolean>;
   refreshData: () => Promise<void>;
   resetData: () => void;
 }
@@ -60,6 +64,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [connectionState, setConnectionState] = useState<'checking' | 'ready' | 'offline'>('checking');
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -75,14 +80,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error] = useState<string | null>(null);
 
+  // Warm-up health check with exponential backoff (2s, 5s, 10s)
+  const warmUpBackend = async (attempt = 1): Promise<boolean> => {
+    try {
+      setConnectionState('checking');
+      const res = await api.healthCheck();
+      if (res && res.status === 'ok') {
+        setConnectionState('ready');
+        return true;
+      }
+      throw new Error('Health check returned non-ok status');
+    } catch (err) {
+      console.warn(`[Warm-Up] Health check attempt ${attempt} failed.`);
+      if (attempt <= 3) {
+        const delays = [2000, 5000, 10000];
+        const delay = delays[attempt - 1] || 10000;
+        setTimeout(() => {
+          warmUpBackend(attempt + 1);
+        }, delay);
+      } else {
+        setConnectionState('offline');
+      }
+      return false;
+    }
+  };
+
+  const checkHealth = async (): Promise<boolean> => {
+    try {
+      const res = await api.healthCheck();
+      if (res && res.status === 'ok') {
+        setConnectionState('ready');
+        return true;
+      }
+      setConnectionState('offline');
+      return false;
+    } catch (err) {
+      setConnectionState('offline');
+      return false;
+    }
+  };
+
   // Load user session on mount
   const checkAuth = async () => {
     setIsLoading(true);
+    // Trigger non-blocking backend warm-up simultaneously
+    warmUpBackend();
     try {
       const res = await api.getMe();
       if (res && res.user) {
         setCurrentUser(res.user);
         setIsAuthenticated(true);
+        setConnectionState('ready');
         await loadBusinessData();
       } else {
         setCurrentUser(null);
@@ -95,6 +143,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsLoading(false);
     }
   };
+
 
   const loadBusinessData = async () => {
     try {
@@ -245,8 +294,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsLoading(true);
       const created = await api.createCustomer(customerData);
       setCustomers(prev => [created, ...prev]);
-      const updatedActs = await api.getActivities().catch(() => []);
-      setActivities(updatedActs);
       return created;
     } catch (err: any) {
       alert(`Unable to save customer: ${err.message || 'Server error'}`);
@@ -267,8 +314,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setMessages(prev => prev.filter(m => m.customerId !== id));
         setActivities(prev => prev.filter(a => a.customerId !== id));
         setNotes(prev => prev.filter(n => n.customerId !== id));
-        // Refresh today's work summary
-        loadBusinessData().catch(() => {});
         return true;
       }
       return false;
@@ -287,7 +332,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!res || !res.enquiry) {
         throw new Error('Backend did not return a created enquiry.');
       }
-      await loadBusinessData();
+      setEnquiries(prev => [res.enquiry, ...prev]);
+      if (res.followUp) {
+        const newFw = res.followUp;
+        setFollowUps(prev => [newFw, ...prev]);
+      }
+
       return res.enquiry;
     } catch (err: any) {
       alert(`Failed to create enquiry: ${err.message || 'Server error'}`);
@@ -302,7 +352,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsLoading(true);
       const res = await api.deleteEnquiry(id);
       if (res && res.success) {
-        await loadBusinessData();
+        setEnquiries(prev => prev.filter(e => e.id !== id));
+        setFollowUps(prev => prev.filter(f => f.enquiryId !== id));
         return true;
       }
       return false;
@@ -337,8 +388,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (res.success) {
         setFollowUps(prev => prev.map(f => f.id === followUpId ? res.followUp : f));
         setMessages(prev => [res.message, ...prev]);
-        const updatedActs = await api.getActivities().catch(() => []);
-        setActivities(updatedActs);
         return true;
       }
       return false;
@@ -350,12 +399,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const createSale = async (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'>): Promise<Sale | null> => {
+  const createSale = async (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string }): Promise<Sale | null> => {
     try {
       setIsLoading(true);
       const newSale = await api.createSale(saleData);
-      setSales(prev => [newSale, ...prev]);
-      await loadBusinessData();
+      if (newSale) {
+        setSales(prev => {
+          if (prev.some(s => s.id === newSale.id)) return prev;
+          return [newSale, ...prev];
+        });
+        // Update stock availability locally
+        if (Array.isArray(saleData.items)) {
+          setProducts(prevProducts =>
+            prevProducts.map(p => {
+              const soldItem = saleData.items.find((i: any) => i.productId === p.id);
+              if (soldItem) {
+                return { ...p, availability: Math.max(0, (p.availability || 0) - (soldItem.quantity || 1)) };
+              }
+              return p;
+            })
+          );
+        }
+      }
       return newSale;
     } catch (err: any) {
       alert(`Unable to generate bill: ${err.message || 'Server error'}`);
@@ -365,13 +430,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+
   const deleteSales = async (ids: string[]): Promise<boolean> => {
     try {
       setIsLoading(true);
       const res = await api.deleteSales(ids);
       if (res && res.success) {
         setSales(prev => prev.filter(s => !ids.includes(s.id)));
-        await loadBusinessData();
         return true;
       }
       return false;
@@ -382,6 +447,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsLoading(false);
     }
   };
+
 
   const handleOutcomeStillInterested = async (followUpId: string, nextDateStr: string) => {
     try {
@@ -498,9 +564,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       handleOutcomeNoResponse,
       addNote,
       updateShopProfile,
+      connectionState,
+      checkHealth,
       refreshData: loadBusinessData,
       resetData: loadBusinessData
     }}>
+
       {children}
     </AppContext.Provider>
   );

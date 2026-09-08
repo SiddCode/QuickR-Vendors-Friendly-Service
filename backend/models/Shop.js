@@ -23,4 +23,7 @@ const shopSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+shopSchema.index({ customId: 1 }, { unique: true });
+
 export const Shop = mongoose.model('Shop', shopSchema);
+

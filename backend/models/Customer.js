@@ -23,5 +23,8 @@ const customerSchema = new mongoose.Schema(
 );
 
 customerSchema.index({ shopId: 1, phone: 1 });
+customerSchema.index({ shopId: 1, id: 1 }, { unique: true });
+customerSchema.index({ shopId: 1, createdAt: -1 });
 
 export const Customer = mongoose.model('Customer', customerSchema);
+

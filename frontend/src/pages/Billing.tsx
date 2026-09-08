@@ -21,9 +21,11 @@ interface BillItem {
 }
 
 export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitialData }) => {
-  const { customers, products, createSale, shopProfile } = useApp();
+  const { customers, products, createSale, shopProfile, connectionState, checkHealth } = useApp();
+  const [connectingMsg, setConnectingMsg] = useState<string | null>(null);
 
   const activeProducts = products.filter(p => p.isActive);
+
 
   const [isWalkIn, setIsWalkIn] = useState(!billingInitialData?.customerId);
   const [selectedCustomerId, setSelectedCustomerId] = useState(billingInitialData?.customerId || '');
@@ -219,11 +221,29 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [allowWhatsAppOffers, setAllowWhatsAppOffers] = useState<boolean>(true);
+  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
 
   const handleGenerateBill = async () => {
     if (items.length === 0) return alert('Please add at least one item');
     if (isSubmitting) return;
     
+    // Safety check: Ensure backend connection is alive before posting critical sale data
+    if (connectionState !== 'ready') {
+      setConnectingMsg('Connecting to server...');
+      const isAlive = await checkHealth();
+      setConnectingMsg(null);
+      if (!isAlive) {
+        alert('Server is currently starting up or offline. Please wait a moment and try again.');
+        return;
+      }
+    }
+
+    // Generate or reuse persistent requestId for this submission attempt
+    const requestIdToUse = activeRequestId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `REQ-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`);
+    if (!activeRequestId) {
+      setActiveRequestId(requestIdToUse);
+    }
+
     let finalCustomerId = '';
     let finalCustomerName = 'Walk-in Customer';
     
@@ -263,14 +283,17 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
       totalGst,
       totalAmount: grandTotalAmount,
       paymentMethod,
-      source: billingInitialData?.enquiryId ? 'quickr_followup' : 'direct'
+      source: billingInitialData?.enquiryId ? 'quickr_followup' : 'direct',
+      requestId: requestIdToUse
     };
 
     setIsSubmitting(true);
     try {
       const sale = await createSale(payload);
       if (sale) {
-        // Navigate directly to Sales page after generating bill without opening print window
+        // Reset requestId upon confirmed successful sale creation
+        setActiveRequestId(null);
+        // Navigate directly to Sales page after generating bill
         setCurrentPage('sales');
       }
     } catch (err) {
@@ -279,6 +302,8 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
       setIsSubmitting(false);
     }
   };
+
+
 
   return (
     <div className="flex-grow p-4 lg:p-8 space-y-6 bg-slate-50 min-h-screen font-sans">
@@ -617,12 +642,13 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
             </button>
             <button 
               onClick={handleGenerateBill}
-              disabled={isSubmitting}
+              disabled={isSubmitting || connectingMsg !== null}
               className="flex-1 px-6 py-3 bg-primary-600 text-white font-bold rounded-xl shadow-sm hover:bg-primary-700 transition-colors flex justify-center items-center gap-2 disabled:opacity-50"
             >
               <Receipt className="w-5 h-5" />
-              {isSubmitting ? 'Generating Bill...' : 'Generate Bill'}
+              {connectingMsg ? connectingMsg : (isSubmitting ? 'Generating Bill...' : 'Generate Bill')}
             </button>
+
           </div>
         </div>
       </div>

@@ -205,6 +205,25 @@ setTimeout(seedDatabaseIfNeeded, 1500);
 // Seed admin account (idempotent — only creates if not exists)
 setTimeout(async () => { await seedAdmin(); }, 2000);
 
+// ===================================
+// LIGHTWEIGHT HEALTH CHECK & COLD-START MITIGATION
+// ===================================
+app.get('/api/health', (req, res) => {
+  const startTime = Date.now();
+  const dbStateMap = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  const dbState = dbStateMap[mongoose.connection.readyState] || 'unknown';
+
+  const duration = Date.now() - startTime;
+  console.log(`[PERF] GET /api/health: ${duration}ms (DB: ${dbState})`);
+
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    database: dbState
+  });
+});
+
+
 const setAuthCookie = (res, token) => {
   const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
   res.cookie('token', token, {
@@ -2362,10 +2381,28 @@ app.get('/api/sales', requireAuth, async (req, res) => {
 
 app.post('/api/sales', requireAuth, async (req, res) => {
   try {
-    let { customerId, customerName, customerPhone, enquiryId, followUpId, items, subtotal, discount, totalAmount, paymentMethod, source, saleSource, campaignId } = req.body;
+    let { customerId, customerName, customerPhone, enquiryId, followUpId, items, subtotal, discount, totalAmount, paymentMethod, source, saleSource, campaignId, requestId } = req.body;
     
     if (!items || !items.length || totalAmount === undefined || !paymentMethod) {
       return res.status(400).json({ error: 'Items, totalAmount, and paymentMethod are required' });
+    }
+
+    const cleanRequestId = requestId ? String(requestId).trim() : null;
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // IDEMPOTENCY CHECK (FIRST PASS)
+    // Return existing sale if this shop already processed this requestId
+    // ──────────────────────────────────────────────────────────────────────────
+    if (cleanRequestId) {
+      const existingSale = await Sale.findOne({ shopId: req.user.shopId, requestId: cleanRequestId }).lean();
+      if (existingSale) {
+        console.log(`[IDEMPOTENCY] Returned existing sale for requestId: ${cleanRequestId}`);
+        return res.status(200).json({
+          success: true,
+          sale: existingSale,
+          duplicate: true
+        });
+      }
     }
 
     const numericSubtotal = Number(subtotal) || 0;
@@ -2456,12 +2493,21 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       finalCustomerName = 'Walk-in Customer'; // Case 4
     }
 
-    // Validate Product Stock Availability
+    // Performance measurement timing start
+    const perfStart = Date.now();
+
+    // Validate Product Stock Availability in batch
+    const productIds = Array.isArray(items) ? items.map(i => i.productId).filter(Boolean) : [];
+    const dbProducts = productIds.length > 0 
+      ? await Product.find({ id: { $in: productIds }, shopId: req.user.shopId }).lean()
+      : [];
+    const productMap = new Map(dbProducts.map(p => [p.id, p]));
+
     if (Array.isArray(items) && items.length > 0) {
       for (const item of items) {
         if (item.productId) {
           const qty = Number(item.quantity) || 1;
-          const prod = await Product.findOne({ id: item.productId, shopId: req.user.shopId });
+          const prod = productMap.get(item.productId);
           if (!prod) {
             return res.status(404).json({ error: `Product ${item.productName || item.productId} not found` });
           }
@@ -2474,8 +2520,8 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       }
     }
 
-    // Fetch Shop Profile to check GST status and State
-    const shop = await Shop.findOne({ customId: req.user.shopId });
+    // Fetch Shop Profile to check GST status and State using fast lean query
+    const shop = await Shop.findOne({ customId: req.user.shopId }).lean();
     const isGstRegistered = !!(shop && (shop.gst?.registered ?? shop.isGstRegistered));
     const shopGstin = isGstRegistered ? (shop.gst?.gstin || shop.gstin || '') : '';
     const shopState = shop?.gst?.state || 'Tamil Nadu';
@@ -2507,13 +2553,13 @@ app.post('/api/sales', requireAuth, async (req, res) => {
         // Apply proportional discount to line total before computing GST if subtotal > 0
         const lineTaxableSubtotal = numericSubtotal > 0 ? (rawLineTotal * (1 - (numericDiscount / numericSubtotal))) : rawLineTotal;
 
-        // Fetch exact product from DB for GST rate, HSN, priceIncludesGst
+        // Fetch exact product from pre-fetched batch productMap
         let itemGstRate = 0;
         let itemHsnCode = '';
         let itemPriceIncludesGst = false;
 
         if (item.productId) {
-          const dbProd = await Product.findOne({ id: item.productId, shopId: req.user.shopId });
+          const dbProd = productMap.get(item.productId);
           if (dbProd) {
             itemGstRate = dbProd.gstRate || 0;
             itemHsnCode = dbProd.hsnCode || '';
@@ -2601,57 +2647,142 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       source: source || 'direct',
       saleSource: saleSource || (campaignId ? 'campaign' : 'normal'),
       campaignId: campaignId || '',
+      requestId: cleanRequestId,
       shopId: req.user.shopId
     });
-    
-    await newSale.save();
 
-    // Automatic Inventory Stock Decrement
-    if (Array.isArray(items) && items.length > 0) {
-      for (const item of items) {
-        if (item.productId) {
-          const qty = Number(item.quantity) || 1;
-          const prod = await Product.findOne({ id: item.productId, shopId: req.user.shopId });
-          if (prod) {
-            prod.availability = Math.max(0, (prod.availability || 0) - qty);
-            await prod.save();
+    // ──────────────────────────────────────────────────────────────────────────
+    // TRANSACTION & ATOMIC STOCK CONCURRENCY
+    // Atomic stock decrement query enforces { availability: { $gte: qty } }
+    // Session transaction guarantees Sale + Stock decrement commit or abort together
+    // ──────────────────────────────────────────────────────────────────────────
+    let session = null;
+    let useTransaction = false;
+
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+      useTransaction = true;
+    } catch (txInitErr) {
+      session = null;
+      useTransaction = false;
+    }
+
+    try {
+      const saveOptions = session ? { session } : {};
+      await newSale.save(saveOptions);
+
+      // Perform atomic conditional stock decrement
+      if (Array.isArray(items) && items.length > 0) {
+        for (const item of items) {
+          if (item.productId) {
+            const qty = Number(item.quantity) || 1;
+            const updateResult = await Product.updateOne(
+              { id: item.productId, shopId: req.user.shopId, availability: { $gte: qty } },
+              { $inc: { availability: -qty } },
+              saveOptions
+            );
+
+            if (updateResult.matchedCount === 0) {
+              const currentProd = await Product.findOne({ id: item.productId, shopId: req.user.shopId });
+              const currentAvail = currentProd ? currentProd.availability : 0;
+              throw new Error(`INSUFFICIENT_STOCK: Stock changed during checkout for ${item.productName || item.productId}. Available: ${currentAvail}, Requested: ${qty}`);
+            }
           }
         }
       }
+
+      if (enquiryId) {
+        await Enquiry.findOneAndUpdate({ id: enquiryId, shopId: req.user.shopId }, { purchaseStatus: 'Purchased' }, saveOptions);
+      }
+
+      if (followUpId) {
+        await FollowUp.findOneAndUpdate({ id: followUpId, shopId: req.user.shopId }, { status: 'closed', outcome: 'Purchased', completedAt: new Date() }, saveOptions);
+      }
+
+      if (useTransaction && session) {
+        await session.commitTransaction();
+      }
+    } catch (saveErr) {
+      if (useTransaction && session) {
+        await session.abortTransaction();
+      }
+
+      // Handle MongoDB Duplicate Key (E11000) race condition for requestId
+      if (saveErr.code === 11000 && cleanRequestId && saveErr.message.includes('requestId')) {
+        console.warn(`[IDEMPOTENCY] Race condition caught by MongoDB unique index for requestId: ${cleanRequestId}`);
+        const existingSale = await Sale.findOne({ shopId: req.user.shopId, requestId: cleanRequestId }).lean();
+        if (existingSale) {
+          return res.status(200).json({
+            success: true,
+            sale: existingSale,
+            duplicate: true
+          });
+        }
+      }
+
+      if (saveErr.message && saveErr.message.startsWith('INSUFFICIENT_STOCK:')) {
+        return res.status(400).json({ error: saveErr.message.replace('INSUFFICIENT_STOCK: ', '') });
+      }
+
+      throw saveErr;
+    } finally {
+      if (session) {
+        await session.endSession();
+      }
     }
 
-    if (enquiryId) {
-      await Enquiry.findOneAndUpdate({ id: enquiryId, shopId: req.user.shopId }, { purchaseStatus: 'Purchased' });
-    }
+    // Helper for reliable customer statistics recalculation
+    const recalculateCustomerStats = async (custId, sId) => {
+      try {
+        const custSales = await Sale.find({ customerId: custId, shopId: sId }).lean();
+        const count = custSales.length;
+        const totalSpend = custSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+        const lastSale = custSales.length > 0 ? custSales.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] : null;
+        const lastPurchaseStr = lastSale ? new Date(lastSale.createdAt).toISOString() : '';
 
-    if (followUpId) {
-      await FollowUp.findOneAndUpdate({ id: followUpId, shopId: req.user.shopId }, { status: 'closed', outcome: 'Purchased', completedAt: new Date() });
-    }
+        await Customer.updateOne(
+          { id: custId, shopId: sId },
+          { 
+            $set: { 
+              totalPurchases: count, 
+              totalSpending: totalSpend,
+              'preferences.lastPurchase': lastPurchaseStr
+            } 
+          }
+        );
+      } catch (e) {
+        console.error('Customer stats recalculation error:', e);
+      }
+    };
 
-    // Atomic update of Customer purchase count & spending totals in MongoDB
+    // Atomic background recalculation of derived Customer purchase count, spending, & last purchase
     if (finalCustomerId) {
-      const custSales = await Sale.find({ customerId: finalCustomerId, shopId: req.user.shopId }).lean();
-      const count = custSales.length;
-      const totalSpend = custSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
-      await Customer.updateOne(
-        { id: finalCustomerId, shopId: req.user.shopId },
-        { $set: { totalPurchases: count, totalSpending: totalSpend } }
-      );
+      recalculateCustomerStats(finalCustomerId, req.user.shopId);
     }
 
-    await Activity.create({
+
+
+    const totalDuration = Date.now() - perfStart;
+    console.log(`[PERF] POST /api/sales - total: ${totalDuration}ms`);
+
+    // Asynchronous non-blocking activity logging
+    Activity.create({
       id: `ACT-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       customerId: customerId || 'walk-in',
       type: 'sale_completed',
       description: `Bill generated: ${invoiceNumber} for ₹${totalAmount}`,
       shopId: req.user.shopId
-    });
+    }).catch(e => console.error('Background activity logging failed:', e));
 
-    res.status(201).json(newSale);
+    res.status(201).json({ success: true, sale: newSale, duplicate: false });
+
   } catch (err) {
+    console.error('Failed to create bill/sale:', err);
     res.status(500).json({ error: 'Failed to create bill/sale' });
   }
 });
+
 
 app.delete('/api/sales', requireAuth, async (req, res) => {
   try {

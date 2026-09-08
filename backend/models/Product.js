@@ -23,5 +23,7 @@ const productSchema = new mongoose.Schema(
 );
 
 productSchema.index({ shopId: 1, createdAt: -1, isActive: 1 });
+productSchema.index({ shopId: 1, id: 1 });
 
 export const Product = mongoose.model('Product', productSchema);
+
