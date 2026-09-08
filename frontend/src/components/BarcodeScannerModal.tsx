@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { X, Camera, Laptop, Keyboard, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 
 interface BarcodeScannerModalProps {
@@ -18,7 +18,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
     return isMobileUA || (isTouchScreen && isSmallScreen);
   });
 
-  // State mode: 'desktop_hardware' | 'mobile_camera' | 'camera_override' | 'manual_entry'
+  // Mode: 'desktop_hardware' | 'mobile_camera' | 'camera_override' | 'manual_entry'
   const [scanMode, setScanMode] = useState<'desktop_hardware' | 'mobile_camera' | 'camera_override' | 'manual_entry'>(
     isMobileDevice ? 'mobile_camera' : 'desktop_hardware'
   );
@@ -26,11 +26,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
   const [manualCodeInput, setManualCodeInput] = useState('');
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
-  const isScanLockedRef = useRef<boolean>(false);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
 
   const manualInputRef = useRef<HTMLInputElement>(null);
   const hardwareBufferRef = useRef<string>('');
   const lastKeyTimeRef = useRef<number>(0);
+  const html5QrcodeRef = useRef<Html5Qrcode | null>(null);
+  const isScanLockedRef = useRef<boolean>(false);
 
   // Focus manual input when manual_entry mode opens
   useEffect(() => {
@@ -44,14 +46,12 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
     if (scanMode !== 'desktop_hardware') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Avoid capturing when user is typing into text inputs inside the modal
       const targetTag = (e.target as HTMLElement)?.tagName?.toUpperCase();
       if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT') {
         return;
       }
 
       const currentTime = Date.now();
-      // Scanners transmit keystrokes very rapidly (< 50ms per key)
       if (currentTime - lastKeyTimeRef.current > 100) {
         hardwareBufferRef.current = '';
       }
@@ -75,7 +75,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [scanMode, onScanSuccess, onClose]);
 
-  // Html5QrcodeScanner Initialization (Active in mobile_camera or camera_override mode)
+  // Direct Html5Qrcode initialization & camera lifecycle management
   useEffect(() => {
     if (scanMode !== 'mobile_camera' && scanMode !== 'camera_override') return;
 
@@ -83,75 +83,107 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
     setIsInitializing(true);
     isScanLockedRef.current = false;
 
-    // Check mediaDevices camera support
+    // Check secure context requirement (HTTPS or localhost)
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      setPermissionError("Camera access requires HTTPS. Please access QuickR over a secure connection.");
+      setIsInitializing(false);
+      return;
+    }
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setPermissionError("Camera barcode scanning isn't supported in this browser. Please use manual entry.");
       setIsInitializing(false);
       return;
     }
 
-    let scannerInstance: Html5QrcodeScanner | null = null;
+    let isMounted = true;
+    const scannerId = 'quickr-camera-viewport';
+    const html5Qrcode = new Html5Qrcode(scannerId);
+    html5QrcodeRef.current = html5Qrcode;
 
-    try {
-      scannerInstance = new Html5QrcodeScanner(
-        'quickr-barcode-reader',
-        {
-          fps: 15,
-          qrbox: { width: 260, height: 160 },
-          aspectRatio: 1.0,
-          showTorchButtonIfSupported: true,
-          showZoomSliderIfSupported: false,
-          rememberLastUsedCamera: true
-        },
-        /* verbose= */ false
-      );
+    const startCamera = async () => {
+      try {
+        // Request camera with preference for environment / rear camera
+        await html5Qrcode.start(
+          { facingMode: { ideal: "environment" } },
+          {
+            fps: 15,
+            qrbox: { width: 260, height: 160 },
+            aspectRatio: 1.0
+          },
+          (decodedText) => {
+            if (isScanLockedRef.current) return;
+            isScanLockedRef.current = true;
 
-      scannerInstance.render(
-        (decodedText) => {
-          if (isScanLockedRef.current) return;
-          isScanLockedRef.current = true;
+            // Audio beep feedback
+            try {
+              const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+              const osc = audioCtx.createOscillator();
+              const gain = audioCtx.createGain();
+              osc.type = 'sine';
+              osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime);
+              gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+              osc.connect(gain);
+              gain.connect(audioCtx.destination);
+              osc.start();
+              osc.stop(audioCtx.currentTime + 0.12);
+            } catch (_) {}
 
-          // Audio beep feedback
-          try {
-            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime); // C6 tone
-            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.12);
-          } catch (_) {}
+            if (import.meta.env.DEV) {
+              setDebugInfo(`Barcode: ${decodedText}`);
+            }
 
-          onScanSuccess(decodedText.trim());
-          if (scannerInstance) {
-            scannerInstance.clear().catch(() => {});
+            // Immediately stop camera and trigger success handler
+            html5Qrcode.stop().catch(() => {}).finally(() => {
+              onScanSuccess(decodedText.trim());
+              onClose();
+            });
+          },
+          () => {
+            // Per-frame scan miss - expected
           }
-          onClose();
-        },
-        (errorMessage) => {
-          // Check for permission denied errors in error callback if triggered
-          if (errorMessage && (errorMessage.includes('Permission') || errorMessage.includes('NotAllowedError'))) {
-            setPermissionError("Camera permission is required to scan barcodes. Please allow camera access in your browser settings and try again.");
-          }
+        );
+
+        if (isMounted) {
           setIsInitializing(false);
+          if (import.meta.env.DEV) {
+            setDebugInfo('Camera: READY | Scanner: RUNNING');
+          }
         }
-      );
+      } catch (err: any) {
+        console.error('Camera start failure:', err);
+        if (isMounted) {
+          setIsInitializing(false);
+          const errStr = err?.name || err?.toString() || '';
+          if (errStr.includes('NotAllowedError') || errStr.includes('Permission')) {
+            setPermissionError("Camera permission was denied. Please allow camera access in your browser settings and try again.");
+          } else if (errStr.includes('NotFoundError') || errStr.includes('DevicesNotFoundError')) {
+            setPermissionError("No camera was found on this device.");
+          } else if (errStr.includes('NotReadableError') || errStr.includes('TrackStartError')) {
+            setPermissionError("The camera is currently being used by another application. Close it and try again.");
+          } else {
+            setPermissionError("Unable to start barcode scanner. Please try again or enter barcode manually.");
+          }
+        }
+      }
+    };
 
-      setIsInitializing(false);
-    } catch (err: any) {
-      console.error('Camera init error:', err);
-      setPermissionError(err?.message || "Unable to start barcode scanner. Please try again or enter barcode manually.");
-      setIsInitializing(false);
-    }
+    // Small delay to ensure container element ID is in DOM
+    const initTimer = setTimeout(() => {
+      startCamera();
+    }, 50);
 
     return () => {
-      if (scannerInstance) {
-        scannerInstance.clear().catch(() => {});
+      isMounted = false;
+      clearTimeout(initTimer);
+
+      if (html5QrcodeRef.current) {
+        if (html5QrcodeRef.current.isScanning) {
+          html5QrcodeRef.current.stop().catch(() => {});
+        }
       }
-      // Ensure all media stream tracks are stopped
+
+      // Explicitly stop all media tracks to turn off camera hardware LED indicator
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         navigator.mediaDevices.getUserMedia({ video: true })
           .then(stream => stream.getTracks().forEach(track => track.stop()))
@@ -192,7 +224,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
 
         {/* Modal Body */}
         <div className="p-6">
-          {/* Mode 1: Desktop / Laptop Hardware Scanner */}
+          {/* Mode 1: Desktop / Laptop Hardware POS Scanner */}
           {scanMode === 'desktop_hardware' && (
             <div className="space-y-5 text-center">
               <div className="w-16 h-16 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
@@ -250,20 +282,26 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
                   </button>
                 </div>
               ) : (
-                <div className="w-full relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 shadow-inner">
+                <div className="w-full relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 shadow-inner min-h-[240px] flex items-center justify-center">
                   {isInitializing && (
                     <div className="absolute inset-0 bg-slate-900/90 z-10 flex flex-col items-center justify-center text-white space-y-2">
                       <Loader2 className="w-7 h-7 animate-spin text-primary-400" />
                       <span className="text-xs font-bold">Starting camera...</span>
                     </div>
                   )}
-                  <div id="quickr-barcode-reader" className="w-full"></div>
+                  <div id="quickr-camera-viewport" className="w-full h-full min-h-[240px]"></div>
                 </div>
               )}
 
               <p className="text-xs text-slate-500 font-bold text-center mt-4">
                 Align the barcode inside the box
               </p>
+
+              {import.meta.env.DEV && debugInfo && (
+                <div className="mt-2 p-2 bg-slate-100 rounded text-[10px] font-mono text-slate-600 w-full text-center">
+                  {debugInfo}
+                </div>
+              )}
 
               <div className="pt-4 w-full flex flex-col gap-2">
                 <button
