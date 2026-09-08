@@ -223,15 +223,8 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
         }]);
       }
     } else {
-      // Default one empty item
-      if (activeProducts.length > 0) {
-        setItems([{
-          id: Date.now().toString(),
-          productId: activeProducts[0].id,
-          quantity: 1,
-          rate: activeProducts[0].sellingPrice
-        }]);
-      }
+      // Start new bill with empty cart items array
+      setItems([]);
     }
   }, [billingInitialData]);
 
@@ -622,7 +615,13 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
             </div>
             
             <div className="space-y-4">
-              {items.map((item) => (
+              {items.length === 0 ? (
+                <div className="p-8 border border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50">
+                  <p className="text-xs font-bold text-slate-500">Cart is empty</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Scan a product barcode or tap "Search / Add Item" to build the bill</p>
+                </div>
+              ) : (
+                items.map((item) => (
                 <div key={item.id} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex flex-col md:flex-row gap-4 items-end">
                   <div className="flex-grow w-full">
                     <label className="block text-xs font-semibold text-slate-500 mb-1">Product</label>
@@ -669,7 +668,8 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
                     </button>
                   )}
                 </div>
-              ))}
+              )))
+              }
             </div>
 
             <div className="flex items-center gap-3 mt-4">

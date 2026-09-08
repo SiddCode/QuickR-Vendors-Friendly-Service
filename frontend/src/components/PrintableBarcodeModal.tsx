@@ -126,10 +126,6 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
           <div className="text-xs font-mono font-extrabold tracking-widest text-slate-800 mt-2 bg-slate-100 px-3 py-1 rounded border border-slate-200">
             {product.barcode || 'NO BARCODE'}
           </div>
-
-          <div className="text-base font-extrabold text-slate-900 mt-3">
-            ₹{product.sellingPrice?.toLocaleString('en-IN')}
-          </div>
         </div>
 
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3">
@@ -175,12 +171,6 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
                 <svg ref={ref} className="w-[85%] h-[24mm]"></svg>
                 <div className="text-[14pt] font-mono font-black tracking-widest text-black mt-2 bg-slate-100 px-4 py-1 rounded border border-slate-300">
                   {product.barcode}
-                </div>
-              </div>
-
-              <div className="w-full pb-1">
-                <div className="text-[22pt] font-black text-black leading-none">
-                  ₹{product.sellingPrice?.toLocaleString('en-IN')}
                 </div>
               </div>
             </div>
