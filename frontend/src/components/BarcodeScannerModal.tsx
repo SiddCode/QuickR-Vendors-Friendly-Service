@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
-import { X, Camera, Laptop, Keyboard, AlertCircle, ArrowRight } from 'lucide-react';
+import { X, Camera, Laptop, Keyboard, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 
 interface BarcodeScannerModalProps {
   onScanSuccess: (barcode: string) => void;
@@ -24,7 +24,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
   );
 
   const [manualCodeInput, setManualCodeInput] = useState('');
-  const [permissionError] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState<boolean>(true);
+  const isScanLockedRef = useRef<boolean>(false);
 
   const manualInputRef = useRef<HTMLInputElement>(null);
   const hardwareBufferRef = useRef<string>('');
@@ -57,7 +59,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
 
       if (e.key === 'Enter') {
         const scannedVal = hardwareBufferRef.current.trim();
-        if (scannedVal) {
+        if (scannedVal && !isScanLockedRef.current) {
+          isScanLockedRef.current = true;
           e.preventDefault();
           onScanSuccess(scannedVal);
           onClose();
@@ -76,46 +79,84 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
   useEffect(() => {
     if (scanMode !== 'mobile_camera' && scanMode !== 'camera_override') return;
 
-    const scanner = new Html5QrcodeScanner(
-      'quickr-barcode-reader',
-      {
-        fps: 10,
-        qrbox: { width: 260, height: 160 },
-        aspectRatio: 1.0,
-        showTorchButtonIfSupported: true,
-        showZoomSliderIfSupported: false,
-        rememberLastUsedCamera: true
-      },
-      /* verbose= */ false
-    );
+    setPermissionError(null);
+    setIsInitializing(true);
+    isScanLockedRef.current = false;
 
-    scanner.render(
-      (decodedText) => {
-        // Audio beep feedback
-        try {
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime); // C6 tone
-          gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.start();
-          osc.stop(audioCtx.currentTime + 0.12);
-        } catch (_) {}
+    // Check mediaDevices camera support
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setPermissionError("Camera barcode scanning isn't supported in this browser. Please use manual entry.");
+      setIsInitializing(false);
+      return;
+    }
 
-        onScanSuccess(decodedText.trim());
-        scanner.clear().catch(() => {});
-        onClose();
-      },
-      () => {
-        // Continuous camera frame scan misses - expected
-      }
-    );
+    let scannerInstance: Html5QrcodeScanner | null = null;
+
+    try {
+      scannerInstance = new Html5QrcodeScanner(
+        'quickr-barcode-reader',
+        {
+          fps: 15,
+          qrbox: { width: 260, height: 160 },
+          aspectRatio: 1.0,
+          showTorchButtonIfSupported: true,
+          showZoomSliderIfSupported: false,
+          rememberLastUsedCamera: true
+        },
+        /* verbose= */ false
+      );
+
+      scannerInstance.render(
+        (decodedText) => {
+          if (isScanLockedRef.current) return;
+          isScanLockedRef.current = true;
+
+          // Audio beep feedback
+          try {
+            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(1046.5, audioCtx.currentTime); // C6 tone
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.12);
+          } catch (_) {}
+
+          onScanSuccess(decodedText.trim());
+          if (scannerInstance) {
+            scannerInstance.clear().catch(() => {});
+          }
+          onClose();
+        },
+        (errorMessage) => {
+          // Check for permission denied errors in error callback if triggered
+          if (errorMessage && (errorMessage.includes('Permission') || errorMessage.includes('NotAllowedError'))) {
+            setPermissionError("Camera permission is required to scan barcodes. Please allow camera access in your browser settings and try again.");
+          }
+          setIsInitializing(false);
+        }
+      );
+
+      setIsInitializing(false);
+    } catch (err: any) {
+      console.error('Camera init error:', err);
+      setPermissionError(err?.message || "Unable to start barcode scanner. Please try again or enter barcode manually.");
+      setIsInitializing(false);
+    }
 
     return () => {
-      scanner.clear().catch(() => {});
+      if (scannerInstance) {
+        scannerInstance.clear().catch(() => {});
+      }
+      // Ensure all media stream tracks are stopped
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => stream.getTracks().forEach(track => track.stop()))
+          .catch(() => {});
+      }
     };
   }, [scanMode, onScanSuccess, onClose]);
 
@@ -142,6 +183,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
           </div>
           <button
             onClick={onClose}
+            aria-label="Close barcode scanner modal"
             className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -198,24 +240,29 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
               {permissionError ? (
                 <div className="p-6 bg-rose-50 border border-rose-200 rounded-2xl text-center space-y-3 w-full">
                   <AlertCircle className="w-8 h-8 text-rose-500 mx-auto" />
-                  <p className="text-xs font-bold text-rose-800">Camera permission is required for camera scanning.</p>
-                  <p className="text-[11px] text-rose-600">Please allow camera access in browser settings or use manual barcode entry.</p>
+                  <p className="text-xs font-bold text-rose-800">{permissionError}</p>
                   <button
                     type="button"
                     onClick={() => setScanMode('manual_entry')}
-                    className="mt-2 w-full py-2 bg-white border border-rose-200 text-rose-700 text-xs font-bold rounded-xl"
+                    className="mt-2 w-full py-2.5 bg-white border border-rose-200 text-rose-700 text-xs font-bold rounded-xl hover:bg-rose-100 transition-colors shadow-2xs"
                   >
                     Enter barcode manually
                   </button>
                 </div>
               ) : (
                 <div className="w-full relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 shadow-inner">
+                  {isInitializing && (
+                    <div className="absolute inset-0 bg-slate-900/90 z-10 flex flex-col items-center justify-center text-white space-y-2">
+                      <Loader2 className="w-7 h-7 animate-spin text-primary-400" />
+                      <span className="text-xs font-bold">Starting camera...</span>
+                    </div>
+                  )}
                   <div id="quickr-barcode-reader" className="w-full"></div>
                 </div>
               )}
 
-              <p className="text-xs text-slate-400 font-medium text-center mt-4">
-                Point camera at QuickR product barcode (Code 128)
+              <p className="text-xs text-slate-500 font-bold text-center mt-4">
+                Align the barcode inside the box
               </p>
 
               <div className="pt-4 w-full flex flex-col gap-2">
@@ -248,7 +295,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
                   <Keyboard className="w-6 h-6" />
                 </div>
                 <h4 className="text-sm font-bold text-slate-800">Enter Barcode Manually</h4>
-                <p className="text-xs text-slate-400">Type the QuickR barcode code (e.g. QKR-7F3A92K1)</p>
+                <p className="text-xs text-slate-400">Type the QuickR product barcode</p>
               </div>
 
               <div>
@@ -258,8 +305,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
                   type="text"
                   required
                   value={manualCodeInput}
-                  onChange={(e) => setManualCodeInput(e.target.value.toUpperCase())}
-                  placeholder="QKR-XXXXXXXX"
+                  onChange={(e) => setManualCodeInput(e.target.value.trim())}
+                  placeholder="e.g. QKR-7F3A92K1"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3.5 text-sm font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500 uppercase tracking-wider"
                 />
               </div>
@@ -288,10 +335,11 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
         {/* Footer actions */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs">
           <span className="text-[11px] text-slate-400 font-medium">
-            {isMobileDevice ? 'Mobile Camera Scanner' : 'Desktop Hardware POS Scanner'}
+            {isMobileDevice ? 'Mobile Camera Scanner' : 'Desktop POS Scanner'}
           </span>
           <button
             onClick={onClose}
+            aria-label="Cancel scanner modal"
             className="px-4 py-1.5 bg-slate-200 text-slate-700 font-bold rounded-xl hover:bg-slate-300 transition-colors"
           >
             Cancel

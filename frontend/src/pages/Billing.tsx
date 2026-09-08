@@ -818,7 +818,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
             </div>
             <div>
               <h3 className="text-lg font-bold text-slate-800">Product Not Found</h3>
-              <p className="text-xs text-slate-500 mt-1">No product matches the scanned barcode</p>
+              <p className="text-xs text-slate-500 mt-1">This barcode is not linked to any product in your shop.</p>
             </div>
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
               <span className="block text-[10px] text-slate-400 font-bold uppercase">Barcode Value</span>
@@ -826,19 +826,19 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
             </div>
             <div className="flex gap-2 pt-2">
               <button
+                onClick={() => setNotFoundBarcode(null)}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-colors shadow-xs"
+              >
+                Close
+              </button>
+              <button
                 onClick={() => {
                   setNotFoundBarcode(null);
                   setIsCameraScannerOpen(true);
                 }}
-                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-colors shadow-xs"
+                className="flex-1 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition-colors border border-indigo-200"
               >
                 Try Again
-              </button>
-              <button
-                onClick={() => setNotFoundBarcode(null)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
-              >
-                Search Product
               </button>
             </div>
           </div>
