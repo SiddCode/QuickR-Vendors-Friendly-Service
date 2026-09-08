@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Store, Languages, Copy, Check, Loader2, ArrowRightLeft, Edit2, Save, X, Phone, ShieldCheck, ChevronRight } from 'lucide-react';
+import { Store, Languages, Copy, Check, Loader2, ArrowRightLeft, Edit2, Save, X, Phone, ShieldCheck, ChevronRight, Barcode } from 'lucide-react';
 import { api } from '../services/api';
 
 interface SettingsProps {
@@ -11,6 +11,10 @@ interface SettingsProps {
 export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   const { updateShopProfile } = useApp();
   const { language, setLanguage, t } = useLanguage();
+
+  const [barcodeScanningEnabled, setBarcodeScanningEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('quickr_barcode_scanning_enabled') === 'true';
+  });
 
   // Translation State
   const [direction, setDirection] = useState<'en-to-ta' | 'ta-to-en'>('en-to-ta');
@@ -583,6 +587,46 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Product Barcode Scanning Setting */}
+        <div className="flex items-start gap-4 pt-6 border-t border-slate-100">
+          <Barcode className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-3 min-w-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Product Barcode Scanning</h3>
+                <p className="text-xs text-slate-400">Enable camera scanning and USB/Bluetooth hardware barcode scanner during billing</p>
+              </div>
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem('quickr_barcode_scanning_enabled', 'true');
+                    setBarcodeScanningEnabled(true);
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${barcodeScanningEnabled ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  ON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem('quickr_barcode_scanning_enabled', 'false');
+                    setBarcodeScanningEnabled(false);
+                  }}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${!barcodeScanningEnabled ? 'bg-slate-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  OFF
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-100 font-medium">
+              {barcodeScanningEnabled 
+                ? '📷 Barcode scanning is ACTIVE on Billing. You can scan products with camera or USB/Bluetooth barcode scanner.'
+                : '🔒 Barcode scanning is OFF on Billing. Normal product search continues working as usual.'}
+            </p>
           </div>
         </div>
 

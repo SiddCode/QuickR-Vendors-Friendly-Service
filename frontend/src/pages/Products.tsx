@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle } from 'lucide-react';
+import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle, Barcode, Printer, Sparkles, CheckCircle2 } from 'lucide-react';
 import type { Product } from '../types';
+import { PrintableBarcodeModal } from '../components/PrintableBarcodeModal';
 
 export const CATEGORIES = {
   "MEN'S WEAR": ['Shirts', 'T-Shirts', 'Polos', 'Jeans', 'Trousers', 'Formal Pants', 'Casual Pants', 'Chinos', 'Cargo Pants', 'Track Pants', 'Lowers', 'Shorts', 'Blazers', 'Suits', 'Waistcoats', 'Jackets', 'Hoodies', 'Sweatshirts', 'Innerwear', 'Ethnic Wear', 'Kurtas', 'Pyjamas', 'Dhotis', 'Sherwanis'],
@@ -12,13 +13,18 @@ export const CATEGORIES = {
 };
 
 export const Products = () => {
-  const { products, addProduct, updateProduct, deleteProduct } = useApp();
+  const { products, addProduct, updateProduct, deleteProduct, generateProductBarcode } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   
+  // Printable & Newly Created Barcode Modal states
+  const [printProduct, setPrintProduct] = useState<Product | null>(null);
+  const [newlyCreatedProduct, setNewlyCreatedProduct] = useState<Product | null>(null);
+  const [generatingBarcodeId, setGeneratingBarcodeId] = useState<string | null>(null);
+
   // Form State
   const [formData, setFormData] = useState({
     name: '',
@@ -40,7 +46,8 @@ export const Products = () => {
   const allCategories = Array.from(new Set(products.map(p => p.category))).filter(Boolean);
 
   const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          (p.barcode && p.barcode.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesCat = filterCategory === 'All' || p.category === filterCategory;
     return matchesSearch && matchesCat;
   });
@@ -118,15 +125,30 @@ export const Products = () => {
 
     if (editingProduct) {
       await updateProduct(editingProduct.id, payload);
+      setIsModalOpen(false);
     } else {
-      await addProduct(payload);
+      const created = await addProduct(payload);
+      setIsModalOpen(false);
+      if (created) {
+        setNewlyCreatedProduct(created);
+      }
     }
-    setIsModalOpen(false);
   };
 
   const handleDeactivate = async (id: string) => {
     if (confirm('Are you sure you want to deactivate this product? It will no longer be selectable for new enquiries.')) {
       await deleteProduct(id);
+    }
+  };
+
+  const handleGenerateBarcode = async (prodId: string) => {
+    setGeneratingBarcodeId(prodId);
+    try {
+      await generateProductBarcode(prodId);
+    } catch (err: any) {
+      alert(err.message || 'Failed to generate barcode.');
+    } finally {
+      setGeneratingBarcodeId(null);
     }
   };
 
@@ -136,7 +158,7 @@ export const Products = () => {
         <h1 className="text-2xl font-bold text-slate-800">Products ({products.length})</h1>
         <button 
           onClick={() => handleOpenModal()}
-          className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-primary-700 transition-colors"
+          className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-primary-700 transition-colors shadow-sm"
         >
           <Plus className="w-5 h-5" />
           Add Product
@@ -148,10 +170,10 @@ export const Products = () => {
           <Search className="w-5 h-5 text-slate-400 absolute left-3 top-2.5" />
           <input 
             type="text" 
-            placeholder="Search products..." 
+            placeholder="Search products by name or barcode..." 
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400"
+            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 bg-white"
           />
         </div>
         <select 
@@ -193,6 +215,34 @@ export const Products = () => {
                     <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px] font-bold">
                       {prod.category}
                     </span>
+                  </div>
+
+                  {/* Barcode Display on Mobile */}
+                  <div className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <div className="flex items-center gap-1.5 font-mono text-slate-700">
+                      <Barcode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      {prod.barcode ? (
+                        <span className="font-bold text-xs">{prod.barcode}</span>
+                      ) : (
+                        <span className="text-[11px] text-slate-400 italic">No barcode</span>
+                      )}
+                    </div>
+                    {prod.barcode ? (
+                      <button
+                        onClick={() => setPrintProduct(prod)}
+                        className="px-2 py-1 bg-white hover:bg-primary-50 text-primary-600 border border-slate-200 rounded font-bold text-[10px] flex items-center gap-1 shadow-2xs"
+                      >
+                        <Printer className="w-3 h-3" /> Print
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleGenerateBarcode(prod.id)}
+                        disabled={generatingBarcodeId === prod.id}
+                        className="px-2 py-1 bg-primary-600 hover:bg-primary-700 text-white rounded font-bold text-[10px] flex items-center gap-1 shadow-2xs disabled:opacity-50"
+                      >
+                        <Sparkles className="w-3 h-3" /> {generatingBarcodeId === prod.id ? 'Generating...' : 'Generate'}
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between text-xs">
@@ -239,6 +289,7 @@ export const Products = () => {
                   <tr>
                     <th className="p-4 font-semibold">Product Info</th>
                     <th className="p-4 font-semibold">Category</th>
+                    <th className="p-4 font-semibold">Barcode</th>
                     <th className="p-4 font-semibold">Price</th>
                     <th className="p-4 font-semibold">Stock</th>
                     <th className="p-4 font-semibold">Status</th>
@@ -256,6 +307,31 @@ export const Products = () => {
                         <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">
                           {prod.category}
                         </span>
+                      </td>
+                      <td className="p-4">
+                        {prod.barcode ? (
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                              {prod.barcode}
+                            </span>
+                            <button
+                              onClick={() => setPrintProduct(prod)}
+                              className="px-2 py-1 bg-white hover:bg-primary-50 text-primary-600 border border-slate-200 rounded-lg font-bold text-xs flex items-center gap-1 shadow-2xs transition-colors"
+                              title="Print printable barcode label"
+                            >
+                              <Printer className="w-3.5 h-3.5" /> Print
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleGenerateBarcode(prod.id)}
+                            disabled={generatingBarcodeId === prod.id}
+                            className="px-2.5 py-1 bg-primary-50 hover:bg-primary-100 text-primary-700 border border-primary-200 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors disabled:opacity-50"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-primary-600" />
+                            {generatingBarcodeId === prod.id ? 'Generating...' : 'Generate Barcode'}
+                          </button>
+                        )}
                       </td>
                       <td className="p-4">
                         <p className="font-bold text-slate-700">₹{prod.sellingPrice}</p>
@@ -304,6 +380,7 @@ export const Products = () => {
         )}
       </div>
 
+      {/* Edit / Add Product Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex justify-center items-center p-4">
           <div className="bg-white w-full max-w-2xl rounded-2xl shadow-xl flex flex-col max-h-[90vh]">
@@ -510,6 +587,68 @@ export const Products = () => {
           </div>
         </div>
       )}
+
+      {/* Product Created Success Popup with Barcode & Print Option */}
+      {newlyCreatedProduct && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 text-center border border-slate-100 animate-fadeIn">
+            <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Product Created Successfully</h3>
+              <p className="text-xs text-slate-500 mt-1 font-semibold">{newlyCreatedProduct.name}</p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 text-left text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-semibold">Selling Price:</span>
+                <span className="font-bold text-slate-800">₹{newlyCreatedProduct.sellingPrice}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-semibold">Stock Availability:</span>
+                <span className="font-bold text-slate-800">{newlyCreatedProduct.availability} units</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                <span className="text-slate-500 font-bold">QuickR Barcode:</span>
+                <span className="font-mono font-extrabold text-primary-700 text-sm bg-primary-50 px-2.5 py-0.5 rounded border border-primary-200">
+                  {newlyCreatedProduct.barcode || 'N/A'}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              {newlyCreatedProduct.barcode && (
+                <button
+                  onClick={() => {
+                    const prodToPrint = newlyCreatedProduct;
+                    setNewlyCreatedProduct(null);
+                    setPrintProduct(prodToPrint);
+                  }}
+                  className="flex-1 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                >
+                  <Printer className="w-4 h-4" /> Print Barcode
+                </button>
+              )}
+              <button
+                onClick={() => setNewlyCreatedProduct(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Printable Barcode Label Modal */}
+      {printProduct && (
+        <PrintableBarcodeModal
+          product={printProduct}
+          onClose={() => setPrintProduct(null)}
+        />
+      )}
     </div>
   );
 };
+

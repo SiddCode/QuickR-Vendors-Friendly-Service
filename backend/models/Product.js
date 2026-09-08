@@ -17,6 +17,7 @@ const productSchema = new mongoose.Schema(
     hsnCode: { type: String, trim: true, default: '' },
     priceIncludesGst: { type: Boolean, default: true },
     isActive: { type: Boolean, default: true },
+    barcode: { type: String, trim: true, default: null, index: true },
     shopId: { type: String, required: true, default: 'demo-shop', index: true }
   },
   { timestamps: true }
@@ -24,6 +25,8 @@ const productSchema = new mongoose.Schema(
 
 productSchema.index({ shopId: 1, createdAt: -1, isActive: 1 });
 productSchema.index({ shopId: 1, id: 1 });
+productSchema.index({ shopId: 1, barcode: 1 }, { unique: true, partialFilterExpression: { barcode: { $type: 'string' } } });
 
 export const Product = mongoose.model('Product', productSchema);
+
 

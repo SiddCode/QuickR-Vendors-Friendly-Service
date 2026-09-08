@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Plus, X, Receipt, Search, Check, ChevronDown } from 'lucide-react';
+import { Plus, X, Receipt, Search, Check, ChevronDown, Camera, Barcode, AlertTriangle } from 'lucide-react';
+import { api } from '../services/api';
+import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
 
 interface BillingProps {
   setCurrentPage: (page: string) => void;
@@ -26,6 +28,13 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
 
   const activeProducts = products.filter(p => p.isActive);
 
+  // Barcode scanning state
+  const [barcodeEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('quickr_barcode_scanning_enabled') === 'true';
+  });
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
+  const [notFoundBarcode, setNotFoundBarcode] = useState<string | null>(null);
+  const [outOfStockProduct, setOutOfStockProduct] = useState<any | null>(null);
 
   const [isWalkIn, setIsWalkIn] = useState(!billingInitialData?.customerId);
   const [selectedCustomerId, setSelectedCustomerId] = useState(billingInitialData?.customerId || '');
@@ -66,6 +75,102 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   const [items, setItems] = useState<BillItem[]>([]);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
+
+  // Helper: Add or increment product in cart by scanned product
+  const addScannedProductToCart = (prod: any) => {
+    if (!prod) return;
+    if (prod.availability !== undefined && prod.availability <= 0) {
+      setOutOfStockProduct(prod);
+      return;
+    }
+
+    setItems(prevItems => {
+      // Check if product already exists in current bill
+      const existingIndex = prevItems.findIndex(i => i.productId === prod.id);
+      if (existingIndex >= 0) {
+        return prevItems.map((item, idx) => {
+          if (idx === existingIndex) {
+            return { ...item, quantity: item.quantity + 1 };
+          }
+          return item;
+        });
+      } else {
+        // If the cart only has 1 empty item or user is adding new item
+        return [
+          ...prevItems,
+          {
+            id: Date.now().toString(),
+            productId: prod.id,
+            quantity: 1,
+            rate: prod.sellingPrice
+          }
+        ];
+      }
+    });
+  };
+
+  // Helper: Process scanned barcode string
+  const processScannedBarcode = async (scannedCode: string) => {
+    const cleanCode = scannedCode.trim().toUpperCase();
+    if (!cleanCode) return;
+
+    try {
+      // First check local products list for fast instant lookup
+      const localMatch = products.find(p => p.barcode && p.barcode.toUpperCase() === cleanCode);
+      if (localMatch) {
+        addScannedProductToCart(localMatch);
+        return;
+      }
+
+      // Backend fast indexed lookup
+      const foundProduct = await api.getProductByBarcode(cleanCode);
+      if (foundProduct && foundProduct.id) {
+        addScannedProductToCart(foundProduct);
+      } else {
+        setNotFoundBarcode(cleanCode);
+      }
+    } catch (err: any) {
+      console.error('Barcode lookup error:', err);
+      setNotFoundBarcode(cleanCode);
+    }
+  };
+
+  // USB / Bluetooth Scanner Keyboard Wedge Event Listener
+  const keyBufferRef = useRef<string>('');
+  const lastKeyTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!barcodeEnabled) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Avoid capturing keyboard wedge input when user is explicitly typing into text inputs, textareas, or selects
+      const targetTag = (e.target as HTMLElement)?.tagName?.toUpperCase();
+      if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT') {
+        return;
+      }
+
+      const currentTime = Date.now();
+      // Scanners transmit characters very rapidly (< 50ms per key)
+      if (currentTime - lastKeyTimeRef.current > 100) {
+        keyBufferRef.current = '';
+      }
+      lastKeyTimeRef.current = currentTime;
+
+      if (e.key === 'Enter') {
+        const barcodeVal = keyBufferRef.current.trim();
+        if (barcodeVal && barcodeVal.startsWith('QKR-')) {
+          e.preventDefault();
+          processScannedBarcode(barcodeVal);
+        }
+        keyBufferRef.current = '';
+      } else if (e.key.length === 1) {
+        keyBufferRef.current += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [barcodeEnabled, products]);
 
   // Handle outside click to close customer dropdown
   useEffect(() => {
@@ -303,12 +408,20 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     }
   };
 
-
-
   return (
     <div className="flex-grow p-4 lg:p-8 space-y-6 bg-slate-50 min-h-screen font-sans">
       <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold text-slate-800 mb-6">New Bill</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-slate-800">New Bill</h1>
+          {barcodeEnabled && (
+            <button
+              onClick={() => setIsCameraScannerOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition-colors"
+            >
+              <Camera className="w-4 h-4" /> 📷 Scan Product
+            </button>
+          )}
+        </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-6">
           <div className="p-6 border-b border-slate-100 bg-slate-50/50">
@@ -482,7 +595,14 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
           </div>
 
           <div className="p-6">
-            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">Items</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Items</h2>
+              {barcodeEnabled && (
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 bg-indigo-50/80 text-indigo-700 px-3 py-1 rounded-lg border border-indigo-100">
+                  <Barcode className="w-3.5 h-3.5" /> Hardware Scanner Active
+                </div>
+              )}
+            </div>
             
             <div className="space-y-4">
               {items.map((item) => (
@@ -495,7 +615,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
                       className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-400"
                     >
                       {activeProducts.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
+                        <option key={p.id} value={p.id}>{p.name} {p.barcode ? `(${p.barcode})` : ''}</option>
                       ))}
                     </select>
                   </div>
@@ -535,12 +655,22 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
               ))}
             </div>
 
-            <button 
-              onClick={handleAddItem}
-              className="mt-4 flex items-center gap-1.5 text-primary-600 font-bold text-sm hover:bg-primary-50 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              <Plus className="w-4 h-4" /> Add Another Item
-            </button>
+            <div className="flex items-center gap-3 mt-4">
+              <button 
+                onClick={handleAddItem}
+                className="flex items-center gap-1.5 text-primary-600 font-bold text-sm hover:bg-primary-50 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <Plus className="w-4 h-4" /> Search / Add Item
+              </button>
+              {barcodeEnabled && (
+                <button
+                  onClick={() => setIsCameraScannerOpen(true)}
+                  className="flex items-center gap-1.5 text-indigo-600 font-bold text-sm hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Camera className="w-4 h-4" /> 📷 Scan Barcode
+                </button>
+              )}
+            </div>
           </div>
           
           <div className="p-6 border-t border-slate-100 bg-slate-50 flex flex-col md:flex-row justify-between gap-6">
@@ -648,10 +778,80 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
               <Receipt className="w-5 h-5" />
               {connectingMsg ? connectingMsg : (isSubmitting ? 'Generating Bill...' : 'Generate Bill')}
             </button>
-
           </div>
         </div>
       </div>
+
+      {/* Camera Barcode Scanner Modal */}
+      {isCameraScannerOpen && (
+        <BarcodeScannerModal
+          onScanSuccess={(barcodeVal) => {
+            processScannedBarcode(barcodeVal);
+          }}
+          onClose={() => setIsCameraScannerOpen(false)}
+        />
+      )}
+
+      {/* Product Not Found Modal */}
+      {notFoundBarcode && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center space-y-4 border border-slate-100 animate-fadeIn">
+            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Product Not Found</h3>
+              <p className="text-xs text-slate-500 mt-1">No product matches the scanned barcode</p>
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <span className="block text-[10px] text-slate-400 font-bold uppercase">Barcode Value</span>
+              <span className="font-mono text-sm font-extrabold text-slate-800">{notFoundBarcode}</span>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setNotFoundBarcode(null);
+                  setIsCameraScannerOpen(true);
+                }}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-colors shadow-xs"
+              >
+                Try Again
+              </button>
+              <button
+                onClick={() => setNotFoundBarcode(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
+              >
+                Search Product
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Out Of Stock Product Alert Modal */}
+      {outOfStockProduct && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center space-y-4 border border-slate-100 animate-fadeIn">
+            <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Product Out of Stock</h3>
+              <p className="text-xs text-slate-500 mt-1 font-semibold">{outOfStockProduct.name}</p>
+            </div>
+            <p className="text-xs text-slate-600 bg-amber-50 p-3 rounded-xl border border-amber-200 font-medium">
+              This product currently has 0 stock units available. Please update stock in Products before adding to bill.
+            </p>
+            <button
+              onClick={() => setOutOfStockProduct(null)}
+              className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-colors shadow-xs"
+            >
+              OK, Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

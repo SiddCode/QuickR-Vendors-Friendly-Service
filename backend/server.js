@@ -11,7 +11,9 @@ import { requireAuth } from './middleware/auth.js';
 import { calculatePriorityAndReason } from './services/priorityService.js';
 import { sendWhatsAppCloudMessage } from './services/whatsapp.js';
 import { normalizeIndianMobileNumber } from './utils/phone.js';
+import { generateUniqueBarcode } from './utils/barcode.js';
 import { adminRouter } from './routes/admin.js';
+
 import { aiRouter } from './routes/ai.js';
 import { whatsappRouter } from './routes/whatsapp.js';
 import { privacyRouter } from './routes/privacy.js';
@@ -1262,6 +1264,20 @@ app.get('/api/products/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/products/barcode/:barcode', requireAuth, async (req, res) => {
+  try {
+    const rawBarcode = req.params.barcode ? String(req.params.barcode).trim() : '';
+    if (!rawBarcode) return res.status(400).json({ error: 'Barcode parameter required' });
+
+    const prod = await Product.findOne({ shopId: req.user.shopId, barcode: rawBarcode });
+    if (!prod) return res.status(404).json({ error: 'Product not found for scanned barcode' });
+
+    res.json(prod);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to lookup product by barcode' });
+  }
+});
+
 app.post('/api/products', requireAuth, async (req, res) => {
   try {
     const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst } = req.body;
@@ -1274,6 +1290,9 @@ app.post('/api/products', requireAuth, async (req, res) => {
     if (isNaN(numGstRate) || numGstRate < 0 || !validRates.includes(numGstRate)) {
       return res.status(400).json({ error: 'GST rate must be one of [0, 5, 12, 18, 28]' });
     }
+
+    // Auto-generate authoritative QuickR barcode
+    const barcode = await generateUniqueBarcode(req.user.shopId);
 
     const id = `PROD-${Date.now()}`;
     const newProd = new Product({
@@ -1291,17 +1310,36 @@ app.post('/api/products', requireAuth, async (req, res) => {
       hsnCode: hsnCode ? String(hsnCode).trim() : '',
       priceIncludesGst: priceIncludesGst !== undefined ? (priceIncludesGst === true || priceIncludesGst === 'true') : true,
       isActive: isActive !== undefined ? isActive : true,
+      barcode,
       shopId: req.user.shopId
     });
 
     await newProd.save();
     res.status(201).json(newProd);
   } catch (err) {
+    console.error('Create product error:', err);
     res.status(500).json({ error: 'Failed to create product' });
   }
 });
 
+app.post('/api/products/:id/generate-barcode', requireAuth, async (req, res) => {
+  try {
+    const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });
+    if (!prod) return res.status(404).json({ error: 'Product not found' });
+
+    if (!prod.barcode) {
+      prod.barcode = await generateUniqueBarcode(req.user.shopId);
+      await prod.save();
+    }
+
+    res.json(prod);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate barcode' });
+  }
+});
+
 app.put('/api/products/:id', requireAuth, async (req, res) => {
+
   try {
     const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst } = req.body;
     const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });

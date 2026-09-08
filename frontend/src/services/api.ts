@@ -148,7 +148,21 @@ export const api = {
     return handleResponse<Product[]>(res);
   },
 
+  async getProductByBarcode(barcode: string): Promise<Product> {
+    const res = await fetch(`${API_BASE_URL}/products/barcode/${encodeURIComponent(barcode)}`, { credentials: 'include' });
+    return handleResponse<Product>(res);
+  },
+
+  async generateProductBarcode(productId: string): Promise<Product> {
+    const res = await fetch(`${API_BASE_URL}/products/${productId}/generate-barcode`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return handleResponse<Product>(res);
+  },
+
   async createProduct(data: Omit<Product, 'id' | 'createdAt'>): Promise<Product> {
+
     const res = await fetch(`${API_BASE_URL}/products`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -55,8 +55,10 @@ export interface Product {
   hsnCode?: string;
   priceIncludesGst?: boolean;
   isActive: boolean;
+  barcode?: string | null;
   createdAt: string;
 }
+
 
 export interface Enquiry {
   id: string;

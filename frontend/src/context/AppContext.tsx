@@ -35,7 +35,9 @@ interface AppContextType {
   register: (ownerName: string, shopName: string, email: string, pass: string) => Promise<boolean>;
   logout: () => Promise<void>;
   addProduct: (product: Omit<Product, 'id' | 'createdAt'>) => Promise<Product | null>;
+  generateProductBarcode: (productId: string) => Promise<Product | null>;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<Product | null>;
+
   deleteProduct: (id: string) => Promise<boolean>;
   addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
   deleteCustomer: (id: string) => Promise<boolean>;
@@ -527,6 +529,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const generateProductBarcode = async (productId: string): Promise<Product | null> => {
+    try {
+      setIsLoading(true);
+      const updated = await api.generateProductBarcode(productId);
+      setProducts(prev => prev.map(p => p.id === productId ? updated : p));
+      return updated;
+    } catch (err: any) {
+      alert(`Unable to generate barcode: ${err.message || 'Server error'}`);
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <AppContext.Provider value={{
       currentUser,
@@ -548,6 +564,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       register,
       logout,
       addProduct,
+      generateProductBarcode,
       updateProduct,
       deleteProduct,
       addCustomer,
