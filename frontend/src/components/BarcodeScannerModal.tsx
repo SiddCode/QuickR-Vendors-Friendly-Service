@@ -143,6 +143,8 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
       isStartingRef.current = true;
 
       try {
+        console.log("[QuickR Camera] Permission & initialization sequence started");
+
         // STEP 14: VERIFY CONTAINER ID IN DOM
         const containerElem = document.getElementById(containerId);
         if (!containerElem) {
@@ -160,21 +162,55 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
           html5QrcodeRef.current = null;
         }
 
-        // STEP 12: TEST CAMERA DIRECTLY IN DEV MODE FIRST
-        if (import.meta.env.DEV) {
-          try {
-            const testStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-            directStreamRef.current = testStream;
-            // Instantly stop temporary test stream tracks
-            testStream.getTracks().forEach(t => t.stop());
-            directStreamRef.current = null;
-            if (isMounted) {
-              setDevDiag(prev => ({ ...prev, directStreamOk: true }));
-            }
-          } catch (streamErr: any) {
-            console.warn("Direct getUserMedia test warning:", streamErr);
-            if (isMounted) {
-              setDevDiag(prev => ({ ...prev, directStreamOk: false }));
+        // STEP 2: Request temporary camera permission first to unlock device labels on mobile
+        let tempPermissionStream: MediaStream | null = null;
+        try {
+          console.log("[QuickR Camera] Requesting initial permission to reveal camera labels...");
+          tempPermissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          console.log("[QuickR Camera] Initial permission granted successfully");
+        } catch (permErr) {
+          console.warn("[QuickR Camera] Initial permission request error:", permErr);
+        } finally {
+          // Immediately stop temporary permission stream tracks
+          if (tempPermissionStream) {
+            tempPermissionStream.getTracks().forEach(t => t.stop());
+            tempPermissionStream = null;
+          }
+        }
+
+        // STEP 1: Enumerate available video inputs
+        let videoDevices: MediaDeviceInfo[] = [];
+        try {
+          const allDevices = await navigator.mediaDevices.enumerateDevices();
+          videoDevices = allDevices.filter(d => d.kind === 'videoinput');
+          console.log("[QuickR Camera] EnumerateDevices result:", allDevices);
+          console.log("[QuickR Camera] Video input devices:", videoDevices);
+        } catch (enumErr) {
+          console.warn("[QuickR Camera] EnumerateDevices failed:", enumErr);
+        }
+
+        // STEP 2: Find Rear/Back Camera by Label Priority
+        let selectedRearDeviceId: string | null = null;
+        let selectedRearLabel: string = 'Default Rear Camera';
+
+        if (videoDevices.length > 0) {
+          const rearKeywords = ['back', 'rear', 'environment', 'main', 'primary', '0, facing back'];
+          const matchedRearDevice = videoDevices.find(d => {
+            const labelLower = (d.label || '').toLowerCase();
+            return rearKeywords.some(kw => labelLower.includes(kw));
+          });
+
+          if (matchedRearDevice && matchedRearDevice.deviceId) {
+            selectedRearDeviceId = matchedRearDevice.deviceId;
+            selectedRearLabel = matchedRearDevice.label || matchedRearDevice.deviceId;
+            console.log("[QuickR Camera] Found rear camera by label match:", selectedRearLabel, selectedRearDeviceId);
+          } else {
+            // Fallback: take the last video input device (often the primary rear camera on dual/multi-camera Android phones)
+            const fallbackDevice = videoDevices[videoDevices.length - 1];
+            if (fallbackDevice && fallbackDevice.deviceId) {
+              selectedRearDeviceId = fallbackDevice.deviceId;
+              selectedRearLabel = fallbackDevice.label || fallbackDevice.deviceId;
+              console.log("[QuickR Camera] Selected fallback video device:", selectedRearLabel, selectedRearDeviceId);
             }
           }
         }
@@ -205,7 +241,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
             osc.stop(audioCtx.currentTime + 0.12);
           } catch (_) {}
 
-          // STEP 16 & 19: Camera Cleanup upon scan
+          // Camera Cleanup upon scan
           if (localScannerInstance && localScannerInstance.isScanning) {
             localScannerInstance.stop()
               .catch(() => {})
@@ -225,46 +261,85 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
           aspectRatio: 1.0
         };
 
-        // Try environment camera first
-        try {
-          await localScannerInstance.start(
-            { facingMode: { ideal: "environment" } },
-            scanConfig,
-            scanCallback,
-            () => {} // frame miss
-          );
-        } catch (firstErr: any) {
-          // STEP 11: Fallback without facingMode constraint if initial facingMode failed
-          console.warn("Camera start with environment facingMode failed, retrying simple video constraint...", firstErr);
-          await localScannerInstance.start(
-            { facingMode: "environment" },
-            scanConfig,
-            scanCallback,
-            () => {}
-          ).catch(async () => {
-            // Final fallback: boolean true constraint
-            await localScannerInstance!.start(
-              true as any,
+        let startedSuccessfully = false;
+
+        // Attempt 1: Start using exact rear camera deviceId if detected
+        if (selectedRearDeviceId) {
+          try {
+            console.log(`[QuickR Camera] Attempt 1: Starting Html5Qrcode with deviceId: ${selectedRearDeviceId} (${selectedRearLabel})`);
+            await localScannerInstance.start(
+              selectedRearDeviceId,
               scanConfig,
               scanCallback,
               () => {}
             );
-          });
+            startedSuccessfully = true;
+            console.log("[QuickR Camera] Attempt 1 SUCCESS: Camera active with deviceId!");
+          } catch (att1Err) {
+            console.warn("[QuickR Camera] Attempt 1 (deviceId) failed:", att1Err);
+          }
+        }
+
+        // Attempt 2: Start with facingMode "environment"
+        if (!startedSuccessfully) {
+          try {
+            console.log("[QuickR Camera] Attempt 2: Starting Html5Qrcode with facingMode: 'environment'");
+            await localScannerInstance.start(
+              { facingMode: "environment" },
+              scanConfig,
+              scanCallback,
+              () => {}
+            );
+            startedSuccessfully = true;
+            console.log("[QuickR Camera] Attempt 2 SUCCESS: Camera active with facingMode environment!");
+          } catch (att2Err) {
+            console.warn("[QuickR Camera] Attempt 2 (facingMode string) failed:", att2Err);
+          }
+        }
+
+        // Attempt 3: Start with facingMode ideal "environment"
+        if (!startedSuccessfully) {
+          try {
+            console.log("[QuickR Camera] Attempt 3: Starting Html5Qrcode with facingMode ideal 'environment'");
+            await localScannerInstance.start(
+              { facingMode: { ideal: "environment" } },
+              scanConfig,
+              scanCallback,
+              () => {}
+            );
+            startedSuccessfully = true;
+            console.log("[QuickR Camera] Attempt 3 SUCCESS: Camera active with facingMode ideal environment!");
+          } catch (att3Err) {
+            console.warn("[QuickR Camera] Attempt 3 (facingMode ideal object) failed:", att3Err);
+          }
+        }
+
+        // Attempt 4: Fallback to boolean constraint true
+        if (!startedSuccessfully) {
+          console.log("[QuickR Camera] Attempt 4: Fallback starting Html5Qrcode with default video constraint (true)");
+          await localScannerInstance.start(
+            true as any,
+            scanConfig,
+            scanCallback,
+            () => {}
+          );
+          startedSuccessfully = true;
+          console.log("[QuickR Camera] Attempt 4 SUCCESS: Default camera active!");
         }
 
         if (isMounted) {
           setIsInitializing(false);
-          setDevDiag(prev => ({
-            ...prev,
+          setDevDiag({
+            errorName: undefined,
+            errorMessage: undefined,
             secureContext,
             hasMediaDevices,
-            hasGetUserMedia
-          }));
+            hasGetUserMedia,
+            directStreamOk: true
+          });
         }
       } catch (err: any) {
-        console.error("QuickR barcode scanner startup failed", err);
-        console.error("Error name:", err?.name);
-        console.error("Error message:", err?.message);
+        console.error("[QuickR Camera] START FAILED:", err?.name, err?.message, err);
 
         if (isMounted) {
           setIsInitializing(false);
@@ -276,7 +351,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
             hasGetUserMedia
           });
 
-          // STEP 10: CAMERA PERMISSION / ERROR CLASSIFICATION
+          // STEP 11: CAMERA PERMISSION / ERROR CLASSIFICATION
           const errStr = (err?.name || '') + ' ' + (err?.message || '') + ' ' + String(err);
           
           if (errStr.includes('NotAllowedError') || errStr.includes('PermissionDeniedError') || errStr.includes('Permission')) {
@@ -290,7 +365,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({ onScan
           } else if (errStr.includes('SecurityError')) {
             setPermissionError("Camera access was blocked due to security settings or insecure origin.");
           } else {
-            setPermissionError("Unable to start the camera.\nPlease try again or enter the barcode manually.");
+            setPermissionError(`Unable to start camera: ${err?.message || 'Unknown error'}.\nPlease try again or enter barcode manually.`);
           }
         }
       } finally {
