@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
           </button>
         )}
         <h1 className="text-sm sm:text-xl font-bold text-slate-800 tracking-tight truncate">
-          {title || `${t('header.goodMorning')}, ${shopName}`}
+          {title || (shopName ? `${t('header.welcome')}, ${shopName}` : t('header.welcome'))}
         </h1>
         {connectionState === 'checking' && (
           <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">

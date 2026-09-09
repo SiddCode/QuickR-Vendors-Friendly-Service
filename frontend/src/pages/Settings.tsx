@@ -665,16 +665,23 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
               <p className="text-xs text-slate-400">Install QuickR directly on your phone or computer for fast, standalone access</p>
             </div>
             <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                onClick={() => {
-                  const event = new CustomEvent('trigger-pwa-install');
-                  window.dispatchEvent(event);
-                }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-              >
-                <span>Install QuickR App</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+              {typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true) ? (
+                <div className="px-4 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-xs rounded-xl flex items-center gap-2">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>QuickR is already installed</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    const event = new CustomEvent('trigger-pwa-install');
+                    window.dispatchEvent(event);
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                >
+                  <span>Install QuickR App</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              )}
               <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-xl">
                 Supported on Chrome, Edge & Safari
               </span>

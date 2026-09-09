@@ -30,6 +30,7 @@ export const InstallPwaPrompt: React.FC = () => {
     const handleBeforeInstallPrompt = (e: Event) => {
       // Prevent browser default mini-infobar prompt
       e.preventDefault();
+      (window as any).deferredPwaPrompt = e;
       setDeferredPrompt(e);
       if (!isAlreadyInstalled()) {
         setShowBanner(true);
@@ -37,6 +38,7 @@ export const InstallPwaPrompt: React.FC = () => {
     };
 
     const handleAppInstalled = () => {
+      (window as any).deferredPwaPrompt = null;
       setDeferredPrompt(null);
       setShowBanner(false);
       console.log('[QuickR PWA] App successfully installed');
@@ -53,11 +55,13 @@ export const InstallPwaPrompt: React.FC = () => {
         return;
       }
 
-      if (deferredPrompt) {
+      const activePrompt = deferredPrompt || (window as any).deferredPwaPrompt;
+
+      if (activePrompt) {
         try {
           // Trigger native browser install prompt
-          deferredPrompt.prompt();
-          const choiceResult = await deferredPrompt.userChoice;
+          activePrompt.prompt();
+          const choiceResult = await activePrompt.userChoice;
           console.log('[QuickR PWA] User choice outcome:', choiceResult.outcome);
           if (choiceResult.outcome === 'accepted') {
             setShowBanner(false);
@@ -65,7 +69,8 @@ export const InstallPwaPrompt: React.FC = () => {
         } catch (err) {
           console.error('[QuickR PWA] Install prompt error:', err);
         } finally {
-          // Clear consumed one-shot event prompt
+          // Clear consumed one-shot event prompt globally and locally
+          (window as any).deferredPwaPrompt = null;
           setDeferredPrompt(null);
         }
       } else {

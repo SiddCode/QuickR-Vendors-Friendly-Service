@@ -22,7 +22,7 @@
     "logout": "Logout"
   },
   "header": {
-    "goodMorning": "Good morning",
+    "welcome": "Welcome",
     "searchPlaceholder": "Search customers, products, sales...",
     "shopResults": "Shop Results",
     "clickToNavigate": "Click to navigate",
