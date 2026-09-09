@@ -1269,7 +1269,7 @@ app.get('/api/products/barcode/:barcode', requireAuth, async (req, res) => {
     const rawBarcode = req.params.barcode ? String(req.params.barcode).trim() : '';
     if (!rawBarcode) return res.status(400).json({ error: 'Barcode parameter required' });
 
-    const prod = await Product.findOne({ shopId: req.user.shopId, barcode: rawBarcode });
+    const prod = await Product.findOne({ shopId: req.user.shopId, barcode: rawBarcode, isActive: true }).lean();
     if (!prod) return res.status(404).json({ error: 'Product not found for scanned barcode' });
 
     res.json(prod);
