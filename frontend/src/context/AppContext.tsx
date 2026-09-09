@@ -59,6 +59,8 @@ interface AppContextType {
   checkHealth: () => Promise<boolean>;
   refreshData: () => Promise<void>;
   resetData: () => void;
+  pwaInstallPrompt: any;
+  triggerPwaInstall: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -81,6 +83,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error] = useState<string | null>(null);
+  const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
+
+  // Application-level PWA beforeinstallprompt capture
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      console.log('[QuickR PWA] beforeinstallprompt captured at AppContext level');
+      (window as any).deferredPwaPrompt = e;
+      setPwaInstallPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      console.log('[QuickR PWA] appinstalled event received');
+      (window as any).deferredPwaPrompt = null;
+      setPwaInstallPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const triggerPwaInstall = async () => {
+    const activePrompt = pwaInstallPrompt || (window as any).deferredPwaPrompt;
+    if (activePrompt) {
+      console.log('[QuickR PWA] native install prompt triggered from AppContext');
+      try {
+        activePrompt.prompt();
+        const choice = await activePrompt.userChoice;
+        console.log('[QuickR PWA] user choice:', choice?.outcome);
+      } catch (err) {
+        console.error('[QuickR PWA] error prompting install:', err);
+      } finally {
+        (window as any).deferredPwaPrompt = null;
+        setPwaInstallPrompt(null);
+      }
+    } else {
+      console.log('[QuickR PWA] native install prompt unavailable');
+    }
+  };
 
   // Warm-up health check with exponential backoff (2s, 5s, 10s)
   const warmUpBackend = async (attempt = 1): Promise<boolean> => {
@@ -584,7 +630,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       connectionState,
       checkHealth,
       refreshData: loadBusinessData,
-      resetData: loadBusinessData
+      resetData: loadBusinessData,
+      pwaInstallPrompt,
+      triggerPwaInstall
     }}>
 
       {children}

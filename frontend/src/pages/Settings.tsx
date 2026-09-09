@@ -9,7 +9,7 @@ interface SettingsProps {
 }
 
 export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
-  const { updateShopProfile } = useApp();
+  const { updateShopProfile, triggerPwaInstall } = useApp();
   const { language, setLanguage, t } = useLanguage();
 
   const [barcodeScanningEnabled, setBarcodeScanningEnabled] = useState<boolean>(() => {
@@ -672,7 +672,10 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
                 </div>
               ) : (
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    if (triggerPwaInstall) {
+                      await triggerPwaInstall();
+                    }
                     const event = new CustomEvent('trigger-pwa-install');
                     window.dispatchEvent(event);
                   }}

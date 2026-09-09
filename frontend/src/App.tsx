@@ -170,7 +170,7 @@ const AppContent: React.FC = () => {
   };
 
   const pageTitles: Record<string, string> = {
-    dashboard: `Good morning, ${shopName}`,
+    dashboard: shopName ? `Welcome, ${shopName}` : 'Welcome',
     customers: 'Customers',
     'customer-profile': 'Customer Profile',
     'new-enquiry': 'New Enquiry',
