@@ -3,13 +3,16 @@
  * Handles Meta Graph API communication, phone number sanitization, mock fallback mode, and security.
  */
 
+import { WhatsAppConnection } from '../models/WhatsAppConnection.js';
+import { decryptToken } from '../utils/crypto.js';
+
 export const getWhatsAppConfig = () => {
-  const version = process.env.WHATSAPP_API_VERSION || 'v19.0';
+  const version = process.env.META_API_VERSION || process.env.WHATSAPP_API_VERSION || 'v19.0';
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
   const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '';
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || '';
-  const appSecret = process.env.WHATSAPP_APP_SECRET || '';
+  const appSecret = process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET || '';
 
   const configured = Boolean(accessToken && phoneNumberId);
 
@@ -38,11 +41,36 @@ export const sanitizePhoneNumber = (phone) => {
   return digits;
 };
 
-export const sendWhatsAppCloudMessage = async (recipientPhone, textMessage) => {
-  const config = getWhatsAppConfig();
+export const sendWhatsAppCloudMessage = async (recipientPhone, textMessage, shopId = null) => {
+  let accessToken = '';
+  let phoneNumberId = '';
+  let apiVersion = process.env.META_API_VERSION || process.env.WHATSAPP_API_VERSION || 'v19.0';
 
-  // Fallback to Mock Mode if credentials are not configured
-  if (!config.configured) {
+  // 1. Try shop-specific Meta WhatsApp connection if shopId provided
+  if (shopId) {
+    try {
+      const conn = await WhatsAppConnection.findOne({ shopId, connected: true, connectionStatus: 'CONNECTED' });
+      if (conn && conn.encryptedAccessToken && conn.phoneNumberId) {
+        const decrypted = decryptToken(conn.encryptedAccessToken, conn.tokenIV, conn.tokenAuthTag);
+        if (decrypted) {
+          accessToken = decrypted;
+          phoneNumberId = conn.phoneNumberId;
+        }
+      }
+    } catch (e) {
+      console.warn('[WHATSAPP SERVICE] Error fetching shop WhatsApp connection:', e.message);
+    }
+  }
+
+  // 2. Fall back to global env variables if no shop-specific connection found
+  if (!accessToken || !phoneNumberId) {
+    const config = getWhatsAppConfig();
+    accessToken = config._accessToken;
+    phoneNumberId = config.phoneNumberId;
+  }
+
+  // Fallback to Mock Mode if no valid credentials found
+  if (!accessToken || !phoneNumberId) {
     return {
       success: true,
       status: 'mock',
@@ -56,7 +84,7 @@ export const sendWhatsAppCloudMessage = async (recipientPhone, textMessage) => {
     throw new Error('Invalid recipient phone number format.');
   }
 
-  const url = `https://graph.facebook.com/${config.version}/${config.phoneNumberId}/messages`;
+  const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
 
   const payload = {
     messaging_product: 'whatsapp',

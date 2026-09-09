@@ -1300,5 +1300,91 @@ export const api = {
   async getCampaignAnalyticsSummary(): Promise<{ success: boolean; summaries: any[] }> {
     const res = await fetch(`${API_BASE_URL}/campaigns/analytics/summary`, { credentials: 'include' });
     return handleResponse<{ success: boolean; summaries: any[] }>(res);
+  },
+
+  // WhatsApp Business Connection (Phase 1 - Authorization Only)
+  async getWhatsAppConnectionStatus(): Promise<{
+    connected: boolean;
+    status: string;
+    businessName: string;
+    displayPhoneNumber: string;
+    businessAccountId?: string;
+    phoneNumberId?: string;
+    connectedAt?: string;
+    metaAppConfigured?: boolean;
+    metaAppId?: string;
+    metaConfigId?: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/whatsapp/status`, { credentials: 'include' });
+    return handleResponse<{
+      connected: boolean;
+      status: string;
+      businessName: string;
+      displayPhoneNumber: string;
+      businessAccountId?: string;
+      phoneNumberId?: string;
+      connectedAt?: string;
+      metaAppConfigured?: boolean;
+      metaAppId?: string;
+      metaConfigId?: string;
+    }>(res);
+  },
+
+  async connectWhatsApp(): Promise<{
+    success: boolean;
+    authUrl?: string;
+    metaAppId?: string;
+    metaConfigId?: string;
+    stateToken?: string;
+    error?: string;
+    metaConfigRequired?: boolean;
+    details?: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/whatsapp/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include'
+    });
+    return handleResponse<{
+      success: boolean;
+      authUrl?: string;
+      metaAppId?: string;
+      metaConfigId?: string;
+      stateToken?: string;
+      error?: string;
+      metaConfigRequired?: boolean;
+      details?: string;
+    }>(res);
+  },
+
+  async verifyEmbeddedSignup(payload: { accessToken: string; businessAccountId: string; phoneNumberId: string }): Promise<{
+    success: boolean;
+    connected: boolean;
+    status: string;
+    businessName: string;
+    displayPhoneNumber: string;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/whatsapp/verify-embedded-signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload)
+    });
+    return handleResponse<{
+      success: boolean;
+      connected: boolean;
+      status: string;
+      businessName: string;
+      displayPhoneNumber: string;
+    }>(res);
+  },
+
+  async disconnectWhatsApp(): Promise<{ success: boolean; connected: boolean; status: string }> {
+    const res = await fetch(`${API_BASE_URL}/whatsapp/disconnect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include'
+    });
+    return handleResponse<{ success: boolean; connected: boolean; status: string }>(res);
   }
 };

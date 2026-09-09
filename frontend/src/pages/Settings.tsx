@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Store, Languages, Copy, Check, Loader2, ArrowRightLeft, Edit2, Save, X, Phone, ShieldCheck, ChevronRight, Barcode } from 'lucide-react';
+import { Store, Languages, Copy, Check, Loader2, ArrowRightLeft, Edit2, Save, X, Phone, ShieldCheck, ChevronRight, Barcode, MessageCircle, AlertCircle, HelpCircle, LogOut } from 'lucide-react';
 import { api } from '../services/api';
 
 interface SettingsProps {
@@ -15,6 +15,28 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   const [barcodeScanningEnabled, setBarcodeScanningEnabled] = useState<boolean>(() => {
     return localStorage.getItem('quickr_barcode_scanning_enabled') === 'true';
   });
+
+  // WhatsApp Business Connection State
+  const [waStatus, setWaStatus] = useState<{
+    connected: boolean;
+    status: string;
+    businessName: string;
+    displayPhoneNumber: string;
+    connectedAt?: string;
+    metaAppConfigured?: boolean;
+  }>({
+    connected: false,
+    status: 'NOT_CONNECTED',
+    businessName: '',
+    displayPhoneNumber: ''
+  });
+  const [loadingWaStatus, setLoadingWaStatus] = useState(true);
+  const [isConnectingWa, setIsConnectingWa] = useState(false);
+  const [isDisconnectingWa, setIsDisconnectingWa] = useState(false);
+  const [waSuccessMsg, setWaSuccessMsg] = useState<string | null>(null);
+  const [waErrMsg, setWaErrMsg] = useState<string | null>(null);
+  const [waConfigRequired, setWaConfigRequired] = useState(false);
+  const [showWaInstructions, setShowWaInstructions] = useState(false);
 
   // Translation State
   const [direction, setDirection] = useState<'en-to-ta' | 'ta-to-en'>('en-to-ta');
@@ -68,6 +90,96 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
     { code: '10', name: 'Bihar' },
     { code: '23', name: 'Madhya Pradesh' }
   ];
+
+  useEffect(() => {
+    loadProfile();
+    loadWhatsAppStatus();
+    checkUrlCallbackParams();
+  }, []);
+
+  const checkUrlCallbackParams = () => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('whatsapp_status');
+    const msg = params.get('msg');
+
+    if (status === 'connected') {
+      setWaSuccessMsg('WhatsApp Business connected successfully!');
+      setTimeout(() => setWaSuccessMsg(null), 6000);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (status === 'failed') {
+      setWaErrMsg(msg || 'We couldn\'t connect WhatsApp Business. Please try again.');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
+
+  const loadWhatsAppStatus = async () => {
+    setLoadingWaStatus(true);
+    try {
+      const data = await api.getWhatsAppConnectionStatus();
+      setWaStatus({
+        connected: data.connected,
+        status: data.status || (data.connected ? 'CONNECTED' : 'NOT_CONNECTED'),
+        businessName: data.businessName || '',
+        displayPhoneNumber: data.displayPhoneNumber || '',
+        connectedAt: data.connectedAt,
+        metaAppConfigured: data.metaAppConfigured
+      });
+    } catch (err: any) {
+      console.error('Failed to load WhatsApp status:', err);
+    } finally {
+      setLoadingWaStatus(false);
+    }
+  };
+
+  const handleConnectWhatsApp = async () => {
+    setIsConnectingWa(true);
+    setWaErrMsg(null);
+    setWaSuccessMsg(null);
+    setWaConfigRequired(false);
+
+    try {
+      const res = await api.connectWhatsApp();
+
+      if (res.authUrl) {
+        // Redirect to official Meta OAuth onboarding page
+        window.location.href = res.authUrl;
+        return;
+      }
+
+      if (res.metaConfigRequired || res.error) {
+        setWaErrMsg(res.error || 'Meta credentials are not configured on the server.');
+        setWaConfigRequired(!!res.metaConfigRequired);
+      }
+    } catch (err: any) {
+      setWaErrMsg(err.message || 'We couldn\'t connect WhatsApp Business. Please try again.');
+    } finally {
+      setIsConnectingWa(false);
+    }
+  };
+
+  const handleDisconnectWhatsApp = async () => {
+    setIsDisconnectingWa(true);
+    setWaErrMsg(null);
+    setWaSuccessMsg(null);
+
+    try {
+      const res = await api.disconnectWhatsApp();
+      if (res.success) {
+        setWaStatus({
+          connected: false,
+          status: 'NOT_CONNECTED',
+          businessName: '',
+          displayPhoneNumber: ''
+        });
+        setWaSuccessMsg('WhatsApp Business disconnected.');
+        setTimeout(() => setWaSuccessMsg(null), 4000);
+      }
+    } catch (err: any) {
+      setWaErrMsg(err.message || 'Failed to disconnect WhatsApp Business.');
+    } finally {
+      setIsDisconnectingWa(false);
+    }
+  };
 
   useEffect(() => {
     loadProfile();
@@ -627,6 +739,154 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
                 ? '📷 Barcode scanning is ACTIVE on Billing. You can scan products with camera or USB/Bluetooth barcode scanner.'
                 : '🔒 Barcode scanning is OFF on Billing. Normal product search continues working as usual.'}
             </p>
+          </div>
+        </div>
+
+        {/* WhatsApp Business Connection Section */}
+        <div className="flex items-start gap-4 pt-6 border-t border-slate-100">
+          <MessageCircle className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-4 min-w-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">WhatsApp Business</h3>
+                <p className="text-xs text-slate-400">Connect your business WhatsApp to send customer offers and campaigns from QuickR.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWaInstructions(prev => !prev)}
+                className="text-xs font-bold text-primary-600 hover:text-primary-700 flex items-center gap-1 bg-primary-50 px-2.5 py-1 rounded-lg border border-primary-100 transition-colors"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                {showWaInstructions ? 'Hide setup instructions' : 'How to connect?'}
+              </button>
+            </div>
+
+            {/* Instruction Accordion */}
+            {showWaInstructions && (
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-2.5 animate-fadeIn">
+                <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <HelpCircle className="w-4 h-4 text-emerald-600" />
+                  Official Meta WhatsApp Business Setup Instructions
+                </h4>
+                <ol className="list-decimal list-inside space-y-1.5 text-slate-600 font-medium pl-1">
+                  <li>Tap <strong>"Connect WhatsApp"</strong> below.</li>
+                  <li>Sign in to Meta (Facebook) when prompted.</li>
+                  <li>Select or create your Meta Business Account.</li>
+                  <li>Select your WhatsApp Business account.</li>
+                  <li>Select and verify your official business phone number.</li>
+                  <li>Approve permissions for QuickR.</li>
+                  <li>Return to QuickR — your status will automatically update to <strong>Connected</strong>.</li>
+                </ol>
+                <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-lg font-medium flex items-center gap-2 mt-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span><strong>Important:</strong> WhatsApp connection is completely optional. QuickR billing, barcode scanning, and inventory work normally without WhatsApp.</span>
+                </div>
+              </div>
+            )}
+
+            {/* Success / Error Banners */}
+            {waSuccessMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-xl flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{waSuccessMsg}</span>
+              </div>
+            )}
+
+            {waErrMsg && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl space-y-1">
+                <div className="flex items-center gap-2 font-bold">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{waErrMsg}</span>
+                </div>
+                {waConfigRequired && (
+                  <p className="text-[11px] text-rose-600 pl-6">
+                    Administrators need to add <code className="bg-rose-100 text-rose-800 px-1 py-0.5 rounded font-mono">META_APP_ID</code> and <code className="bg-rose-100 text-rose-800 px-1 py-0.5 rounded font-mono">META_APP_SECRET</code> to server environment variables on Render.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Connection Status Card */}
+            {loadingWaStatus ? (
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-400 font-semibold flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                <span>Checking WhatsApp connection status...</span>
+              </div>
+            ) : waStatus.connected ? (
+              /* CONNECTED STATE */
+              <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className="text-xs font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                      <Check className="w-4 h-4 text-emerald-600" /> Connected
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    Connected: {waStatus.connectedAt ? new Date(waStatus.connectedAt).toLocaleDateString() : 'Active'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-xl border border-emerald-100">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Business</label>
+                    <p className="text-xs font-bold text-slate-800">{waStatus.businessName || 'WhatsApp Business'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Number</label>
+                    <p className="text-xs font-mono font-bold text-slate-800">{waStatus.displayPhoneNumber || '—'}</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 font-medium">
+                  Your WhatsApp Business account is ready to be used with QuickR campaigns.
+                </p>
+
+                <div className="pt-2 border-t border-emerald-200/60 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleDisconnectWhatsApp}
+                    disabled={isDisconnectingWa}
+                    className="px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-all shadow-2xs flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isDisconnectingWa ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
+                    {isDisconnectingWa ? 'Disconnecting...' : 'Disconnect WhatsApp'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* NOT CONNECTED STATE */
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                      Status: {waStatus.status === 'CONNECTING' ? 'Connecting...' : waStatus.status === 'FAILED' ? 'Connection Failed' : 'Not connected'}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 font-medium">
+                  Connect your business WhatsApp to use WhatsApp campaigns in QuickR.
+                </p>
+
+                <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={handleConnectWhatsApp}
+                    disabled={isConnectingWa}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2"
+                  >
+                    {isConnectingWa ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+                    {isConnectingWa ? 'Initializing Meta Authorization...' : 'Connect WhatsApp'}
+                  </button>
+
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    Uses Meta Official Business Authorization Flow
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
