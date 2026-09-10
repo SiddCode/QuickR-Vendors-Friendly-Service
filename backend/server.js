@@ -19,6 +19,7 @@ import { whatsappRouter } from './routes/whatsapp.js';
 import { privacyRouter } from './routes/privacy.js';
 import { campaignRouter } from './routes/campaigns.js';
 import { reengagementRouter } from './routes/reengagement.js';
+import { storageRouter } from './routes/storage.js';
 import { seedAdmin } from './scripts/seedAdmin.js';
 
 import { User } from './models/User.js';
@@ -656,6 +657,9 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('token');
   return res.json({ success: true, message: 'Logged out successfully' });
 });
+
+// Router mounts
+app.use('/api/storage', storageRouter);
 
 // ===================================
 // SHOP PROFILE ENDPOINTS (AUTHENTICATED)
@@ -3045,6 +3049,14 @@ const server = app.listen(PORT, () => {
     cleanupExpiredCampaignMedia();
     setInterval(() => {
       cleanupExpiredCampaignMedia();
+    }, 6 * 60 * 60 * 1000);
+  }).catch(() => {});
+
+  // Background 90-day storage cleanup runner (processes approved shop cleanups)
+  import('./services/storageCleanupService.js').then(({ runScheduledStorageCleanup }) => {
+    runScheduledStorageCleanup();
+    setInterval(() => {
+      runScheduledStorageCleanup();
     }, 6 * 60 * 60 * 1000);
   }).catch(() => {});
 });
