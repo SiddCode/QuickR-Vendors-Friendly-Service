@@ -1386,5 +1386,72 @@ export const api = {
       credentials: 'include'
     });
     return handleResponse<{ success: boolean; connected: boolean; status: string }>(res);
+  },
+
+  // Storage Cleanup System
+  async getStorageCleanupStatus(): Promise<{
+    success: boolean;
+    shopId: string;
+    eligibleEnquiries: number;
+    eligibleFollowUps: number;
+    eligibleActivities: number;
+    totalEligible: number;
+    approvalRequired: boolean;
+    status: string;
+    approvedAt?: string | null;
+    approvedByUserId?: string;
+    lastCleanupAt?: string | null;
+    lastCleanupSummary?: {
+      deletedEnquiries: number;
+      deletedFollowUps: number;
+      deletedActivities: number;
+      timestamp: string;
+    } | null;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/storage/cleanup`, { credentials: 'include' });
+    return handleResponse<{
+      success: boolean;
+      shopId: string;
+      eligibleEnquiries: number;
+      eligibleFollowUps: number;
+      eligibleActivities: number;
+      totalEligible: number;
+      approvalRequired: boolean;
+      status: string;
+      approvedAt?: string | null;
+      approvedByUserId?: string;
+      lastCleanupAt?: string | null;
+      lastCleanupSummary?: {
+        deletedEnquiries: number;
+        deletedFollowUps: number;
+        deletedActivities: number;
+        timestamp: string;
+      } | null;
+    }>(res);
+  },
+
+  async approveStorageCleanup(): Promise<{
+    success: boolean;
+    status: string;
+    approvedAt: string;
+    approvedByUserId: string;
+    totalEligible: number;
+    message: string;
+    immediateExecution?: any;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/storage/cleanup/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include'
+    });
+    return handleResponse<{
+      success: boolean;
+      status: string;
+      approvedAt: string;
+      approvedByUserId: string;
+      totalEligible: number;
+      message: string;
+      immediateExecution?: any;
+    }>(res);
   }
 };

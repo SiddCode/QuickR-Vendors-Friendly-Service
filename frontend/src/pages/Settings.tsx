@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Store, Languages, Copy, Check, Loader2, ArrowRightLeft, Edit2, Save, X, Phone, ShieldCheck, ChevronRight, Barcode, MessageCircle, AlertCircle, HelpCircle, LogOut } from 'lucide-react';
+import { Store, Languages, Copy, Check, Loader2, ArrowRightLeft, Edit2, Save, X, Phone, ShieldCheck, ChevronRight, Barcode, MessageCircle, AlertCircle, HelpCircle, LogOut, Database } from 'lucide-react';
 import { api } from '../services/api';
 
 interface SettingsProps {
@@ -15,6 +15,29 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   const [barcodeScanningEnabled, setBarcodeScanningEnabled] = useState<boolean>(() => {
     return localStorage.getItem('quickr_barcode_scanning_enabled') === 'true';
   });
+
+  // Storage Cleanup State
+  const [cleanupData, setCleanupData] = useState<{
+    eligibleEnquiries: number;
+    eligibleFollowUps: number;
+    eligibleActivities: number;
+    totalEligible: number;
+    approvalRequired: boolean;
+    status: string;
+    approvedAt?: string | null;
+  }>({
+    eligibleEnquiries: 0,
+    eligibleFollowUps: 0,
+    eligibleActivities: 0,
+    totalEligible: 0,
+    approvalRequired: false,
+    status: 'NO_ACTION'
+  });
+  const [loadingCleanup, setLoadingCleanup] = useState(true);
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [approvingCleanup, setApprovingCleanup] = useState(false);
+  const [cleanupSuccessMsg, setCleanupSuccessMsg] = useState<string | null>(null);
+  const [cleanupErrMsg, setCleanupErrMsg] = useState<string | null>(null);
 
   // WhatsApp Business Connection State
   const [waStatus, setWaStatus] = useState<{
@@ -94,8 +117,54 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   useEffect(() => {
     loadProfile();
     loadWhatsAppStatus();
+    loadStorageCleanupStatus();
     checkUrlCallbackParams();
   }, []);
+
+  const loadStorageCleanupStatus = async () => {
+    setLoadingCleanup(true);
+    try {
+      const data = await api.getStorageCleanupStatus();
+      setCleanupData({
+        eligibleEnquiries: data.eligibleEnquiries,
+        eligibleFollowUps: data.eligibleFollowUps,
+        eligibleActivities: data.eligibleActivities,
+        totalEligible: data.totalEligible,
+        approvalRequired: data.approvalRequired,
+        status: data.status,
+        approvedAt: data.approvedAt
+      });
+    } catch (err: any) {
+      console.error('Failed to load storage cleanup status:', err);
+    } finally {
+      setLoadingCleanup(false);
+    }
+  };
+
+  const handleApproveCleanup = async () => {
+    setApprovingCleanup(true);
+    setCleanupErrMsg(null);
+    setCleanupSuccessMsg(null);
+
+    try {
+      const res = await api.approveStorageCleanup();
+      if (res.success) {
+        setCleanupData(prev => ({
+          ...prev,
+          status: 'APPROVED',
+          approvedAt: res.approvedAt,
+          approvalRequired: false
+        }));
+        setShowCleanupModal(false);
+        setCleanupSuccessMsg('Storage cleanup request approved. Records will remain available until 90 days.');
+        setTimeout(() => setCleanupSuccessMsg(null), 5000);
+      }
+    } catch (err: any) {
+      setCleanupErrMsg(err.message || 'Failed to approve storage cleanup.');
+    } finally {
+      setApprovingCleanup(false);
+    }
+  };
 
   const checkUrlCallbackParams = () => {
     const params = new URLSearchParams(window.location.search);
@@ -889,6 +958,159 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
             )}
           </div>
         </div>
+
+        {/* Storage & Data Protection & Retention Card */}
+        <div className="flex items-start gap-4 pt-6 border-t border-slate-100">
+          <Database className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
+          <div className="flex-1 space-y-4 min-w-0">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">Storage & Data Retention</h3>
+              <p className="text-xs text-slate-400">QuickR keeps your customers, products, and sales permanently. Inactive enquiries and follow-ups over 30 days can be approved for safe 90-day storage cleanup.</p>
+            </div>
+
+            {loadingCleanup ? (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-400 font-semibold flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                <span>Calculating storage metrics...</span>
+              </div>
+            ) : (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Old records available for cleanup (&ge; 30 days)</span>
+                  <span className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full ${cleanupData.totalEligible > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'}`}>
+                    {cleanupData.totalEligible} Total
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 bg-white p-3 rounded-xl border border-slate-200 text-center">
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Enquiries</span>
+                    <span className="text-sm font-mono font-extrabold text-slate-800">{cleanupData.eligibleEnquiries}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Follow-ups</span>
+                    <span className="text-sm font-mono font-extrabold text-slate-800">{cleanupData.eligibleFollowUps}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Activities</span>
+                    <span className="text-sm font-mono font-extrabold text-slate-800">{cleanupData.eligibleActivities}</span>
+                  </div>
+                </div>
+
+                {cleanupSuccessMsg && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold rounded-xl flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{cleanupSuccessMsg}</span>
+                  </div>
+                )}
+
+                {cleanupErrMsg && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{cleanupErrMsg}</span>
+                  </div>
+                )}
+
+                {cleanupData.status === 'APPROVED' ? (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1 text-xs text-emerald-800 font-medium">
+                    <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                      <Check className="w-4 h-4 text-emerald-600" />
+                      <span>Cleanup Approved</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-700">
+                      Your cleanup request has been approved. Eligible records will remain available until they reach the 90-day retention period. No records were deleted prematurely today.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="pt-1 flex items-center justify-between flex-wrap gap-2">
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Nothing will be deleted until you explicitly review and approve.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={cleanupData.totalEligible === 0}
+                      onClick={() => setShowCleanupModal(true)}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                    >
+                      <Database className="w-3.5 h-3.5" />
+                      <span>Review Cleanup</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal for Reviewing Storage Cleanup */}
+        {showCleanupModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fadeIn">
+            <div className="bg-white rounded-2xl border border-slate-200 max-w-md w-full p-6 space-y-5 shadow-xl">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-indigo-600" />
+                  <h3 className="text-base font-bold text-slate-900">Review Storage Cleanup</h3>
+                </div>
+                <button
+                  onClick={() => setShowCleanupModal(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs text-slate-600 font-medium">
+                <p>The following inactive records are older than 30 days and eligible for future retention cleanup:</p>
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2 font-mono font-bold text-slate-800">
+                  <div className="flex justify-between">
+                    <span>Enquiries (Purchased / Closed)</span>
+                    <span>{cleanupData.eligibleEnquiries}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Follow-ups (Completed / Closed)</span>
+                    <span>{cleanupData.eligibleFollowUps}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Audit Activities</span>
+                    <span>{cleanupData.eligibleActivities}</span>
+                  </div>
+                  <div className="border-t border-slate-200 pt-2 flex justify-between text-indigo-700 text-sm">
+                    <span>Total Eligible Records</span>
+                    <span>{cleanupData.totalEligible}</span>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl space-y-1 text-[11px]">
+                  <strong className="block font-bold">Important Data Safety Guarantee:</strong>
+                  <ul className="list-disc list-inside space-y-0.5 text-amber-800">
+                    <li>Customers, Products, Sales, and Bills are <strong>NEVER deleted</strong>.</li>
+                    <li>Active enquiries and scheduled follow-ups are protected.</li>
+                    <li>Nothing is deleted immediately now. Approved records remain accessible until they reach 90 days.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCleanupModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={approvingCleanup}
+                  onClick={handleApproveCleanup}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  {approvingCleanup ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  {approvingCleanup ? 'Saving Approval...' : 'Approve Cleanup'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Privacy & Data Protection Card */}
         <div className="flex items-start gap-4 pt-6 border-t border-slate-100">
