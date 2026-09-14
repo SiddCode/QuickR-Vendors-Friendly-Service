@@ -12,6 +12,7 @@ import { calculatePriorityAndReason } from './services/priorityService.js';
 import { sendWhatsAppCloudMessage } from './services/whatsapp.js';
 import { normalizeIndianMobileNumber } from './utils/phone.js';
 import { generateUniqueBarcode } from './utils/barcode.js';
+import { getISTDayBounds, calculateScheduledDateIST } from './utils/date.js';
 import { adminRouter } from './routes/admin.js';
 
 import { aiRouter } from './routes/ai.js';
@@ -981,37 +982,29 @@ app.patch('/api/shop/profile', requireAuth, async (req, res) => {
 });
 
 // ===================================
-// PHASE 4: TODAY'S WORK QUEUE ENDPOINT
+// PHASE 4: TODAY'S WORK QUEUE ENDPOINT (IST Date Scoped & High Performance)
 // ===================================
 
 app.get('/api/work/today', requireAuth, async (req, res) => {
   try {
     const shopId = req.user.shopId;
-    const now = new Date();
-    
-    // Indian Standard Time (IST = UTC + 5:30) date boundaries calculation
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const istNow = new Date(now.getTime() + istOffsetMs);
-    const istYear = istNow.getUTCFullYear();
-    const istMonth = istNow.getUTCMonth();
-    const istDate = istNow.getUTCDate();
-
-    const startOfToday = new Date(Date.UTC(istYear, istMonth, istDate, 0, 0, 0, 0) - istOffsetMs);
-    const endOfToday = new Date(Date.UTC(istYear, istMonth, istDate, 23, 59, 59, 999) - istOffsetMs);
+    const { startOfToday, endOfToday, istDateStr } = getISTDayBounds();
 
     const rawFollowUps = await FollowUp.find({
       shopId,
       status: { $in: ['ready', 'sent', 'scheduled'] }
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).lean();
 
-    const custIds = [...new Set(rawFollowUps.map(f => f.customerId))];
-    const enqIds = [...new Set(rawFollowUps.map(f => f.enquiryId))];
+    const custIds = [...new Set(rawFollowUps.map(f => f.customerId))].filter(Boolean);
+    const enqIds = [...new Set(rawFollowUps.map(f => f.enquiryId))].filter(Boolean);
 
-    const customers = await Customer.find({ id: { $in: custIds }, shopId });
-    const enquiries = await Enquiry.find({ id: { $in: enqIds }, shopId });
-    
-    const prodIds = [...new Set(enquiries.map(e => e.productId))];
-    const products = await Product.find({ id: { $in: prodIds }, shopId });
+    const [customers, enquiries] = await Promise.all([
+      Customer.find({ id: { $in: custIds }, shopId }).lean(),
+      Enquiry.find({ id: { $in: enqIds }, shopId }).lean()
+    ]);
+
+    const prodIds = [...new Set(enquiries.map(e => e.productId))].filter(Boolean);
+    const products = await Product.find({ id: { $in: prodIds }, shopId }).lean();
 
     const custMap = new Map(customers.map(c => [c.id, c]));
     const enqMap = new Map(enquiries.map(e => [e.id, e]));
@@ -1030,7 +1023,7 @@ app.get('/api/work/today', requireAuth, async (req, res) => {
       const isUpcoming = scheduledDate > endOfToday || (fw.status === 'scheduled' && !isDueToday && !isOverdue);
 
       return {
-        ...fw.toObject(),
+        ...fw,
         priority: priorityInfo.priority,
         priorityScore: priorityInfo.score,
         daysOverdue: priorityInfo.daysOverdue,
@@ -1050,22 +1043,16 @@ app.get('/api/work/today', requireAuth, async (req, res) => {
     const upcoming = enrichedTasks.filter(t => t.isUpcoming && !t.isOverdue);
     const highPriority = enrichedTasks.filter(t => t.priority === 'High' || t.priority === 'HIGH');
 
-    // Stats
-    const salesDocs = await Sale.find({ shopId, source: 'quickr_followup' });
-    const recoveredSalesAmount = salesDocs.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
-    const enquiriesCount = await Enquiry.countDocuments({ shopId });
+    // Summary statistics fetched in parallel
+    const [salesDocs, enquiriesCount] = await Promise.all([
+      Sale.find({ shopId, source: 'quickr_followup' }).select('totalAmount').lean(),
+      Enquiry.countDocuments({ shopId })
+    ]);
 
-    // Calculate unique customer count ready for engagement today
+    const recoveredSalesAmount = salesDocs.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
     const uniqueCustomerCountToday = new Set(dueToday.map(t => t.customerId)).size;
 
-    console.log(`[WORK/TODAY] shopId=${shopId} | rawFollowUps=${rawFollowUps.length} | dueToday=${dueToday.length} | uniqueCustomersToday=${uniqueCustomerCountToday} | overdue=${overdue.length} | IST Date=${istYear}-${istMonth+1}-${istDate}`);
-    console.log('TODAY FOLLOWUPS:', rawFollowUps.map(f => ({
-      id: f.id, customerId: f.customerId, scheduledAt: f.scheduledAt, status: f.status
-    })));
-    console.log('DUE TODAY:', dueToday.map(t => ({
-      id: t.id, customerId: t.customerId, customerName: t.customer?.name
-    })));
-
+    console.log(`[WORK/TODAY] shopId=${shopId} | rawFollowUps=${rawFollowUps.length} | dueToday=${dueToday.length} | uniqueCustomersToday=${uniqueCustomerCountToday} | overdue=${overdue.length} | IST Date=${istDateStr}`);
 
     res.json({
       totalTasks: dueToday.length,
@@ -1484,18 +1471,11 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
           targetScheduledAt = parsed;
         }
       } else if (followUpDate) {
-        targetScheduledAt = calculateScheduledDateBackend(followUpDate);
+        targetScheduledAt = calculateScheduledDateIST(followUpDate);
       }
 
       // Check if targetScheduledAt is past end of today in IST
-      const now = new Date();
-      const istOffsetMs = 5.5 * 60 * 60 * 1000;
-      const istNow = new Date(now.getTime() + istOffsetMs);
-      const istYear = istNow.getUTCFullYear();
-      const istMonth = istNow.getUTCMonth();
-      const istDate = istNow.getUTCDate();
-
-      const endOfToday = new Date(Date.UTC(istYear, istMonth, istDate, 23, 59, 59, 999) - istOffsetMs);
+      const { endOfToday } = getISTDayBounds();
 
       const initialStatus = targetScheduledAt > endOfToday ? 'scheduled' : 'ready';
 

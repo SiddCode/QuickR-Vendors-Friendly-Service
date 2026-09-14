@@ -57,6 +57,7 @@ interface AppContextType {
   updateShopProfile: (data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }) => Promise<boolean>;
   connectionState: 'checking' | 'ready' | 'offline';
   checkHealth: () => Promise<boolean>;
+  refreshTodayWork: () => Promise<void>;
   refreshData: () => Promise<void>;
   resetData: () => void;
   pwaInstallPrompt: any;
@@ -373,6 +374,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const refreshTodayWork = async (): Promise<void> => {
+    try {
+      const workData = await api.getTodayWork().catch(() => null);
+      if (workData) {
+        setTodayWork(workData);
+      }
+    } catch (err) {
+      console.error('Failed to refresh Today Work queue:', err);
+    }
+  };
+
   const addEnquiry = async (enquiryData: Omit<Enquiry, 'id' | 'createdAt'>): Promise<Enquiry | null> => {
     try {
       setIsLoading(true);
@@ -385,6 +397,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const newFw = res.followUp;
         setFollowUps(prev => [newFw, ...prev]);
       }
+
+      // Targeted lightweight refresh of Today Work queue so new enquiries/followups appear immediately
+      refreshTodayWork().catch(e => console.error('Background refreshTodayWork error:', e));
 
       return res.enquiry;
     } catch (err: any) {
@@ -629,6 +644,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateShopProfile,
       connectionState,
       checkHealth,
+      refreshTodayWork,
       refreshData: loadBusinessData,
       resetData: loadBusinessData,
       pwaInstallPrompt,
