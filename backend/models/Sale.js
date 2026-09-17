@@ -16,7 +16,8 @@ const saleSchema = new mongoose.Schema(
       {
         productId: { type: String },
         productName: { type: String, required: true },
-        category: { type: String },
+        category: { type: String, default: '' },
+        size: { type: String, default: '' },
         quantity: { type: Number, required: true },
         rate: { type: Number, required: true },
         total: { type: Number, required: true },
@@ -33,6 +34,7 @@ const saleSchema = new mongoose.Schema(
     ],
     subtotal: { type: Number, required: true },
     discount: { type: Number, default: 0 },
+    discountType: { type: String, enum: ['percentage', 'amount'], default: 'percentage' },
     totalGst: { type: Number, default: 0 },
     totalAmount: { type: Number, required: true },
     isGstRegistered: { type: Boolean, default: false },

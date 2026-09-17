@@ -73,7 +73,10 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   };
   
   const [items, setItems] = useState<BillItem[]>([]);
-  const [discountPercent, setDiscountPercent] = useState<number>(0);
+  const [discountType, setDiscountType] = useState<'percentage' | 'amount'>('percentage');
+  const [discountValue, setDiscountValue] = useState<number>(0);
+  const [isDiscountDropdownOpen, setIsDiscountDropdownOpen] = useState(false);
+  const discountDropdownRef = useRef<HTMLDivElement>(null);
   const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
 
   // Helper: Add or increment product in cart by scanned product
@@ -189,11 +192,14 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     };
   }, [barcodeEnabled, products]);
 
-  // Handle outside click to close customer dropdown
+  // Handle outside click to close customer dropdown and discount dropdown
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsDropdownOpen(false);
+      }
+      if (discountDropdownRef.current && !discountDropdownRef.current.contains(e.target as Node)) {
+        setIsDiscountDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -261,7 +267,20 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   const isGstRegistered = !!shopProfile?.isGstRegistered;
   const shopGstin = shopProfile?.gstin || '';
 
-  const validatedDiscountPercent = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+  const rawSubtotal = items.reduce((acc, i) => acc + (i.quantity * i.rate), 0);
+  
+  // Calculate discount amount safely based on selected mode (percentage or amount)
+  let validatedDiscountValue = Math.max(0, Number(discountValue) || 0);
+  let discountAmount = 0;
+
+  if (discountType === 'percentage') {
+    validatedDiscountValue = Math.min(100, validatedDiscountValue);
+    discountAmount = Math.round(((rawSubtotal * validatedDiscountValue) / 100) * 100) / 100;
+  } else {
+    // Amount discount mode
+    validatedDiscountValue = Math.min(rawSubtotal, validatedDiscountValue);
+    discountAmount = Math.round(validatedDiscountValue * 100) / 100;
+  }
 
   const enrichedItems = items.map(item => {
     const prod = products.find(p => p.id === item.productId);
@@ -274,9 +293,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     let itemTaxableAmount = lineTotal;
 
     if (isGstRegistered && itemGstRate > 0) {
-      const subtotalTemp = items.reduce((acc, i) => acc + (i.quantity * i.rate), 0);
-      const discountAmtTemp = (subtotalTemp * validatedDiscountPercent) / 100;
-      const lineSubtotalAfterDiscount = subtotalTemp > 0 ? (lineTotal * (1 - (discountAmtTemp / subtotalTemp))) : lineTotal;
+      const lineSubtotalAfterDiscount = rawSubtotal > 0 ? (lineTotal * (1 - (discountAmount / rawSubtotal))) : lineTotal;
 
       if (priceIncludesGst) {
         itemTaxableAmount = Math.round((lineSubtotalAfterDiscount / (1 + itemGstRate / 100)) * 100) / 100;
@@ -286,9 +303,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
         itemGstAmount = Math.round((itemTaxableAmount * (itemGstRate / 100)) * 100) / 100;
       }
     } else {
-      const subtotalTemp = items.reduce((acc, i) => acc + (i.quantity * i.rate), 0);
-      const discountAmtTemp = (subtotalTemp * validatedDiscountPercent) / 100;
-      itemTaxableAmount = subtotalTemp > 0 ? Math.round((lineTotal * (1 - (discountAmtTemp / subtotalTemp))) * 100) / 100 : lineTotal;
+      itemTaxableAmount = rawSubtotal > 0 ? Math.round((lineTotal * (1 - (discountAmount / rawSubtotal))) * 100) / 100 : lineTotal;
     }
 
     return {
@@ -303,9 +318,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     };
   });
 
-  const subtotal = enrichedItems.reduce((acc, item) => acc + item.total, 0);
-  const discountAmount = Number(((subtotal * validatedDiscountPercent) / 100).toFixed(2));
-  
+  const subtotal = rawSubtotal;
   const hasInclusiveItems = enrichedItems.some(i => i.gstRate > 0 && i.priceIncludesGst);
   const totalGst = isGstRegistered ? Math.round(enrichedItems.reduce((acc, item) => acc + item.gstAmount, 0) * 100) / 100 : 0;
 
@@ -318,19 +331,21 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     ? Math.round((taxableSubtotal + totalGst) * 100) / 100 
     : Math.max(0, subtotal - discountAmount);
 
-  const handleDiscountChange = (valStr: string) => {
+  const handleDiscountInputChange = (valStr: string) => {
     if (valStr === '') {
-      setDiscountPercent(0);
+      setDiscountValue(0);
       return;
     }
     const val = parseFloat(valStr);
     if (isNaN(val)) return;
     if (val < 0) {
-      setDiscountPercent(0);
-    } else if (val > 100) {
-      setDiscountPercent(100);
+      setDiscountValue(0);
+    } else if (discountType === 'percentage' && val > 100) {
+      setDiscountValue(100);
+    } else if (discountType === 'amount' && subtotal > 0 && val > subtotal) {
+      setDiscountValue(subtotal);
     } else {
-      setDiscountPercent(val);
+      setDiscountValue(val);
     }
   };
 
@@ -394,7 +409,8 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
         gstAmount: i.gstAmount
       })),
       subtotal,
-      discount: discountAmount,
+      discount: discountValue,
+      discountType,
       totalGst,
       totalAmount: grandTotalAmount,
       paymentMethod,
@@ -717,25 +733,69 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
               </div>
               
               <div className="flex justify-between items-center text-sm font-medium text-slate-600">
-                <span className="flex items-center gap-1 font-semibold text-slate-700">Discount:</span>
+                <div ref={discountDropdownRef} className="relative flex items-center gap-1">
+                  <span className="font-semibold text-slate-700">Discount</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDiscountDropdownOpen(!isDiscountDropdownOpen)}
+                    className="flex items-center gap-0.5 text-xs font-bold text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-lg border border-slate-200 transition-colors"
+                  >
+                    <span>{discountType === 'percentage' ? '%' : '₹'}</span>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDiscountDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isDiscountDropdownOpen && (
+                    <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg text-xs font-semibold py-1 w-36 text-slate-700 divide-y divide-slate-50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiscountType('percentage');
+                          if (discountValue > 100) setDiscountValue(100);
+                          setIsDiscountDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-between transition-colors ${
+                          discountType === 'percentage' ? 'bg-indigo-50 text-indigo-600 font-bold' : ''
+                        }`}
+                      >
+                        <span>Percentage (%)</span>
+                        {discountType === 'percentage' && <Check className="w-3.5 h-3.5 text-indigo-600" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiscountType('amount');
+                          if (subtotal > 0 && discountValue > subtotal) setDiscountValue(subtotal);
+                          setIsDiscountDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-between transition-colors ${
+                          discountType === 'amount' ? 'bg-indigo-50 text-indigo-600 font-bold' : ''
+                        }`}
+                      >
+                        <span>Amount (₹)</span>
+                        {discountType === 'amount' && <Check className="w-3.5 h-3.5 text-indigo-600" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex items-center gap-1.5">
                   <input 
                     type="number" 
                     min="0"
-                    max="100"
+                    max={discountType === 'percentage' ? 100 : subtotal}
                     step="any"
-                    value={discountPercent === 0 ? '' : discountPercent}
-                    onChange={e => handleDiscountChange(e.target.value)}
+                    value={discountValue === 0 ? '' : discountValue}
+                    onChange={e => handleDiscountInputChange(e.target.value)}
                     placeholder="0"
-                    className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-sm font-bold focus:outline-none focus:border-primary-500 text-center"
+                    className="w-20 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-sm font-bold focus:outline-none focus:border-primary-500 text-center"
                   />
-                  <span className="font-bold text-slate-600">%</span>
+                  <span className="font-bold text-slate-600">{discountType === 'percentage' ? '%' : '₹'}</span>
                 </div>
               </div>
 
-              {validatedDiscountPercent > 0 && (
+              {discountAmount > 0 && (
                 <div className="flex justify-between items-center text-xs font-semibold text-emerald-600">
-                  <span>Discount ({validatedDiscountPercent}%):</span>
+                  <span>Discount ({discountType === 'percentage' ? `${validatedDiscountValue}%` : `₹${validatedDiscountValue}`}):</span>
                   <span>-₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}

@@ -1802,6 +1802,18 @@ app.get('/api/sales/export', requireAuth, async (req, res) => {
     // Currency formatting for total revenue summary
     worksheet.getCell('B8').numberFormat = '₹#,##0.00';
 
+    // Pre-fetch Product documents in batch for size/category lookup fallback
+    const allProdIds = new Set();
+    salesDocs.forEach(s => {
+      if (Array.isArray(s.items)) {
+        s.items.forEach(i => { if (i.productId) allProdIds.add(i.productId); });
+      }
+    });
+    const dbProductDocs = allProdIds.size > 0
+      ? await Product.find({ shopId, id: { $in: Array.from(allProdIds) } }).select('id category sizes').lean()
+      : [];
+    const prodDocMap = new Map(dbProductDocs.map(p => [p.id, p]));
+
     // Sales Data Table Header
     const tableHeaderRow = worksheet.addRow([
       'Invoice #',
@@ -1810,6 +1822,7 @@ app.get('/api/sales/export', requireAuth, async (req, res) => {
       'Customer Phone',
       'Product Name',
       'Category',
+      'Size',
       'Quantity',
       'Unit Price',
       'Line Total',
@@ -1839,20 +1852,35 @@ app.get('/api/sales/export', requireAuth, async (req, res) => {
 
       const items = Array.isArray(sale.items) && sale.items.length > 0 ? sale.items : [{
         productName: 'N/A',
-        category: 'General',
+        category: '',
+        size: '',
         quantity: 1,
         rate: sale.totalAmount || 0,
         total: sale.totalAmount || 0
       }];
 
       items.forEach(item => {
+        const prodDoc = item.productId ? prodDocMap.get(item.productId) : null;
+        
+        // Category resolution: item snapshot -> product catalog -> blank
+        let catVal = item.category || (prodDoc ? prodDoc.category : '') || '';
+        if (catVal === 'General' || catVal === 'Category' || catVal === null || catVal === undefined) catVal = '';
+        
+        // Size resolution: item snapshot -> product catalog sizes array -> blank
+        let sizeVal = item.size || '';
+        if (!sizeVal && prodDoc && Array.isArray(prodDoc.sizes) && prodDoc.sizes.length > 0) {
+          sizeVal = prodDoc.sizes.join(', ');
+        }
+        if (sizeVal === null || sizeVal === undefined) sizeVal = '';
+
         const row = worksheet.addRow([
           sale.invoiceNumber || sale.id,
           saleDateIST,
           sale.customerName || 'Walk-in Customer',
           sale.customerPhone || 'N/A',
           item.productName || 'General Item',
-          item.category || 'General',
+          catVal,
+          sizeVal,
           item.quantity || 1,
           item.rate || 0,
           item.total || 0,
@@ -1863,12 +1891,12 @@ app.get('/api/sales/export', requireAuth, async (req, res) => {
           sale.source === 'quickr_followup' ? 'Follow-Up Recovery' : 'Direct Sale'
         ]);
 
-        // Currency formatting
-        row.getCell(8).numberFormat = '₹#,##0.00';
+        // Currency formatting (updated column indices after adding Size column)
         row.getCell(9).numberFormat = '₹#,##0.00';
         row.getCell(10).numberFormat = '₹#,##0.00';
         row.getCell(11).numberFormat = '₹#,##0.00';
         row.getCell(12).numberFormat = '₹#,##0.00';
+        row.getCell(13).numberFormat = '₹#,##0.00';
       });
     });
 
@@ -2403,7 +2431,7 @@ app.get('/api/sales', requireAuth, async (req, res) => {
 
 app.post('/api/sales', requireAuth, async (req, res) => {
   try {
-    let { customerId, customerName, customerPhone, enquiryId, followUpId, items, subtotal, discount, totalAmount, paymentMethod, source, saleSource, campaignId, requestId } = req.body;
+    let { customerId, customerName, customerPhone, enquiryId, followUpId, items, subtotal, discount, discountType = 'percentage', totalAmount, paymentMethod, source, saleSource, campaignId, requestId } = req.body;
     
     if (!items || !items.length || totalAmount === undefined || !paymentMethod) {
       return res.status(400).json({ error: 'Items, totalAmount, and paymentMethod are required' });
@@ -2428,16 +2456,29 @@ app.post('/api/sales', requireAuth, async (req, res) => {
     }
 
     const numericSubtotal = Number(subtotal) || 0;
-    const numericDiscount = Number(discount) || 0;
-    const numericTotal = Number(totalAmount) || 0;
+    const rawDiscount = Number(discount) || 0;
 
-    if (numericDiscount < 0) {
+    if (rawDiscount < 0) {
       return res.status(400).json({ error: 'Discount cannot be negative' });
     }
 
-    if (numericDiscount > numericSubtotal) {
-      return res.status(400).json({ error: 'Discount amount cannot exceed subtotal' });
+    const cleanDiscountType = discountType === 'amount' ? 'amount' : 'percentage';
+    let numericDiscount = 0;
+
+    if (cleanDiscountType === 'percentage') {
+      if (rawDiscount > 100) {
+        return res.status(400).json({ error: 'Discount percentage cannot exceed 100%' });
+      }
+      numericDiscount = Math.round(((numericSubtotal * rawDiscount) / 100) * 100) / 100;
+    } else {
+      // Amount discount
+      if (rawDiscount > numericSubtotal) {
+        return res.status(400).json({ error: 'Discount amount cannot exceed subtotal' });
+      }
+      numericDiscount = Math.round(rawDiscount * 100) / 100;
     }
+
+    const numericTotal = Number(totalAmount) || 0;
 
     if (numericTotal < 0) {
       return res.status(400).json({ error: 'Total amount cannot be negative' });
@@ -2606,7 +2647,8 @@ app.post('/api/sales', requireAuth, async (req, res) => {
         processedItems.push({
           productId: item.productId || '',
           productName: item.productName || 'Product',
-          category: item.category || 'General',
+          category: item.category || (item.productId && productMap.get(item.productId) ? productMap.get(item.productId).category : '') || '',
+          size: item.size || (item.productId && productMap.get(item.productId) && Array.isArray(productMap.get(item.productId).sizes) ? productMap.get(item.productId).sizes.join(', ') : '') || '',
           quantity: qty,
           rate,
           total: rawLineTotal,
@@ -2651,6 +2693,7 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       items: processedItems,
       subtotal: numericSubtotal,
       discount: numericDiscount,
+      discountType: cleanDiscountType,
       totalGst: isGstRegistered ? calculatedTotalGst : 0,
       totalAmount: finalTotalAmount,
       isGstRegistered,
@@ -2670,7 +2713,7 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       saleSource: saleSource || (campaignId ? 'campaign' : 'normal'),
       campaignId: campaignId || '',
       requestId: cleanRequestId,
-      shopId: req.user.shopId
+      shopId: req.user.shopId || (req.user.role === 'admin' ? 'ADMIN' : 'demo-shop')
     });
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -2683,15 +2726,23 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 
     try {
       session = await mongoose.startSession();
-      session.startTransaction();
-      useTransaction = true;
+      if (session && session.supports.transactions) {
+        session.startTransaction();
+        useTransaction = true;
+      } else if (session) {
+        await session.endSession();
+        session = null;
+      }
     } catch (txInitErr) {
+      if (session) {
+        try { await session.endSession(); } catch (e) {}
+      }
       session = null;
       useTransaction = false;
     }
 
     try {
-      const saveOptions = session ? { session } : {};
+      const saveOptions = (useTransaction && session) ? { session } : {};
       await newSale.save(saveOptions);
 
       // Perform atomic conditional stock decrement
