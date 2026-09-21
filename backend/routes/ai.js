@@ -1,5 +1,4 @@
-import express from 'express';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin, requireNonStaff } from '../middleware/auth.js';
 import { Shop } from '../models/Shop.js';
 import { Customer } from '../models/Customer.js';
 import { Enquiry } from '../models/Enquiry.js';
@@ -1282,7 +1281,7 @@ ${JSON.stringify(queuePayload, null, 2)}`;
 });
 
 // Protected endpoint: POST /api/ai/shop-insights
-router.post('/shop-insights', requireAuth, async (req, res) => {
+router.post('/shop-insights', requireAuth, requireNonStaff, async (req, res) => {
   try {
     let shopId = req.user?.shopId;
     if (!shopId && req.user?.role === 'admin' && req.body?.shopId) {
@@ -1758,7 +1757,7 @@ ${JSON.stringify(rankingPayload, null, 2)}`;
 });
 
 // Protected endpoint: POST /api/ai/trends
-router.post('/trends', requireAuth, async (req, res) => {
+router.post('/trends', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const isAdmin = req.user?.role === 'admin';
     let targetShopId = req.user?.shopId;

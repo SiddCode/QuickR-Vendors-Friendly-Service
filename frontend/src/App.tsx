@@ -144,10 +144,16 @@ const AppContent: React.FC = () => {
       case 'enquiries':
         return <Enquiries setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
       case 'sales':
+        if (currentUser?.role === 'staff') {
+          return <Dashboard setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
+        }
         return <Sales setCurrentPage={setCurrentPage} />;
       case 'automation':
         return <Automation />;
       case 'reports':
+        if (currentUser?.role === 'staff') {
+          return <Dashboard setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
+        }
         return <Reports />;
       case 'campaigns':
         return <Campaigns setCurrentPage={setCurrentPage} initialSelectedCustomerIds={reengagementCustomerIds} />;

@@ -31,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage })
   const { t } = useLanguage();
 
   const isAdmin = currentUser?.role === 'admin';
+  const isStaff = currentUser?.role === 'staff';
 
   // Admin menu items - Numbers-Only & Platform Administration
   const adminMenuItems = [
@@ -49,8 +50,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage })
     { id: 'products', label: t('nav.products'), icon: Package },
     { id: 'enquiries', label: t('nav.enquiries'), icon: MessageSquare },
     { id: 'billing', label: t('nav.newBill'), icon: Receipt },
-    { id: 'sales', label: t('nav.sales'), icon: IndianRupee },
-    { id: 'reports', label: t('nav.reports'), icon: BarChart2 },
+    ...(!isStaff ? [
+      { id: 'sales', label: t('nav.sales'), icon: IndianRupee },
+      { id: 'reports', label: t('nav.reports'), icon: BarChart2 }
+    ] : []),
     { id: 'campaigns', label: t('nav.campaigns'), icon: Megaphone },
     { id: 'reengagement', label: 'Customer Re-Engagement', icon: RefreshCw },
     { id: 'privacy', label: t('nav.privacy'), icon: ShieldCheck },

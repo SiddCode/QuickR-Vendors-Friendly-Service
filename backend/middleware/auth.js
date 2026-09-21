@@ -65,3 +65,12 @@ export const requireAdmin = async (req, res, next) => {
   next();
 };
 
+// Middleware restricting Staff access to sensitive sales/revenue data — must be used AFTER requireAuth
+export const requireNonStaff = async (req, res, next) => {
+  if (!req.user || req.user.role === 'staff') {
+    return res.status(403).json({ error: 'Access denied: Staff accounts are not authorized to access sensitive sales data.' });
+  }
+  next();
+};
+
+

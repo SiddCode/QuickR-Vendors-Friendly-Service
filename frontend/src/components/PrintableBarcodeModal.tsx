@@ -9,7 +9,7 @@ interface PrintableBarcodeModalProps {
   onClose: () => void;
 }
 
-export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ product, onClose }) => {
+export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ product, shopName, onClose }) => {
   // 4 SVG refs for the 4 labels on the print page
   const barcodeRefPreview = useRef<SVGSVGElement>(null);
   const barcodeRefPrint0 = useRef<SVGSVGElement>(null);
@@ -21,8 +21,8 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
     if (product && product.barcode) {
       const barcodeOptions = {
         format: 'CODE128',
-        width: 2.2,
-        height: 70,
+        width: 2.0,
+        height: 60,
         displayValue: false, // Explicit high-quality human-readable text below
         margin: 4
       };
@@ -66,8 +66,8 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
           try {
             JsBarcode(ref, product.barcode as string, {
               format: 'CODE128',
-              width: 2.2,
-              height: 70,
+              width: 2.0,
+              height: 60,
               displayValue: false,
               margin: 4
             });
@@ -83,11 +83,10 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
     });
   };
 
-  // Helper string for size and color details
-  const sizeColorText = [
-    product.sizes && product.sizes.length > 0 ? `Size: ${product.sizes.join(', ')}` : '',
-    product.colors && product.colors.length > 0 ? `Color: ${product.colors.join(', ')}` : ''
-  ].filter(Boolean).join(' | ');
+  const displayShopName = shopName && String(shopName).trim() ? String(shopName).trim() : 'STORE LABEL';
+  const displayProductName = product.name || 'PRODUCT';
+  const sellingPriceText = product.sellingPrice !== undefined && product.sellingPrice !== null ? `₹${product.sellingPrice}` : 'N/A';
+  const mrpText = product.originalPrice !== undefined && product.originalPrice !== null ? `₹${product.originalPrice}` : 'MRP: Not set';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn barcode-print-root">
@@ -96,7 +95,7 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div>
             <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Print Product Barcode Labels</h3>
-            <p className="text-[11px] text-slate-400 font-medium">Generates 4 identical sticker labels per A4 page (2×2)</p>
+            <p className="text-[11px] text-slate-400 font-medium">Generates 4 identical sticker labels per A4 page (2×2 layout)</p>
           </div>
           <button
             onClick={onClose}
@@ -108,23 +107,31 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
         </div>
 
         {/* Screen Preview Card */}
-        <div className="p-6 flex flex-col items-center justify-center bg-white border border-dashed border-slate-300 m-4 rounded-xl shadow-inner text-center">
-          <div className="text-sm font-bold text-slate-900 uppercase tracking-wide max-w-[260px] truncate mb-1">
-            {product.name}
+        <div className="p-5 flex flex-col items-center justify-center bg-white border border-dashed border-slate-300 m-4 rounded-xl shadow-inner text-center">
+          {/* 1. Shop Name */}
+          <div className="text-xs font-black text-slate-500 uppercase tracking-widest max-w-[280px] truncate mb-2">
+            {displayShopName}
           </div>
 
-          {sizeColorText && (
-            <div className="text-xs font-semibold text-slate-500 mb-2">
-              {sizeColorText}
-            </div>
-          )}
-
-          <div className="bg-white p-2 rounded-lg border border-slate-100">
-            <svg ref={barcodeRefPreview} className="max-w-full h-16"></svg>
+          {/* 2. Barcode Graphic */}
+          <div className="bg-white p-1 rounded-lg border border-slate-100">
+            <svg ref={barcodeRefPreview} className="max-w-full h-14"></svg>
           </div>
 
-          <div className="text-xs font-mono font-extrabold tracking-widest text-slate-800 mt-2 bg-slate-100 px-3 py-1 rounded border border-slate-200">
+          {/* 3. Barcode Value */}
+          <div className="text-xs font-mono font-extrabold tracking-widest text-slate-800 mt-1 mb-3 bg-slate-100 px-3 py-0.5 rounded border border-slate-200">
             {product.barcode || 'NO BARCODE'}
+          </div>
+
+          {/* 4. Product Name */}
+          <div className="text-sm font-black text-slate-900 uppercase tracking-wide max-w-[280px] truncate mb-2">
+            {displayProductName}
+          </div>
+
+          {/* 5. Selling Price & 6. MRP */}
+          <div className="text-xs font-bold text-slate-800 space-y-0.5 border-t border-slate-100 pt-2 w-full">
+            <div>Selling Price: <span className="text-emerald-600 font-black">{sellingPriceText}</span></div>
+            <div className="text-slate-500">MRP: <span className="font-bold">{mrpText}</span></div>
           </div>
         </div>
 
@@ -151,26 +158,38 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
           {[barcodeRefPrint0, barcodeRefPrint1, barcodeRefPrint2, barcodeRefPrint3].map((ref, idx) => (
             <div
               key={idx}
-              className="w-full h-full border-2 border-black rounded-xl p-[5mm] box-border flex flex-col items-center justify-between text-center bg-white"
+              className="w-full h-full border-2 border-black rounded-xl p-[4mm] box-border flex flex-col items-center justify-between text-center bg-white"
               style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
             >
-              <div className="w-full flex flex-col items-center justify-center pt-1">
-                <div className="text-[16pt] font-black text-black uppercase tracking-wide max-w-[90%] truncate leading-tight">
-                  {product.name}
+              {/* 1. Shop Name */}
+              <div className="w-full text-center pt-1">
+                <div className="text-[14pt] font-black text-slate-700 uppercase tracking-widest max-w-[95%] truncate mx-auto leading-none">
+                  {displayShopName}
                 </div>
-                {sizeColorText ? (
-                  <div className="text-[11pt] font-bold text-slate-800 mt-1">
-                    {sizeColorText}
-                  </div>
-                ) : (
-                  <div className="text-[10pt] font-medium text-slate-500 mt-1">QuickR Code 128 Product Label</div>
-                )}
               </div>
 
-              <div className="w-full flex flex-col items-center justify-center my-auto py-1">
-                <svg ref={ref} className="w-[85%] h-[24mm]"></svg>
-                <div className="text-[14pt] font-mono font-black tracking-widest text-black mt-2 bg-slate-100 px-4 py-1 rounded border border-slate-300">
+              {/* 2. Barcode Graphic & 3. Barcode Value */}
+              <div className="w-full flex flex-col items-center justify-center my-1">
+                <svg ref={ref} className="w-[85%] h-[20mm]"></svg>
+                <div className="text-[13pt] font-mono font-black tracking-widest text-black mt-1 bg-slate-100 px-3 py-0.5 rounded border border-slate-300">
                   {product.barcode}
+                </div>
+              </div>
+
+              {/* 4. Product Name */}
+              <div className="w-full text-center">
+                <div className="text-[15pt] font-black text-black uppercase tracking-wide max-w-[95%] truncate mx-auto leading-tight">
+                  {displayProductName}
+                </div>
+              </div>
+
+              {/* 5. Selling Price & 6. MRP */}
+              <div className="w-full text-center pb-1 space-y-0.5">
+                <div className="text-[13pt] font-extrabold text-black">
+                  Selling Price: {sellingPriceText}
+                </div>
+                <div className="text-[12pt] font-bold text-slate-700">
+                  {product.originalPrice !== undefined && product.originalPrice !== null ? `MRP: ${mrpText}` : mrpText}
                 </div>
               </div>
             </div>

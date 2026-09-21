@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 import { connectDB } from './config/database.js';
-import { requireAuth } from './middleware/auth.js';
+import { requireAuth, requireNonStaff } from './middleware/auth.js';
 import { calculatePriorityAndReason } from './services/priorityService.js';
 import { sendWhatsAppCloudMessage } from './services/whatsapp.js';
 import { normalizeIndianMobileNumber } from './utils/phone.js';
@@ -1674,7 +1674,7 @@ app.get('/api/messages/:customerId', requireAuth, async (req, res) => {
 });
 
 // GET /api/sales/export (Phase 3B: Dynamic Excel Sales Report Generation in IST)
-app.get('/api/sales/export', requireAuth, async (req, res) => {
+app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user.shopId;
     const { period = 'month', startDate, endDate } = req.query;
@@ -1929,7 +1929,7 @@ app.get('/api/sales/export', requireAuth, async (req, res) => {
 });
 
 // GET /api/reports/export (Phase 3C: Dynamic Excel Business Reports Generation in IST)
-app.get('/api/reports/export', requireAuth, async (req, res) => {
+app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user.shopId;
     const { type = 'summary', period = 'month', startDate, endDate } = req.query;
@@ -2420,7 +2420,7 @@ app.get('/api/reports/export', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/sales', requireAuth, async (req, res) => {
+app.get('/api/sales', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const list = await Sale.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
     res.json(list);
@@ -3003,12 +3003,14 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
     const conversionsCount = recoveredSalesDocs.length;
     const conversionRate = completedFwCount > 0 ? Math.round((conversionsCount / completedFwCount) * 100) : 0;
 
+    const isStaff = req.user.role === 'staff';
+
     res.json({
-      // Today Specific Metrics (IST)
-      todaySalesCount,
-      todayRevenue,
+      // Today Specific Metrics (IST) - Hidden for Staff
+      todaySalesCount: isStaff ? undefined : todaySalesCount,
+      todayRevenue: isStaff ? undefined : todayRevenue,
       todayEnquiriesCount,
-      todayPurchasesCount: todayPurchasedEnquiriesCount,
+      todayPurchasesCount: isStaff ? undefined : todayPurchasedEnquiriesCount,
       todayFollowUpsCount,
       
       // Follow-up Breakdown
@@ -3022,10 +3024,10 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       totalProducts: totalProductsCount,
       totalEnquiries: totalEnquiriesCount,
 
-      // Historical Conversions & Messages
-      recoveredSales: recoveredSalesAmount,
-      conversions: conversionsCount,
-      conversionRate,
+      // Historical Conversions & Messages - Hidden for Staff
+      recoveredSales: isStaff ? undefined : recoveredSalesAmount,
+      conversions: isStaff ? undefined : conversionsCount,
+      conversionRate: isStaff ? undefined : conversionRate,
       responseRate: totalMsgs > 0 ? 85 : 0
     });
   } catch (err) {

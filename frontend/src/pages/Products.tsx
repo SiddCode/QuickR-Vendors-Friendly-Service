@@ -13,7 +13,7 @@ export const CATEGORIES = {
 };
 
 export const Products = () => {
-  const { products, addProduct, updateProduct, deleteProduct, generateProductBarcode } = useApp();
+  const { products, addProduct, updateProduct, deleteProduct, generateProductBarcode, shopName } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
   
@@ -645,6 +645,7 @@ export const Products = () => {
       {printProduct && (
         <PrintableBarcodeModal
           product={printProduct}
+          shopName={shopName}
           onClose={() => setPrintProduct(null)}
         />
       )}
