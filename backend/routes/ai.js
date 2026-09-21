@@ -1,3 +1,4 @@
+import express from 'express';
 import { requireAuth, requireAdmin, requireNonStaff } from '../middleware/auth.js';
 import { Shop } from '../models/Shop.js';
 import { Customer } from '../models/Customer.js';
