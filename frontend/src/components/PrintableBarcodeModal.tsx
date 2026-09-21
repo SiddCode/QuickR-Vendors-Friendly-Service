@@ -85,8 +85,11 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
 
   const displayShopName = shopName && String(shopName).trim() ? String(shopName).trim() : 'STORE LABEL';
   const displayProductName = product.name || 'PRODUCT';
-  const sellingPriceText = product.sellingPrice !== undefined && product.sellingPrice !== null ? `₹${product.sellingPrice}` : 'N/A';
-  const mrpText = product.originalPrice !== undefined && product.originalPrice !== null ? `₹${product.originalPrice}` : 'MRP: Not set';
+  
+  const hasMRP = product.originalPrice !== undefined && product.originalPrice !== null && Number(product.originalPrice) > 0;
+  const sellingPriceVal = product.sellingPrice !== undefined && product.sellingPrice !== null ? Number(product.sellingPrice) : 0;
+  const mrpVal = hasMRP ? Number(product.originalPrice) : null;
+  const showDiscount = mrpVal !== null && mrpVal > sellingPriceVal;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn barcode-print-root">
@@ -107,9 +110,9 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
         </div>
 
         {/* Screen Preview Card */}
-        <div className="p-5 flex flex-col items-center justify-center bg-white border border-dashed border-slate-300 m-4 rounded-xl shadow-inner text-center">
+        <div className="p-6 flex flex-col items-center justify-center bg-white border border-dashed border-slate-300 m-4 rounded-xl shadow-inner text-center">
           {/* 1. Shop Name */}
-          <div className="text-xs font-black text-slate-500 uppercase tracking-widest max-w-[280px] truncate mb-2">
+          <div className="text-sm font-black text-slate-800 uppercase tracking-wider max-w-[280px] truncate mb-2">
             {displayShopName}
           </div>
 
@@ -124,14 +127,20 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
           </div>
 
           {/* 4. Product Name */}
-          <div className="text-sm font-black text-slate-900 uppercase tracking-wide max-w-[280px] truncate mb-2">
+          <div className="text-sm font-black text-slate-900 uppercase tracking-wide max-w-[280px] truncate mb-3">
             {displayProductName}
           </div>
 
-          {/* 5. Selling Price & 6. MRP */}
-          <div className="text-xs font-bold text-slate-800 space-y-0.5 border-t border-slate-100 pt-2 w-full">
-            <div>Selling Price: <span className="text-emerald-600 font-black">{sellingPriceText}</span></div>
-            <div className="text-slate-500">MRP: <span className="font-bold">{mrpText}</span></div>
+          {/* 5. Price Section (No text labels, crossed-out MRP first, then selling price) */}
+          <div className="flex items-center justify-center gap-4 text-base font-bold border-t border-slate-100 pt-3 w-full">
+            {showDiscount && (
+              <span className="text-slate-400 line-through font-bold text-sm">
+                ₹{mrpVal}
+              </span>
+            )}
+            <span className="text-slate-900 font-black text-lg">
+              ₹{sellingPriceVal}
+            </span>
           </div>
         </div>
 
@@ -158,39 +167,41 @@ export const PrintableBarcodeModal: React.FC<PrintableBarcodeModalProps> = ({ pr
           {[barcodeRefPrint0, barcodeRefPrint1, barcodeRefPrint2, barcodeRefPrint3].map((ref, idx) => (
             <div
               key={idx}
-              className="w-full h-full border-2 border-black rounded-xl p-[4mm] box-border flex flex-col items-center justify-between text-center bg-white"
+              className="w-full h-full border-2 border-black rounded-xl p-[5mm] box-border flex flex-col items-center justify-between text-center bg-white"
               style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
             >
               {/* 1. Shop Name */}
               <div className="w-full text-center pt-1">
-                <div className="text-[14pt] font-black text-slate-700 uppercase tracking-widest max-w-[95%] truncate mx-auto leading-none">
+                <div className="text-[16pt] font-black text-black uppercase tracking-wider max-w-[95%] truncate mx-auto leading-none">
                   {displayShopName}
                 </div>
               </div>
 
               {/* 2. Barcode Graphic & 3. Barcode Value */}
               <div className="w-full flex flex-col items-center justify-center my-1">
-                <svg ref={ref} className="w-[85%] h-[20mm]"></svg>
-                <div className="text-[13pt] font-mono font-black tracking-widest text-black mt-1 bg-slate-100 px-3 py-0.5 rounded border border-slate-300">
+                <svg ref={ref} className="w-[85%] h-[22mm]"></svg>
+                <div className="text-[14pt] font-mono font-black tracking-widest text-black mt-1 bg-slate-100 px-3 py-0.5 rounded border border-slate-300">
                   {product.barcode}
                 </div>
               </div>
 
               {/* 4. Product Name */}
               <div className="w-full text-center">
-                <div className="text-[15pt] font-black text-black uppercase tracking-wide max-w-[95%] truncate mx-auto leading-tight">
+                <div className="text-[16pt] font-black text-black uppercase tracking-wide max-w-[95%] truncate mx-auto leading-tight">
                   {displayProductName}
                 </div>
               </div>
 
-              {/* 5. Selling Price & 6. MRP */}
-              <div className="w-full text-center pb-1 space-y-0.5">
-                <div className="text-[13pt] font-extrabold text-black">
-                  Selling Price: {sellingPriceText}
-                </div>
-                <div className="text-[12pt] font-bold text-slate-700">
-                  {product.originalPrice !== undefined && product.originalPrice !== null ? `MRP: ${mrpText}` : mrpText}
-                </div>
+              {/* 5. Price Section (Only raw prices: crossed out MRP + prominent Selling Price) */}
+              <div className="w-full text-center pb-2 flex items-center justify-center gap-6">
+                {showDiscount && (
+                  <span className="text-[15pt] font-bold text-slate-600 line-through">
+                    ₹{mrpVal}
+                  </span>
+                )}
+                <span className="text-[19pt] font-black text-black">
+                  ₹{sellingPriceVal}
+                </span>
               </div>
             </div>
           ))}
