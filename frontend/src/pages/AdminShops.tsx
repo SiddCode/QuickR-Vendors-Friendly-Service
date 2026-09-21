@@ -262,7 +262,12 @@ export const AdminShops: React.FC<AdminShopsProps> = ({ setCurrentPage, setAdmin
       loadSubscriptionRequests();
       loadShops();
     } catch (err: any) {
-      setApproveError(err.message || 'Failed to approve subscription request');
+      console.error('[QuickR Admin Approval Error]', {
+        status: err.status || 'N/A',
+        response: err.errorBody || null,
+        message: err.message || 'Unable to launch this shop.'
+      });
+      setApproveError(err.message || err.userMessage || 'Unable to launch this shop. Please check subscription request details.');
     } finally {
       setApproving(false);
     }
@@ -630,7 +635,7 @@ export const AdminShops: React.FC<AdminShopsProps> = ({ setCurrentPage, setAdmin
                 onClick={handleApproveRequest}
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors shadow-xs disabled:opacity-50"
               >
-                {approving ? 'Creating Shop...' : 'Approve & Launch Shop'}
+                {approving ? 'Launching Shop...' : 'Approve & Launch Shop'}
               </button>
             </div>
           </div>

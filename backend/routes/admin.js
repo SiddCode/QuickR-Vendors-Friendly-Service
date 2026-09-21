@@ -1209,6 +1209,8 @@ router.get('/subscription-requests', async (req, res) => {
 });
 
 router.patch('/subscription-requests/:id/approve', async (req, res) => {
+  let createdShopDoc = null;
+  let createdUserDoc = null;
   try {
     const { id } = req.params;
     const { adminNotes, initialPassword } = req.body || {};
@@ -1222,10 +1224,16 @@ router.patch('/subscription-requests/:id/approve', async (req, res) => {
       return res.status(400).json({ success: false, error: 'This request has already been approved.' });
     }
 
-    // Check if user email already exists
-    const existingUser = await User.findOne({ email: subReq.email });
+    // Normalized email check
+    const normalizedEmail = (subReq.email || '').toLowerCase().trim();
+    if (!normalizedEmail) {
+      return res.status(400).json({ success: false, error: 'Subscription request missing applicant email.' });
+    }
+
+    // Check if user account with this email already exists
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
-      return res.status(400).json({ success: false, error: 'A user account with this applicant email already exists.' });
+      return res.status(400).json({ success: false, error: `A user account with applicant email "${normalizedEmail}" already exists.` });
     }
 
     // Fetch subscription request with passwordHash select
@@ -1240,31 +1248,43 @@ router.patch('/subscription-requests/:id/approve', async (req, res) => {
       finalPasswordHash = await bcrypt.hash(fallbackPassword, salt);
     }
 
-    // Generate Shop & Owner User
-    const shopCount = await Shop.countDocuments();
-    const shopCustomId = `SHOP-${String(shopCount + 1).padStart(6, '0')}`;
-    const userCustomId = `USER-${Date.now()}`;
+    // Collision-free unique sequential shop ID generation
+    let shopCustomId = '';
+    let counter = (await Shop.countDocuments()) + 1;
+    while (!shopCustomId) {
+      const candidateId = `SHOP-${String(counter).padStart(6, '0')}`;
+      const existingShop = await Shop.findOne({ customId: candidateId }).lean();
+      if (!existingShop) {
+        shopCustomId = candidateId;
+      } else {
+        counter++;
+      }
+    }
 
-    const newShop = new Shop({
+    const userCustomId = `USER-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    // Create Shop
+    createdShopDoc = new Shop({
       customId: shopCustomId,
-      name: subReq.shopName,
-      phone: subReq.phone,
+      name: (subReq.shopName || 'Shop Name').trim(),
+      phone: subReq.phone || '',
       address: 'Tamil Nadu, India',
       status: 'active',
       subscriptionStatus: 'active'
     });
-    await newShop.save();
+    await createdShopDoc.save();
 
-    const newUser = new User({
+    // Create Owner User
+    createdUserDoc = new User({
       id: userCustomId,
-      name: subReq.name,
-      email: subReq.email,
+      name: (subReq.name || 'Shop Owner').trim(),
+      email: normalizedEmail,
       passwordHash: finalPasswordHash,
       shopId: shopCustomId,
       role: 'owner',
       status: 'active'
     });
-    await newUser.save();
+    await createdUserDoc.save();
 
     // Mark subscription request approved
     subReq.status = 'approved';
@@ -1277,20 +1297,51 @@ router.patch('/subscription-requests/:id/approve', async (req, res) => {
     await logAdminActivity(
       req.user.id,
       'SUBSCRIPTION_APPROVED',
-      `Approved QuickR subscription request for ${subReq.shopName} (${subReq.email})`,
+      `Approved QuickR subscription request for ${subReq.shopName} (${normalizedEmail})`,
       shopCustomId,
-      { requestId: subReq.id, email: subReq.email }
+      { requestId: subReq.id, email: normalizedEmail }
     );
 
     res.json({
       success: true,
       message: 'Subscription request approved successfully.',
-      shop: { customId: newShop.customId, name: newShop.name },
-      owner: { id: newUser.id, name: newUser.name, email: newUser.email }
+      shop: { customId: createdShopDoc.customId, name: createdShopDoc.name },
+      owner: { id: createdUserDoc.id, name: createdUserDoc.name, email: createdUserDoc.email }
     });
   } catch (err) {
-    console.error('Approve subscription request error:', err);
-    res.status(500).json({ success: false, error: 'Failed to approve subscription request' });
+    console.error('[Admin Approve Shop Error]', {
+      adminUserId: req.user?.id,
+      subscriptionRequestId: req.params.id,
+      errorName: err.name,
+      errorMessage: err.message,
+      errorCode: err.code
+    });
+
+    // Rollback partially created documents on failure
+    if (createdUserDoc && createdUserDoc._id) {
+      await User.deleteOne({ _id: createdUserDoc._id }).catch(() => {});
+    }
+    if (createdShopDoc && createdShopDoc._id) {
+      await Shop.deleteOne({ _id: createdShopDoc._id }).catch(() => {});
+    }
+
+    let errorMessage = 'Failed to approve subscription request.';
+    if (err.code === 11000) {
+      if (err.message && err.message.includes('email')) {
+        errorMessage = 'A user account with this applicant email already exists.';
+      } else if (err.message && err.message.includes('customId')) {
+        errorMessage = 'Shop ID collision occurred. Please try again.';
+      } else {
+        errorMessage = 'Duplicate record encountered while approving request.';
+      }
+      return res.status(400).json({ success: false, error: errorMessage });
+    }
+
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ success: false, error: `Validation error: ${err.message}` });
+    }
+
+    res.status(500).json({ success: false, error: err.message || errorMessage });
   }
 });
 
