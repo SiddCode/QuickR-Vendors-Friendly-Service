@@ -41,7 +41,7 @@ interface BillItem {
   rate: number;
 }
 
-export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage: _setCurrentPage, billingInitialData: _billingInitialData }) => {
+export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, billingInitialData: _billingInitialData }) => {
   const { 
     currentUser, 
     customers, 
@@ -53,7 +53,8 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage: _set
     checkHealth,
     salesSessionActive,
     startSalesSession,
-    endSalesSession
+    endSalesSession,
+    refreshData
   } = useApp();
 
   const [connectingMsg, setConnectingMsg] = useState<string | null>(null);
@@ -424,7 +425,14 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage: _set
       const sale = await createSale(payload);
       if (sale) {
         setActiveRequestId(null);
-        setCompletedSale(sale);
+        setItems([]);
+        setDiscountValue(0);
+        setCustomerName('');
+        setCustomerPhone('');
+        setSelectedCustomerId('');
+        setIsWalkIn(true);
+        await refreshData();
+        setCurrentPage('sales');
       }
     } catch (err) {
       console.error('Failed to complete sale:', err);

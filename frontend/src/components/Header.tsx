@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, User, ShoppingBag, HelpCircle, Receipt, ArrowRight, X, Menu } from 'lucide-react';
+import { Search, Bell, User, ShoppingBag, HelpCircle, Receipt, ArrowRight, X, Menu, RefreshCw } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -13,11 +13,29 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchValue, setCurrentPage, setSelectedCustomerId, onOpenMobileMenu }) => {
-  const { shopName, customers, products, enquiries, sales, currentUser, connectionState } = useApp();
+  const { shopName, customers, products, enquiries, sales, currentUser, connectionState, refreshData } = useApp();
   const { t } = useLanguage();
   const [localSearch, setLocalSearch] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  const handleManualRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    setRefreshError(null);
+    try {
+      await refreshData();
+    } catch (err: any) {
+      console.error('Manual refresh error:', err);
+      setRefreshError('Unable to refresh. Please try again.');
+      setTimeout(() => setRefreshError(null), 4000);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const query = (searchValue !== undefined ? searchValue : localSearch).trim().toLowerCase();
 
@@ -236,6 +254,23 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
         </div>
 
 
+
+        {/* Desktop/PWA Manual Refresh Button */}
+        <button
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          title="Refresh latest data from server"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all shadow-2xs disabled:opacity-50 shrink-0"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${isRefreshing ? 'animate-spin text-primary-600' : ''}`} />
+          <span className="hidden sm:inline">{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+        </button>
+
+        {refreshError && (
+          <div className="fixed bottom-4 right-4 z-50 bg-rose-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg animate-fadeIn">
+            {refreshError}
+          </div>
+        )}
 
         {/* Notifications */}
         <button 
