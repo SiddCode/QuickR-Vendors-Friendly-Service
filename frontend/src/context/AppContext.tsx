@@ -27,8 +27,11 @@ interface AppContextType {
       convertedCount: number;
     };
   } | null;
-  shopProfile: { isGstRegistered: boolean; gstin: string; stateCode?: string } | null;
+  shopProfile: { name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string } | null;
   shopName: string;
+  salesSessionActive: boolean;
+  startSalesSession: () => void;
+  endSalesSession: () => void;
   isLoading: boolean;
   error: string | null;
   login: (email: string, pass: string) => Promise<boolean>;
@@ -80,7 +83,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notes, setNotes] = useState<Note[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [todayWork, setTodayWork] = useState<any>(null);
-  const [shopProfile, setShopProfile] = useState<{ isGstRegistered: boolean; gstin: string } | null>(null);
+  const [shopProfile, setShopProfile] = useState<{ name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string } | null>(null);
+  
+  const [salesSessionActive, setSalesSessionActive] = useState<boolean>(() => {
+    return localStorage.getItem('quickr_sales_session_active') === 'true';
+  });
+
+  const startSalesSession = () => {
+    setSalesSessionActive(true);
+    localStorage.setItem('quickr_sales_session_active', 'true');
+  };
+
+  const endSalesSession = () => {
+    setSalesSessionActive(false);
+    localStorage.setItem('quickr_sales_session_active', 'false');
+  };
   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error] = useState<string | null>(null);
@@ -221,6 +238,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (profileData) {
         setShopProfile({
+          name: profileData.name || 'QuickR Shop',
           isGstRegistered: !!profileData.isGstRegistered,
           gstin: profileData.gstin || ''
         });
@@ -618,7 +636,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       messages,
       todayWork,
       shopProfile,
-      shopName: currentUser?.shopName || 'Shop Name',
+      shopName: shopProfile?.name || (currentUser?.shopId ? `Shop ${currentUser.shopId}` : 'QuickR Shop'),
+      salesSessionActive,
+      startSalesSession,
+      endSalesSession,
       isLoading,
       error,
       login,

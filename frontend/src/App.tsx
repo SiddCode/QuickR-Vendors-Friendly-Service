@@ -35,6 +35,7 @@ import { PrivacyNotice } from './pages/PrivacyNotice';
 import { PrivacyDashboard } from './pages/PrivacyDashboard';
 import { AdminPrivacy } from './pages/AdminPrivacy';
 import { CustomerReengagement } from './pages/CustomerReengagement';
+import { SalesSession } from './pages/SalesSession';
 import { InstallPwaPrompt } from './components/InstallPwaPrompt';
 import { X, Loader2 } from 'lucide-react';
 
@@ -137,6 +138,8 @@ const AppContent: React.FC = () => {
         return <SmartFollowUp setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
       case 'work-mode':
         return <WorkMode setCurrentPage={setCurrentPage} setBillingInitialData={setBillingInitialData} />;
+      case 'sales-session':
+        return <SalesSession setCurrentPage={setCurrentPage} />;
       case 'products':
         return <Products />;
       case 'billing':
@@ -184,6 +187,7 @@ const AppContent: React.FC = () => {
     'work-mode': 'Focused Work Mode',
     products: 'Products',
     billing: 'New Bill',
+    'sales-session': 'Sales Session',
     enquiries: 'Enquiries',
     sales: 'Sales',
     automation: 'Automation',

@@ -12,7 +12,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelectedCustomerId }) => {
-  const { enquiries, followUps, sales, todayWork, customers, currentUser } = useApp();
+  const { enquiries, followUps, sales, todayWork, customers, currentUser, salesSessionActive, startSalesSession } = useApp();
   const isStaff = currentUser?.role === 'staff';
   const { t } = useLanguage();
   // Live Backend Stats State
@@ -162,15 +162,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
               </div>
-              <div className="flex items-center justify-between p-4 rounded-xl bg-primary-50/60 border border-primary-100 hover:bg-primary-50 cursor-pointer transition-colors duration-150 group" onClick={() => setCurrentPage('billing')}>
-                <div className="flex items-center gap-4">
-                  <div className="w-3.5 h-3.5 rounded-full bg-primary-500" />
-                  <p className="text-sm font-semibold text-slate-700">
-                    <span className="text-primary-500 text-lg mr-1.5 font-bold">{todayBillCount}</span> bills created today
-                  </p>
+              {!isStaff && (
+                <div className="flex items-center justify-between p-4 rounded-xl bg-primary-50/60 border border-primary-100 hover:bg-primary-50 cursor-pointer transition-colors duration-150 group" onClick={() => setCurrentPage('billing')}>
+                  <div className="flex items-center gap-4">
+                    <div className="w-3.5 h-3.5 rounded-full bg-primary-500" />
+                    <p className="text-sm font-semibold text-slate-700">
+                      <span className="text-primary-500 text-lg mr-1.5 font-bold">{todayBillCount}</span> bills created today
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
                 </div>
-                <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
-              </div>
+              )}
 
               <div className="flex items-center justify-between p-4 rounded-xl bg-indigo-50/60 border border-indigo-100 hover:bg-indigo-100/60 cursor-pointer transition-colors duration-150 group" onClick={() => setCurrentPage('reengagement')}>
                 <div className="flex items-center gap-4">
@@ -184,18 +186,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
             </div>
           </div>
           <div className="flex gap-3 mt-6">
-            <button 
-              onClick={() => setCurrentPage('billing')}
-              className="flex-1 py-3 border border-primary-200 bg-white text-primary-600 hover:bg-primary-50 font-bold rounded-xl transition-all duration-200 text-sm"
-            >
-              + New Bill
-            </button>
-            <button 
-              onClick={handleActionClick}
-              className="flex-1 py-3 border border-primary-200 bg-primary-600 text-white hover:bg-primary-700 font-bold rounded-xl transition-all duration-200 text-sm"
-            >
-              Start Today's Work
-            </button>
+            {isStaff ? (
+              <button 
+                onClick={() => {
+                  if (!salesSessionActive) startSalesSession();
+                  setCurrentPage('sales-session');
+                }}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl transition-all duration-200 text-sm shadow-md flex justify-center items-center gap-2"
+              >
+                <Receipt className="w-4 h-4" />
+                {salesSessionActive ? 'Continue Sales Session' : 'Start Sales Session'}
+              </button>
+            ) : (
+              <>
+                <button 
+                  onClick={() => setCurrentPage('billing')}
+                  className="flex-1 py-3 border border-primary-200 bg-white text-primary-600 hover:bg-primary-50 font-bold rounded-xl transition-all duration-200 text-sm"
+                >
+                  + New Bill
+                </button>
+                <button 
+                  onClick={handleActionClick}
+                  className="flex-1 py-3 border border-primary-200 bg-primary-600 text-white hover:bg-primary-700 font-bold rounded-xl transition-all duration-200 text-sm"
+                >
+                  Start Today's Work
+                </button>
+              </>
+            )}
           </div>
         </div>
 
