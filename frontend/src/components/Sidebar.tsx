@@ -46,13 +46,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage })
   // Normal business menu items (for owner/staff)
   const menuItems = [
     { id: 'dashboard', label: t('nav.dashboard'), icon: LayoutGrid },
-    ...(isStaff ? [{ id: 'sales-session', label: 'Sales Session', icon: Receipt }] : []),
+    { id: 'sales-session', label: 'Sales Session', icon: Receipt },
+    { id: 'sales', label: t('nav.sales'), icon: IndianRupee },
     { id: 'customers', label: t('nav.customers'), icon: Users },
     { id: 'products', label: t('nav.products'), icon: Package },
     { id: 'enquiries', label: t('nav.enquiries'), icon: MessageSquare },
-    { id: 'billing', label: t('nav.newBill'), icon: Receipt },
     ...(!isStaff ? [
-      { id: 'sales', label: t('nav.sales'), icon: IndianRupee },
       { id: 'reports', label: t('nav.reports'), icon: BarChart2 }
     ] : []),
     { id: 'campaigns', label: t('nav.campaigns'), icon: Megaphone },

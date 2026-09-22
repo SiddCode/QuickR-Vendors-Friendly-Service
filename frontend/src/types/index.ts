@@ -161,6 +161,11 @@ export interface Sale {
   };
   paymentMethod: string;
   source: string;
+  createdBy?: {
+    userId: string;
+    name: string;
+    role: string;
+  };
   createdAt: string;
 }
 

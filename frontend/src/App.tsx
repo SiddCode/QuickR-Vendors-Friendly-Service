@@ -10,7 +10,6 @@ import { NewEnquiry } from './pages/NewEnquiry';
 import { SmartFollowUp } from './pages/SmartFollowUp';
 import { WorkMode } from './pages/WorkMode';
 import { Products } from './pages/Products';
-import { Billing } from './pages/Billing';
 import { Sales } from './pages/Sales';
 import { Automation } from './pages/Automation';
 import { Reports } from './pages/Reports';
@@ -139,17 +138,14 @@ const AppContent: React.FC = () => {
       case 'work-mode':
         return <WorkMode setCurrentPage={setCurrentPage} setBillingInitialData={setBillingInitialData} />;
       case 'sales-session':
-        return <SalesSession setCurrentPage={setCurrentPage} />;
+        return <SalesSession setCurrentPage={setCurrentPage} billingInitialData={billingInitialData} />;
       case 'products':
         return <Products />;
       case 'billing':
-        return <Billing setCurrentPage={setCurrentPage} billingInitialData={billingInitialData} />;
+        return <SalesSession setCurrentPage={setCurrentPage} />;
       case 'enquiries':
         return <Enquiries setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
       case 'sales':
-        if (currentUser?.role === 'staff') {
-          return <Dashboard setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
-        }
         return <Sales setCurrentPage={setCurrentPage} />;
       case 'automation':
         return <Automation />;

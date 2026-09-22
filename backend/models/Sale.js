@@ -54,6 +54,11 @@ const saleSchema = new mongoose.Schema(
     saleSource: { type: String, default: 'normal' },
     campaignId: { type: String, default: '' },
     requestId: { type: String, index: true },
+    createdBy: {
+      userId: { type: String, default: '' },
+      name: { type: String, default: '' },
+      role: { type: String, default: '' }
+    },
     shopId: { type: String, required: true, default: 'demo-shop', index: true }
   },
   { timestamps: true }
@@ -61,6 +66,7 @@ const saleSchema = new mongoose.Schema(
 
 saleSchema.index({ shopId: 1, createdAt: -1, source: 1 });
 saleSchema.index({ shopId: 1, customerId: 1 });
+saleSchema.index({ shopId: 1, 'createdBy.userId': 1, createdAt: -1 });
 saleSchema.index({ shopId: 1, requestId: 1 }, { unique: true, sparse: true });
 
 export const Sale = mongoose.model('Sale', saleSchema);

@@ -23,8 +23,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
   const navItems = [
     { id: 'dashboard', label: t('nav.home'), icon: LayoutGrid },
+    { id: 'sales-session', label: 'Sales Session', icon: Receipt },
     { id: 'customers', label: t('nav.customers'), icon: Users },
-    { id: 'billing', label: t('nav.newBill'), icon: Receipt },
   ];
 
   return (

@@ -25,6 +25,13 @@ import { printSaleInvoiceWindow } from '../utils/printInvoice';
 
 interface SalesSessionProps {
   setCurrentPage: (page: string) => void;
+  billingInitialData?: {
+    customerId?: string;
+    enquiryId?: string;
+    followUpId?: string;
+    productId?: string;
+    rate?: number;
+  } | null;
 }
 
 interface BillItem {
@@ -34,7 +41,7 @@ interface BillItem {
   rate: number;
 }
 
-export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage: _setCurrentPage }) => {
+export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage: _setCurrentPage, billingInitialData: _billingInitialData }) => {
   const { 
     currentUser, 
     customers, 

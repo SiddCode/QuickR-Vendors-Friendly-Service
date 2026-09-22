@@ -2420,9 +2420,17 @@ app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) =>
   }
 });
 
-app.get('/api/sales', requireAuth, requireNonStaff, async (req, res) => {
+app.get('/api/sales', requireAuth, async (req, res) => {
   try {
-    const list = await Sale.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
+    const shopId = req.user.shopId;
+    let query = { shopId };
+
+    // Staff sees ONLY sales created by that specific Staff user
+    if (req.user.role === 'staff') {
+      query['createdBy.userId'] = req.user.id;
+    }
+
+    const list = await Sale.find(query).sort({ createdAt: -1 });
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch sales' });
@@ -2713,6 +2721,11 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       saleSource: saleSource || (campaignId ? 'campaign' : 'normal'),
       campaignId: campaignId || '',
       requestId: cleanRequestId,
+      createdBy: {
+        userId: req.user.id,
+        name: req.user.name || 'User',
+        role: req.user.role || 'staff'
+      },
       shopId: req.user.shopId || (req.user.role === 'admin' ? 'ADMIN' : 'demo-shop')
     });
 
