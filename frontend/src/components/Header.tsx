@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Bell, User, ShoppingBag, HelpCircle, Receipt, ArrowRight, X, Menu, RefreshCw } from 'lucide-react';
+import { Search, User, ShoppingBag, HelpCircle, Receipt, ArrowRight, X, Menu, RefreshCw } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -271,18 +271,6 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
             {refreshError}
           </div>
         )}
-
-        {/* Notifications */}
-        <button 
-          onClick={() => setCurrentPage && setCurrentPage('work-mode')}
-          className="relative p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all duration-150 shrink-0"
-          title={t('header.viewTasks')}
-        >
-          <Bell className="w-5 h-5" />
-          <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-primary-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
-            !
-          </span>
-        </button>
 
         {/* Shop Badge */}
         <div className="flex items-center gap-3 pl-2 border-l border-slate-100">

@@ -730,7 +730,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 </div>
                 
                 {items.length === 0 ? (
-                  <div className="p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50 space-y-2">
+                  <div className="p-6 sm:p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50 space-y-2">
                     <ShoppingCart className="w-8 h-8 text-slate-300 mx-auto" />
                     <p className="text-xs font-bold text-slate-600">Cart is empty</p>
                     <p className="text-[11px] text-slate-400">Scan product barcode or click "+ Add Product" to build customer bill</p>
@@ -738,13 +738,13 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 ) : (
                   <div className="space-y-3">
                     {items.map((item) => (
-                      <div key={item.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col md:flex-row gap-4 items-end">
-                        <div className="flex-grow w-full">
+                      <div key={item.id} className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row gap-3 items-stretch sm:items-end">
+                        <div className="flex-grow w-full min-w-0">
                           <label className="block text-xs font-semibold text-slate-500 mb-1">Select Product</label>
                           <select 
                             value={item.productId}
                             onChange={e => handleItemChange(item.id, 'productId', e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm font-semibold text-slate-800 focus:outline-none focus:border-primary-500"
+                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:border-primary-500 truncate"
                           >
                             {activeProducts.map(p => (
                               <option key={p.id} value={p.id}>{p.name} {p.barcode ? `(${p.barcode})` : ''}</option>
@@ -752,56 +752,60 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           </select>
                         </div>
                         
-                        <div className="w-full md:w-28 shrink-0">
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Quantity</label>
-                          <input 
-                            type="number" 
-                            min="1"
-                            value={item.quantity}
-                            onChange={e => handleItemChange(item.id, 'quantity', Number(e.target.value))}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
-                          />
+                        <div className="grid grid-cols-2 sm:flex items-center gap-3 w-full sm:w-auto">
+                          <div className="w-full sm:w-24">
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">Quantity</label>
+                            <input 
+                              type="number" 
+                              min="1"
+                              value={item.quantity}
+                              onChange={e => handleItemChange(item.id, 'quantity', Number(e.target.value))}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-2 text-xs sm:text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
+                            />
+                          </div>
+
+                          <div className="w-full sm:w-28">
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">Rate (₹)</label>
+                            <input 
+                              type="number" 
+                              min="0"
+                              value={item.rate}
+                              onChange={e => handleItemChange(item.id, 'rate', Number(e.target.value))}
+                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-2 text-xs sm:text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
+                            />
+                          </div>
                         </div>
 
-                        <div className="w-full md:w-32 shrink-0">
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Rate (₹)</label>
-                          <input 
-                            type="number" 
-                            min="0"
-                            value={item.rate}
-                            onChange={e => handleItemChange(item.id, 'rate', Number(e.target.value))}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
-                          />
-                        </div>
+                        <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60 w-full sm:w-auto">
+                          <div className="text-left sm:text-right">
+                            <span className="block text-[10px] text-slate-400 font-bold uppercase">Item Total</span>
+                            <span className="text-sm font-black text-slate-800">₹{(item.quantity * item.rate).toLocaleString('en-IN')}</span>
+                          </div>
 
-                        <div className="w-full md:w-32 shrink-0 text-right pr-2">
-                          <span className="block text-[10px] text-slate-400 font-bold uppercase">Item Total</span>
-                          <span className="text-sm font-black text-slate-800">₹{(item.quantity * item.rate).toLocaleString('en-IN')}</span>
+                          <button 
+                            onClick={() => handleRemoveItem(item.id)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg shrink-0 transition-colors"
+                            title="Remove product"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
                         </div>
-
-                        <button 
-                          onClick={() => handleRemoveItem(item.id)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg shrink-0 transition-colors"
-                          title="Remove product"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
                       </div>
                     ))}
                   </div>
                 )}
 
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex flex-wrap items-center gap-3 pt-2">
                   <button 
                     onClick={handleAddItem}
-                    className="flex items-center gap-1.5 text-primary-600 font-bold text-xs hover:bg-primary-50 px-3.5 py-2 rounded-xl border border-primary-200 transition-colors"
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 text-primary-600 font-bold text-xs hover:bg-primary-50 px-3.5 py-2.5 rounded-xl border border-primary-200 transition-colors"
                   >
                     <Plus className="w-4 h-4" /> Add Product
                   </button>
                   {barcodeEnabled && (
                     <button
                       onClick={() => setIsCameraScannerOpen(true)}
-                      className="flex items-center gap-1.5 text-indigo-600 font-bold text-xs hover:bg-indigo-50 px-3.5 py-2 rounded-xl border border-indigo-200 transition-colors"
+                      className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 text-indigo-600 font-bold text-xs hover:bg-indigo-50 px-3.5 py-2.5 rounded-xl border border-indigo-200 transition-colors"
                     >
                       <Camera className="w-4 h-4" /> 📷 Camera Scan
                     </button>
