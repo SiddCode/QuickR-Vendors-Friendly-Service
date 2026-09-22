@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Plus, X, Receipt, Search, Check, ChevronDown, Camera, Barcode, AlertTriangle } from 'lucide-react';
+import { Plus, X, Receipt, Search, Check, ChevronDown, Camera, Barcode, AlertTriangle, Printer, MessageSquare, CheckCircle2 } from 'lucide-react';
 import { api } from '../services/api';
 import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
+import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
+import { printSaleInvoiceWindow } from '../utils/printInvoice';
 
 interface BillingProps {
   setCurrentPage: (page: string) => void;
@@ -23,7 +25,7 @@ interface BillItem {
 }
 
 export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitialData }) => {
-  const { customers, products, createSale, shopProfile, connectionState, checkHealth } = useApp();
+  const { customers, products, createSale, shopProfile, shopName, connectionState, checkHealth } = useApp();
   const [connectingMsg, setConnectingMsg] = useState<string | null>(null);
 
   const activeProducts = products.filter(p => p.isActive);
@@ -424,14 +426,25 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
       if (sale) {
         // Reset requestId upon confirmed successful sale creation
         setActiveRequestId(null);
-        // Navigate directly to Sales page after generating bill
-        setCurrentPage('sales');
+        setCompletedSale(sale);
       }
     } catch (err) {
       console.error('Failed to generate bill:', err);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const [completedSale, setCompletedSale] = useState<any | null>(null);
+
+  const handleStartNewSale = () => {
+    setCompletedSale(null);
+    setItems([]);
+    setDiscountValue(0);
+    setCustomerName('');
+    setCustomerPhone('');
+    setSelectedCustomerId('');
+    setIsWalkIn(true);
   };
 
   return (
@@ -925,6 +938,79 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
             >
               OK, Got it
             </button>
+          </div>
+        </div>
+      )}
+      {/* Sale Completed Modal */}
+      {completedSale && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 text-center space-y-5 border border-slate-100 animate-fadeIn font-sans">
+            <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold text-slate-800">Sale Completed</h3>
+              <p className="text-xs text-slate-400 font-medium mt-1">Invoice: <span className="font-mono font-bold text-slate-700">{completedSale.invoiceNumber}</span></p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-left space-y-2.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-semibold">Customer:</span>
+                <span className="font-bold text-slate-800">{completedSale.customerName || 'Walk-in Customer'}</span>
+              </div>
+              {completedSale.customerPhone && (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 font-semibold">Phone:</span>
+                  <span className="font-mono font-bold text-slate-700">{completedSale.customerPhone}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                <span className="text-slate-700 font-extrabold text-sm">Total Amount:</span>
+                <span className="text-lg font-black text-emerald-600">₹{(completedSale.totalAmount || 0).toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 pt-1">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => printSaleInvoiceWindow(completedSale, shopName)}
+                  className="flex-1 py-3 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-2xs transition-colors"
+                >
+                  <Printer className="w-4 h-4 text-slate-600" /> Print Bill
+                </button>
+
+                <button
+                  onClick={() => {
+                    let phoneToUse = completedSale.customerPhone;
+                    if (!phoneToUse && completedSale.customerId) {
+                      const foundCust = customers.find(c => c.id === completedSale.customerId);
+                      if (foundCust) phoneToUse = foundCust.phone;
+                    }
+                    if (!phoneToUse) {
+                      const manualPhone = prompt('Enter customer 10-digit mobile number for WhatsApp:');
+                      if (manualPhone && manualPhone.trim()) phoneToUse = manualPhone.trim();
+                    }
+                    if (!phoneToUse) {
+                      alert('Customer phone number is required to send bill on WhatsApp.');
+                      return;
+                    }
+                    const billMsg = buildWhatsAppBillMessage(shopName, completedSale.customerName || 'Customer', completedSale);
+                    openWhatsApp(phoneToUse, billMsg, shopName, completedSale.customerName || 'Customer');
+                  }}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-2xs transition-colors"
+                >
+                  <MessageSquare className="w-4 h-4" /> Send on WhatsApp
+                </button>
+              </div>
+
+              <button
+                onClick={handleStartNewSale}
+                className="w-full py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" /> New Sale
+              </button>
+            </div>
           </div>
         </div>
       )}
