@@ -392,7 +392,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   };
 
   return (
-    <div className="flex-grow p-4 sm:p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans animate-fadeIn">
+    <div className="flex-grow p-4 sm:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans animate-fadeIn">
       <div>
         <h2 className="text-xl font-bold text-slate-800">{t('nav.settings')}</h2>
         <p className="text-xs text-slate-400">Manage your authenticated shop profile and language preferences</p>

@@ -235,7 +235,7 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
   const progressPercent = Math.min(100, Math.round((completedCount / 5) * 100));
 
   return (
-    <div className="flex-grow p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans">
+    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">
       
       {/* Header */}
       <div className="flex justify-between items-center">

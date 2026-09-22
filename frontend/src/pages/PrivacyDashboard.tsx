@@ -180,7 +180,7 @@ export const PrivacyDashboard: React.FC<PrivacyDashboardProps> = ({ setCurrentPa
   };
 
   return (
-    <div className="flex-grow p-4 md:p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans text-left">
+    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans text-left">
       {/* Header Banner */}
       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">

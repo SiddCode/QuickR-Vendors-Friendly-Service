@@ -244,7 +244,7 @@ const AppContent: React.FC = () => {
         />
 
         {/* Page Content */}
-        <main className="flex-1 flex flex-col w-full min-w-0 min-h-0 bg-slate-50 pb-16 lg:pb-0 pt-safe pb-safe">
+        <main className="flex-1 flex flex-col w-full min-w-0 min-h-0 bg-slate-50 pb-mobile-nav pt-safe">
           {renderPage()}
         </main>
 

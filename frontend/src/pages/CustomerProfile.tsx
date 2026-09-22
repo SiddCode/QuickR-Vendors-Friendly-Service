@@ -176,7 +176,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   };
 
   return (
-    <div className="flex-grow p-4 md:p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans">
+    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">
       {/* Back Header */}
       <div className="flex items-center justify-between">
         <button 

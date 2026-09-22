@@ -87,7 +87,7 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
   const paginatedCustomers = filteredCustomers.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div className="flex-grow p-4 md:p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans">
+    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Customers</h2>

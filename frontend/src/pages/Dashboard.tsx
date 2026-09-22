@@ -112,7 +112,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
   });
 
   return (
-    <div className="flex-grow p-4 md:p-8 space-y-6 md:space-y-8 overflow-y-auto max-w-7xl mx-auto w-full font-sans">
+    <div className="flex-grow p-4 md:p-8 space-y-6 md:space-y-8 max-w-7xl mx-auto w-full font-sans">
       {/* 1. Stat Cards Grid */}
       <div className={`grid ${isStaff ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 md:grid-cols-4'} gap-4`}>
         {!isStaff && (

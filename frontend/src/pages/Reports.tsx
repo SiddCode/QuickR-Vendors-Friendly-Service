@@ -54,7 +54,7 @@ export const Reports: React.FC = () => {
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
   return (
-    <div className="flex-grow p-4 lg:p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans animate-fadeIn">
+    <div className="flex-grow p-4 lg:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans animate-fadeIn">
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Business Reports</h2>

@@ -37,7 +37,7 @@ export const Enquiries: React.FC<EnquiriesProps> = ({ setCurrentPage, setSelecte
   const enquiriesList = enquiries || [];
 
   return (
-    <div className="flex-grow p-8 space-y-6 overflow-y-auto max-w-7xl mx-auto w-full font-sans animate-fadeIn">
+    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans animate-fadeIn">
       {feedbackMsg && (
         <div className="bg-success-50 border border-success-200 text-success-700 px-4 py-3 rounded-xl text-sm font-semibold animate-fadeIn">
           {feedbackMsg}
