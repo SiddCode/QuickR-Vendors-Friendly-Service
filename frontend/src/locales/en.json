@@ -172,5 +172,28 @@
     "downloadErrorReport": "Download Error Report",
     "viewIssues": "View Issues",
     "importComplete": "Import Complete"
+  },
+  "storage": {
+    "title": "Database Storage Monitor",
+    "subtitle": "Real MongoDB collection & storage breakdown",
+    "storageUsed": "Storage Used",
+    "storageLimit": "Storage Limit",
+    "dataStorage": "Data Storage",
+    "indexStorage": "Index Storage",
+    "totalStorage": "Total Storage",
+    "documents": "Documents",
+    "collections": "Collections",
+    "storageBreakdown": "Storage Breakdown",
+    "yourShopData": "Your Shop Data",
+    "productCatalog": "Product Catalog",
+    "lastChecked": "Last checked",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "normal": "Normal",
+    "moderateUsage": "Moderate Usage",
+    "highUsage": "High Usage",
+    "criticalUsage": "Critical Usage",
+    "limitNotConfigured": "Storage limit not configured",
+    "unableToLoad": "Unable to load database storage information."
   }
 }

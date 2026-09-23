@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { Store, Users, ShieldCheck, MessageSquare, IndianRupee, Receipt, ClipboardList, TrendingUp, Package, Filter, Sparkles, RefreshCw, AlertCircle } from 'lucide-react';
+import { Store, Users, ShieldCheck, MessageSquare, IndianRupee, Receipt, ClipboardList, TrendingUp, Package, Filter, Sparkles, RefreshCw, AlertCircle, Database } from 'lucide-react';
 
 interface AdminDashboardProps {
   setCurrentPage: (page: string) => void;
@@ -97,6 +97,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ setCurrentPage }
     { label: 'Total Follow-ups', value: stats?.totalFollowUps || 0, icon: ClipboardList, color: 'bg-orange-50 text-orange-600', iconBg: 'bg-orange-100', page: null },
     { label: 'Total Sales Count', value: stats?.totalSales || 0, icon: IndianRupee, color: 'bg-teal-50 text-teal-600', iconBg: 'bg-teal-100', page: null },
     { label: 'Total Revenue', value: `₹${(stats?.totalBillingAmount || 0).toLocaleString('en-IN')}`, icon: Receipt, color: 'bg-emerald-50 text-emerald-700', iconBg: 'bg-emerald-100', page: 'admin-reports' },
+    { label: 'Database Storage', value: 'Monitor', icon: Database, color: 'bg-purple-50 text-purple-700', iconBg: 'bg-purple-100', page: 'admin-storage' },
   ];
 
   const todayCards = [

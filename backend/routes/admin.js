@@ -1412,4 +1412,194 @@ router.delete('/subscription-requests', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// REAL MONGODB DATABASE STORAGE MONITOR
+// ═══════════════════════════════════════════════════════════════════════════════
+router.get('/database-storage', async (req, res) => {
+  try {
+    const db = User.db; // Get native db instance from Mongoose
+    if (!db) {
+      return res.status(500).json({ success: false, error: 'Database connection not ready' });
+    }
+
+    // 1. Fetch real MongoDB Database Statistics
+    let dbStats = {};
+    try {
+      dbStats = await db.db.stats();
+    } catch (dbErr) {
+      console.warn('db.stats() failed, attempting command stats:', dbErr.message);
+      dbStats = await db.db.command({ dbStats: 1 });
+    }
+
+    const dataSizeBytes = Number(dbStats.dataSize || 0);
+    const storageSizeBytes = Number(dbStats.storageSize || 0);
+    const indexSizeBytes = Number(dbStats.indexSize || 0);
+
+    // Total storage in MongoDB is the sum of allocated storageSize + indexSize
+    const totalSizeBytes = storageSizeBytes + indexSizeBytes;
+    const totalCollections = Number(dbStats.collections || 0);
+
+    // 2. Fetch real Collection Statistics for all existing collections
+    const collectionsList = await db.db.listCollections().toArray();
+    const collectionStatsList = [];
+
+    for (const collInfo of collectionsList) {
+      const collName = collInfo.name;
+      if (collName.startsWith('system.')) continue;
+
+      try {
+        const cStats = await db.db.command({ collStats: collName });
+        const docCount = Number(cStats.count || 0);
+        const cDataSize = Number(cStats.size || 0);
+        const cStorageSize = Number(cStats.storageSize || 0);
+        const cIndexSize = Number(cStats.totalIndexSize || cStats.indexSize || 0);
+        const cTotalSize = cStorageSize + cIndexSize;
+
+        collectionStatsList.push({
+          name: collName,
+          documents: docCount,
+          dataSizeBytes: cDataSize,
+          storageSizeBytes: cStorageSize,
+          indexSizeBytes: cIndexSize,
+          totalSizeBytes: cTotalSize
+        });
+      } catch (cErr) {
+        // Fallback if collStats command fails for a specific view/collection
+        const estCount = await db.db.collection(collName).estimatedDocumentCount().catch(() => 0);
+        collectionStatsList.push({
+          name: collName,
+          documents: estCount,
+          dataSizeBytes: 0,
+          storageSizeBytes: 0,
+          indexSizeBytes: 0,
+          totalSizeBytes: 0
+        });
+      }
+    }
+
+    // Sort collections descending by total storage size
+    collectionStatsList.sort((a, b) => b.totalSizeBytes - a.totalSizeBytes);
+
+    // 3. Storage Limit Configuration from environment (default: unconfigured/null)
+    const limitEnv = process.env.QUICKR_STORAGE_LIMIT_MB;
+    let limitBytes = null;
+    let limitMb = null;
+    let isConfigured = false;
+    let usedPercentage = 0;
+    let remainingBytes = null;
+    let warningLevel = 'NORMAL'; // 'NORMAL' | 'MODERATE' | 'HIGH' | 'CRITICAL'
+
+    if (limitEnv && !isNaN(Number(limitEnv)) && Number(limitEnv) > 0) {
+      isConfigured = true;
+      limitMb = Number(limitEnv);
+      limitBytes = limitMb * 1024 * 1024;
+      usedPercentage = Math.min(100, Number(((totalSizeBytes / limitBytes) * 100).toFixed(1)));
+      remainingBytes = Math.max(0, limitBytes - totalSizeBytes);
+
+      if (usedPercentage >= 90) {
+        warningLevel = 'CRITICAL';
+      } else if (usedPercentage >= 80) {
+        warningLevel = 'HIGH';
+      } else if (usedPercentage >= 60) {
+        warningLevel = 'MODERATE';
+      }
+    }
+
+    // 4. Admin Shop-Specific Document Breakdown & Product Catalog Stats
+    // If shopId is set on admin user (or default admin shop query), count shop-isolated items
+    const shopId = req.user.shopId || null;
+    let shopMetrics = {
+      shopId: shopId || 'ALL_SHOPS',
+      products: 0,
+      customers: 0,
+      sales: 0,
+      enquiries: 0,
+      followUps: 0,
+      activities: 0
+    };
+
+    let productCatalog = {
+      totalProducts: 0,
+      activeProducts: 0,
+      inactiveProducts: 0,
+      withBarcode: 0,
+      withoutBarcode: 0,
+      uniqueCategories: 0,
+      uniqueSizes: 0,
+      uniqueColors: 0
+    };
+
+    const filterShop = shopId ? { shopId } : {};
+
+    const [
+      prodTotal,
+      prodActive,
+      prodInactive,
+      prodWithBarcode,
+      prodWithoutBarcode,
+      custCount,
+      saleCount,
+      enqCount,
+      followCount,
+      actCount
+    ] = await Promise.all([
+      Product.countDocuments(filterShop),
+      Product.countDocuments({ ...filterShop, isActive: true }),
+      Product.countDocuments({ ...filterShop, isActive: false }),
+      Product.countDocuments({ ...filterShop, barcode: { $ne: null, $exists: true, $nin: [''] } }),
+      Product.countDocuments({ ...filterShop, $or: [{ barcode: null }, { barcode: '' }, { barcode: { $exists: false } }] }),
+      Customer.countDocuments(filterShop),
+      Sale.countDocuments(filterShop),
+      Enquiry.countDocuments(filterShop),
+      FollowUp.countDocuments(filterShop),
+      Activity.countDocuments(filterShop)
+    ]);
+
+    shopMetrics = {
+      shopId: shopId || 'ALL_SHOPS',
+      products: prodTotal,
+      customers: custCount,
+      sales: saleCount,
+      enquiries: enqCount,
+      followUps: followCount,
+      activities: actCount
+    };
+
+    productCatalog = {
+      totalProducts: prodTotal,
+      activeProducts: prodActive,
+      inactiveProducts: prodInactive,
+      withBarcode: prodWithBarcode,
+      withoutBarcode: prodWithoutBarcode
+    };
+
+    res.json({
+      success: true,
+      checkedAt: new Date().toISOString(),
+      database: {
+        dataSizeBytes,
+        storageSizeBytes,
+        indexSizeBytes,
+        totalSizeBytes,
+        collections: totalCollections
+      },
+      limits: {
+        configured: isConfigured,
+        limitMb,
+        limitBytes,
+        usedPercentage,
+        remainingBytes,
+        warningLevel
+      },
+      collections: collectionStatsList,
+      shop: shopMetrics,
+      productCatalog
+    });
+
+  } catch (err) {
+    console.error('Error fetching database storage statistics:', err);
+    res.status(500).json({ success: false, error: 'Unable to retrieve database storage statistics' });
+  }
+});
+
 export { router as adminRouter };

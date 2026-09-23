@@ -16,7 +16,8 @@ import {
   FileText,
   TrendingUp,
   Megaphone,
-  RefreshCw
+  RefreshCw,
+  Database
 } from 'lucide-react';
 
 import { useLanguage } from '../context/LanguageContext';
@@ -38,6 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage })
     { id: 'admin-dashboard', label: t('nav.dashboard'), icon: ShieldCheck },
     { id: 'admin-shops', label: t('admin.title'), icon: Store },
     { id: 'admin-reports', label: t('nav.reports'), icon: TrendingUp },
+    { id: 'admin-storage', label: t('storage.title') || 'Database Storage', icon: Database },
     { id: 'admin-privacy', label: t('nav.privacy'), icon: ShieldCheck },
     { id: 'admin-users', label: t('nav.profile'), icon: Users },
     { id: 'admin-activity', label: t('common.details'), icon: FileText },

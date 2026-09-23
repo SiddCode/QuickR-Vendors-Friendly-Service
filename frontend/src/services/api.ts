@@ -1511,5 +1511,53 @@ export const api = {
       message: string;
       immediateExecution?: any;
     }>(res);
+  },
+
+  // Admin Real Database Storage Statistics
+  async adminGetDatabaseStorage(): Promise<{
+    success: boolean;
+    checkedAt: string;
+    database: {
+      dataSizeBytes: number;
+      storageSizeBytes: number;
+      indexSizeBytes: number;
+      totalSizeBytes: number;
+      collections: number;
+    };
+    limits: {
+      configured: boolean;
+      limitMb: number | null;
+      limitBytes: number | null;
+      usedPercentage: number;
+      remainingBytes: number | null;
+      warningLevel: 'NORMAL' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+    };
+    collections: Array<{
+      name: string;
+      documents: number;
+      dataSizeBytes: number;
+      storageSizeBytes: number;
+      indexSizeBytes: number;
+      totalSizeBytes: number;
+    }>;
+    shop: {
+      shopId: string;
+      products: number;
+      customers: number;
+      sales: number;
+      enquiries: number;
+      followUps: number;
+      activities: number;
+    };
+    productCatalog: {
+      totalProducts: number;
+      activeProducts: number;
+      inactiveProducts: number;
+      withBarcode: number;
+      withoutBarcode: number;
+    };
+  }> {
+    const res = await fetch(`${API_BASE_URL}/admin/database-storage`, { credentials: 'include' });
+    return handleResponse<any>(res);
   }
 };

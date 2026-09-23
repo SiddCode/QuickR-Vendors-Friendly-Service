@@ -170,5 +170,28 @@
     "downloadErrorReport": "பிழை அறிக்கையைப் பதிவிறக்குக",
     "viewIssues": "சிக்கல்களைக் காண்",
     "importComplete": "இறக்குமதி முடிந்தது"
+  },
+  "storage": {
+    "title": "தரவுத்தள சேமிப்பக கண்காணிப்பு",
+    "subtitle": "நிகழ்நேர MongoDB சேமிப்பகத்தின் விவரங்கள்",
+    "storageUsed": "பயன்படுத்தப்பட்ட சேமிப்பகம்",
+    "storageLimit": "சேமிப்பக வரம்பு",
+    "dataStorage": "தரவு சேமிப்பகம்",
+    "indexStorage": "குறியீட்டு (Index) சேமிப்பகம்",
+    "totalStorage": "மொத்த சேமிப்பகம்",
+    "documents": "ஆவணங்கள்",
+    "collections": "சேகரிப்புகள் (Collections)",
+    "storageBreakdown": "சேமிப்பக விவரங்கள்",
+    "yourShopData": "உங்கள் கடை தரவு",
+    "productCatalog": "பொருள் விபரம்",
+    "lastChecked": "கடைசியாக சரிபார்க்கப்பட்டது",
+    "refresh": "புதுப்பிக்குக",
+    "refreshing": "புதுப்பிக்கப்படுகிறது...",
+    "normal": "இயல்பானது",
+    "moderateUsage": "மிதமான பயன்பாடு",
+    "highUsage": "அதிக பயன்பாடு",
+    "criticalUsage": "முக்கியமான பயன்பாடு",
+    "limitNotConfigured": "சேமிப்பக வரம்பு அமைக்கப்படவில்லை",
+    "unableToLoad": "தரவுத்தள சேமிப்பக தகவலை ஏற்ற முடியவில்லை."
   }
 }

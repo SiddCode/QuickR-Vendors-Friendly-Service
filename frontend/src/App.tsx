@@ -33,6 +33,7 @@ import { AdminReports } from './pages/AdminReports';
 import { PrivacyNotice } from './pages/PrivacyNotice';
 import { PrivacyDashboard } from './pages/PrivacyDashboard';
 import { AdminPrivacy } from './pages/AdminPrivacy';
+import { AdminDatabaseStorage } from './pages/AdminDatabaseStorage';
 import { CustomerReengagement } from './pages/CustomerReengagement';
 import { SalesSession } from './pages/SalesSession';
 import { InstallPwaPrompt } from './components/InstallPwaPrompt';
@@ -111,6 +112,8 @@ const AppContent: React.FC = () => {
         return <AdminReports setCurrentPage={setCurrentPage} />;
       case 'admin-privacy':
         return <AdminPrivacy />;
+      case 'admin-storage':
+        return <AdminDatabaseStorage setCurrentPage={setCurrentPage} />;
 
       // ─── Business Pages ───
       case 'dashboard':
@@ -205,7 +208,8 @@ const AppContent: React.FC = () => {
     'admin-sales': 'Global Sales Registry',
     'admin-billing': 'Global Billing Records',
     'admin-reports': 'Admin Reports & Analytics',
-    'admin-privacy': 'Admin Privacy & Compliance Dashboard'
+    'admin-privacy': 'Admin Privacy & Compliance Dashboard',
+    'admin-storage': 'Database Storage Monitor'
   };
 
   return (
