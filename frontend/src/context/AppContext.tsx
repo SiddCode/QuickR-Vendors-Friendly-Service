@@ -43,6 +43,24 @@ interface AppContextType {
 
   deleteProduct: (id: string) => Promise<boolean>;
   bulkDeleteProducts: (ids: string[]) => Promise<{ success: boolean; message: string }>;
+  importProducts: (products: any[]) => Promise<{
+    success: boolean;
+    summary: {
+      totalRows: number;
+      imported: number;
+      skipped: number;
+      duplicates: number;
+      validationErrors: number;
+      generatedBarcodes: number;
+    };
+    issues: Array<{
+      row: number;
+      productName: string;
+      barcode: string;
+      issue: string;
+      suggestedFix: string;
+    }>;
+  }>;
   addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
   deleteCustomer: (id: string) => Promise<boolean>;
   bulkDeleteCustomers: (ids: string[]) => Promise<{ success: boolean; message: string }>;
@@ -467,6 +485,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const importProducts = async (productsData: any[]) => {
+    try {
+      setIsLoading(true);
+      const res = await api.importProducts(productsData);
+      if (res && res.success) {
+        await loadBusinessData();
+      }
+      return res;
+    } catch (err: any) {
+      const msg = err.message || 'Import failed';
+      alert(`Error: ${msg}`);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const bulkDeleteCustomers = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
     try {
       setIsLoading(true);
@@ -707,6 +742,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateProduct,
       deleteProduct,
       bulkDeleteProducts,
+      importProducts,
       addCustomer,
       deleteCustomer,
       bulkDeleteCustomers,

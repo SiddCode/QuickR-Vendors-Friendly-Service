@@ -1468,6 +1468,232 @@ app.post('/api/products/bulk-delete', requireAuth, async (req, res) => {
   }
 });
 
+// Bulk Import Products Endpoint
+app.post('/api/products/import', requireAuth, async (req, res) => {
+  try {
+    const shopId = req.user?.shopId;
+    if (!shopId) {
+      return res.status(403).json({ success: false, error: 'Shop authorization required' });
+    }
+
+    const { products: rawProducts } = req.body;
+    if (!Array.isArray(rawProducts) || rawProducts.length === 0) {
+      return res.status(400).json({ success: false, error: 'No product records provided for import.' });
+    }
+
+    // Maximum safety limit per request payload
+    if (rawProducts.length > 15000) {
+      return res.status(400).json({ success: false, error: 'Maximum 15,000 products allowed per import batch.' });
+    }
+
+    // Step 1: Fetch existing barcodes for this shop only
+    const existingShopProducts = await Product.find({ shopId }).select('barcode name').lean();
+    const existingBarcodeSet = new Set(
+      existingShopProducts
+        .filter(p => p.barcode)
+        .map(p => String(p.barcode).trim())
+    );
+
+    let importedCount = 0;
+    let skippedCount = 0;
+    let duplicateBarcodeCount = 0;
+    let generatedBarcodeCount = 0;
+    let validationErrorCount = 0;
+
+    const issueDetails = [];
+    const validDocsToInsert = [];
+    const inMemoryBarcodesInBatch = new Set();
+
+    const timestampBase = Date.now();
+
+    for (let index = 0; index < rawProducts.length; index++) {
+      const row = rawProducts[index];
+      const excelRowNumber = row.excelRow || (index + 2);
+
+      // Sanitize fields - NEVER trust frontend shopId
+      const name = row.name ? String(row.name).trim() : '';
+      if (!name) {
+        validationErrorCount++;
+        skippedCount++;
+        issueDetails.push({
+          row: excelRowNumber,
+          productName: '[Missing Name]',
+          barcode: row.barcode || '',
+          issue: 'Missing Product Name',
+          suggestedFix: 'Provide a valid non-empty product name'
+        });
+        continue;
+      }
+
+      // Selling Price validation
+      let sellingPrice = Number(row.sellingPrice);
+      if (isNaN(sellingPrice) || sellingPrice < 0) {
+        // Fallback default or issue
+        if (row.sellingPrice === undefined || row.sellingPrice === '' || row.sellingPrice === null) {
+          sellingPrice = 0;
+        } else {
+          validationErrorCount++;
+          skippedCount++;
+          issueDetails.push({
+            row: excelRowNumber,
+            productName: name,
+            barcode: row.barcode || '',
+            issue: `Invalid Selling Price: "${row.sellingPrice}"`,
+            suggestedFix: 'Selling price must be a valid non-negative number'
+          });
+          continue;
+        }
+      }
+
+      // MRP validation
+      let originalPrice = undefined;
+      if (row.originalPrice !== undefined && row.originalPrice !== null && row.originalPrice !== '') {
+        const parsedMrp = Number(row.originalPrice);
+        if (!isNaN(parsedMrp) && parsedMrp >= 0) {
+          originalPrice = parsedMrp;
+        }
+      }
+
+      // Stock validation
+      let availability = 0;
+      if (row.availability !== undefined && row.availability !== null && row.availability !== '') {
+        const parsedStock = parseInt(String(row.availability), 10);
+        if (!isNaN(parsedStock) && parsedStock >= 0) {
+          availability = parsedStock;
+        }
+      }
+
+      // Sizes and colors normalization
+      let sizes = [];
+      if (Array.isArray(row.sizes)) {
+        sizes = row.sizes.map(s => String(s).trim()).filter(Boolean);
+      } else if (typeof row.sizes === 'string' && row.sizes.trim()) {
+        sizes = row.sizes.split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      let colors = [];
+      if (Array.isArray(row.colors)) {
+        colors = row.colors.map(c => String(c).trim()).filter(Boolean);
+      } else if (typeof row.colors === 'string' && row.colors.trim()) {
+        colors = row.colors.split(',').map(c => c.trim()).filter(Boolean);
+      }
+
+      // Barcode handling - PRESERVE EXACT STRING & LEADING ZEROES
+      let rawBarcode = row.barcode !== undefined && row.barcode !== null ? String(row.barcode).trim() : '';
+      let barcodeType = 'CODE128';
+      let barcodeSource = 'imported';
+
+      if (rawBarcode) {
+        // Check 1: Duplicate inside file batch
+        if (inMemoryBarcodesInBatch.has(rawBarcode)) {
+          duplicateBarcodeCount++;
+          skippedCount++;
+          issueDetails.push({
+            row: excelRowNumber,
+            productName: name,
+            barcode: rawBarcode,
+            issue: 'Duplicate Barcode inside uploaded file',
+            suggestedFix: 'Ensure every product in file has a unique barcode or leave blank to auto-generate'
+          });
+          continue;
+        }
+
+        // Check 2: Barcode already exists in shop DB
+        if (existingBarcodeSet.has(rawBarcode)) {
+          duplicateBarcodeCount++;
+          skippedCount++;
+          issueDetails.push({
+            row: excelRowNumber,
+            productName: name,
+            barcode: rawBarcode,
+            issue: 'Barcode already exists in QuickR for your shop',
+            suggestedFix: 'Use a unique barcode or skip to preserve existing product record'
+          });
+          continue;
+        }
+
+        // Determine Barcode Type heuristic
+        if (/^\d{13}$/.test(rawBarcode)) barcodeType = 'EAN13';
+        else if (/^\d{12}$/.test(rawBarcode)) barcodeType = 'UPC';
+        else if (/^[A-Z0-9\-\.\ \$\/\+\%]+$/i.test(rawBarcode)) barcodeType = 'CODE128';
+        else barcodeType = 'CUSTOM';
+
+        inMemoryBarcodesInBatch.add(rawBarcode);
+      } else {
+        // Auto-generate collision-free QuickR barcode
+        const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
+        rawBarcode = `QKR-${timestampBase.toString(36).toUpperCase()}${index.toString(36).toUpperCase()}${randomHex.substring(0, 3)}`;
+        barcodeType = 'CODE128';
+        barcodeSource = 'quickr_generated';
+        generatedBarcodeCount++;
+        inMemoryBarcodesInBatch.add(rawBarcode);
+      }
+
+      const category = row.category ? String(row.category).trim() : 'General';
+      const productId = `PROD-IMP-${timestampBase}-${index}-${Math.floor(Math.random() * 1000)}`;
+
+      validDocsToInsert.push({
+        id: productId,
+        name,
+        category,
+        subcategory: row.subcategory ? String(row.subcategory).trim() : '',
+        sellingPrice,
+        originalPrice,
+        sizes,
+        colors,
+        availability,
+        description: row.description ? String(row.description).trim() : '',
+        gstRate: Number(row.gstRate) || 0,
+        hsnCode: row.hsnCode ? String(row.hsnCode).trim() : '',
+        priceIncludesGst: row.priceIncludesGst !== undefined ? Boolean(row.priceIncludesGst) : true,
+        isActive: true,
+        barcode: rawBarcode,
+        barcodeType,
+        barcodeSource,
+        shopId // Authenticated shopId strictly enforced
+      });
+    }
+
+    // Step 2: Batch Insert in chunks of 500 documents for maximum performance
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < validDocsToInsert.length; i += BATCH_SIZE) {
+      const chunk = validDocsToInsert.slice(i, i + BATCH_SIZE);
+      await Product.insertMany(chunk, { ordered: false });
+      importedCount += chunk.length;
+    }
+
+    // Step 3: Record Audit Activity
+    try {
+      await Activity.create({
+        id: `ACT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        shopId,
+        type: 'product_imported',
+        description: `Imported ${importedCount} products in bulk (${skippedCount} skipped).`,
+        actorName: req.user.name || 'User',
+        createdAt: new Date()
+      });
+    } catch (actErr) {
+      console.warn('Failed to record import activity log:', actErr);
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        totalRows: rawProducts.length,
+        imported: importedCount,
+        skipped: skippedCount,
+        duplicates: duplicateBarcodeCount,
+        validationErrors: validationErrorCount,
+        generatedBarcodes: generatedBarcodeCount
+      },
+      issues: issueDetails.slice(0, 500) // Return top 500 issues for UI preview/report
+    });
+  } catch (err) {
+    console.error('Bulk import products error:', err);
+    res.status(500).json({ success: false, error: 'Failed to complete product import batch.' });
+  }
+});
+
 // Bulk Delete Customers Endpoint
 app.post('/api/customers/bulk-delete', requireAuth, async (req, res) => {
   try {

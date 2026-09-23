@@ -18,6 +18,8 @@ const productSchema = new mongoose.Schema(
     priceIncludesGst: { type: Boolean, default: true },
     isActive: { type: Boolean, default: true },
     barcode: { type: String, trim: true, default: null, index: true },
+    barcodeType: { type: String, default: 'CODE128' }, // EAN13, UPC, CODE128, CODE39, CUSTOM, QUICKR
+    barcodeSource: { type: String, default: 'imported' }, // 'imported' vs 'quickr_generated'
     shopId: { type: String, required: true, default: 'demo-shop', index: true }
   },
   { timestamps: true }

@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle, Barcode, Printer, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle, Barcode, Printer, Sparkles, CheckCircle2, Upload } from 'lucide-react';
 import type { Product } from '../types';
 import { PrintableBarcodeModal } from '../components/PrintableBarcodeModal';
+import { ProductImportModal } from '../components/ProductImportModal';
 
 export const CATEGORIES = {
   "MEN'S WEAR": ['Shirts', 'T-Shirts', 'Polos', 'Jeans', 'Trousers', 'Formal Pants', 'Casual Pants', 'Chinos', 'Cargo Pants', 'Track Pants', 'Lowers', 'Shorts', 'Blazers', 'Suits', 'Waistcoats', 'Jackets', 'Hoodies', 'Sweatshirts', 'Innerwear', 'Ethnic Wear', 'Kurtas', 'Pyjamas', 'Dhotis', 'Sherwanis'],
@@ -31,6 +32,9 @@ export const Products = () => {
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [bulkResultMessage, setBulkResultMessage] = useState<string | null>(null);
+
+  // Bulk Import state
+  const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
 
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
@@ -232,15 +236,24 @@ export const Products = () => {
         </div>
       )}
 
-      <div className="flex justify-between items-center max-w-7xl mx-auto">
+      <div className="flex justify-between items-center max-w-7xl mx-auto flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-slate-800">Products ({products.length})</h1>
-        <button 
-          onClick={() => handleOpenModal()}
-          className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-primary-700 transition-colors shadow-sm"
-        >
-          <Plus className="w-5 h-5" />
-          Add Product
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setIsImportModalOpen(true)}
+            className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-emerald-700 transition-colors shadow-sm text-sm"
+          >
+            <Upload className="w-4 h-4" />
+            Import Products
+          </button>
+          <button 
+            onClick={() => handleOpenModal()}
+            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-primary-700 transition-colors shadow-sm text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Add Product
+          </button>
+        </div>
       </div>
 
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-4">
@@ -819,6 +832,11 @@ export const Products = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Bulk Product Import Modal */}
+      {isImportModalOpen && (
+        <ProductImportModal onClose={() => setIsImportModalOpen(false)} />
       )}
 
       {/* Printable Barcode Label Modal */}

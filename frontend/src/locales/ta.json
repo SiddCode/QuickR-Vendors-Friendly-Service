@@ -151,5 +151,24 @@
     "openWhatsApp": "வாட்ஸ்அப் திறக்கவும்",
     "sending": "வாட்ஸ்அப் திறக்கப்படுகிறது...",
     "loadingShop": "கடை விவரங்கள் ஏற்றப்படுகின்றன. மீண்டும் முயற்சிக்கவும்."
+  },
+  "import": {
+    "importProducts": "பொருட்களை இறக்குமதி செய்",
+    "uploadProducts": "பொருட்களை பதிவேற்று",
+    "mapColumns": "நெடுவரிசைகளை பொருத்து",
+    "preview": "முன்னோட்டம்",
+    "import": "இறக்குமதி",
+    "readyToImport": "இறக்குமதி செய்ய தயார்",
+    "duplicateBarcode": "போலி பார்ஃபோடு",
+    "barcodeAlreadyExists": "பார்ஃபோடு ஏற்கனவே உள்ளது",
+    "missingProductName": "பொருள் பெயர் இல்லை",
+    "invalidPrice": "தவறான விலை",
+    "invalidStock": "தவறான இருப்பு",
+    "generateBarcode": "பார்ஃபோடு உருவாக்கு",
+    "importedSuccessfully": "வெற்றிகரமாக இறக்குமதி செய்யப்பட்டது",
+    "skipped": "தவிர்க்கப்பட்டது",
+    "downloadErrorReport": "பிழை அறிக்கையைப் பதிவிறக்குக",
+    "viewIssues": "சிக்கல்களைக் காண்",
+    "importComplete": "இறக்குமதி முடிந்தது"
   }
 }

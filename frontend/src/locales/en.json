@@ -153,5 +153,24 @@
     "openWhatsApp": "Open WhatsApp",
     "sending": "Opening WhatsApp...",
     "loadingShop": "Shop information is still loading. Please try again."
+  },
+  "import": {
+    "importProducts": "Import Products",
+    "uploadProducts": "Upload Products",
+    "mapColumns": "Map Columns",
+    "preview": "Preview",
+    "import": "Import",
+    "readyToImport": "Ready to Import",
+    "duplicateBarcode": "Duplicate Barcode",
+    "barcodeAlreadyExists": "Barcode Already Exists",
+    "missingProductName": "Missing Product Name",
+    "invalidPrice": "Invalid Price",
+    "invalidStock": "Invalid Stock",
+    "generateBarcode": "Generate Barcode",
+    "importedSuccessfully": "Imported Successfully",
+    "skipped": "Skipped",
+    "downloadErrorReport": "Download Error Report",
+    "viewIssues": "View Issues",
+    "importComplete": "Import Complete"
   }
 }

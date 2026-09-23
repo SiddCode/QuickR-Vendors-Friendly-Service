@@ -225,6 +225,33 @@ export const api = {
     return handleResponse(res);
   },
 
+  async importProducts(products: any[]): Promise<{
+    success: boolean;
+    summary: {
+      totalRows: number;
+      imported: number;
+      skipped: number;
+      duplicates: number;
+      validationErrors: number;
+      generatedBarcodes: number;
+    };
+    issues: Array<{
+      row: number;
+      productName: string;
+      barcode: string;
+      issue: string;
+      suggestedFix: string;
+    }>;
+  }> {
+    const res = await fetch(`${API_BASE_URL}/products/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ products }),
+    });
+    return handleResponse(res);
+  },
+
   async bulkDeleteCustomers(ids: string[]): Promise<{ success: boolean; deletedCount: number; message: string }> {
     const res = await fetch(`${API_BASE_URL}/customers/bulk-delete`, {
       method: 'POST',

@@ -56,6 +56,8 @@ export interface Product {
   priceIncludesGst?: boolean;
   isActive: boolean;
   barcode?: string | null;
+  barcodeType?: string;
+  barcodeSource?: string;
   createdAt: string;
 }
 
