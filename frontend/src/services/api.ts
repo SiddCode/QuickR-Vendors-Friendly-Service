@@ -214,6 +214,37 @@ export const api = {
     return handleResponse<{ success: boolean; deletedEnquiryId?: string }>(res);
   },
 
+  // Bulk Delete APIs
+  async bulkDeleteProducts(ids: string[]): Promise<{ success: boolean; deletedCount: number; archivedCount?: number; totalProcessed?: number; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/products/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ids }),
+    });
+    return handleResponse(res);
+  },
+
+  async bulkDeleteCustomers(ids: string[]): Promise<{ success: boolean; deletedCount: number; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/customers/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ids }),
+    });
+    return handleResponse(res);
+  },
+
+  async bulkDeleteEnquiries(ids: string[]): Promise<{ success: boolean; deletedCount: number; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/enquiries/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ids }),
+    });
+    return handleResponse(res);
+  },
+
   // Follow-ups
   async getFollowUps(): Promise<FollowUp[]> {
     const res = await fetch(`${API_BASE_URL}/followups`, { credentials: 'include' });

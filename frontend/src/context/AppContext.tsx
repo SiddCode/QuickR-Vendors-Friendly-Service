@@ -42,10 +42,13 @@ interface AppContextType {
   updateProduct: (id: string, updates: Partial<Product>) => Promise<Product | null>;
 
   deleteProduct: (id: string) => Promise<boolean>;
+  bulkDeleteProducts: (ids: string[]) => Promise<{ success: boolean; message: string }>;
   addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
   deleteCustomer: (id: string) => Promise<boolean>;
+  bulkDeleteCustomers: (ids: string[]) => Promise<{ success: boolean; message: string }>;
   addEnquiry: (enquiry: Omit<Enquiry, 'id' | 'createdAt'>) => Promise<Enquiry | null>;
   deleteEnquiry: (id: string) => Promise<boolean>;
+  bulkDeleteEnquiries: (ids: string[]) => Promise<{ success: boolean; message: string }>;
   updateEnquiry: (id: string, updates: Partial<Enquiry>) => Promise<void>;
   updateFollowUpStatus: (id: string, status: FollowUp['status'], outcome?: FollowUp['outcome']) => Promise<void>;
   sendWhatsAppMock: (followUpId: string, customMessage: string) => Promise<boolean>;
@@ -446,6 +449,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const bulkDeleteProducts = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
+    try {
+      setIsLoading(true);
+      const res = await api.bulkDeleteProducts(ids);
+      if (res && res.success) {
+        await loadBusinessData();
+        return { success: true, message: res.message };
+      }
+      return { success: false, message: 'Bulk product deletion failed.' };
+    } catch (err: any) {
+      const msg = err.message || 'Failed to delete products';
+      alert(`Error: ${msg}`);
+      return { success: false, message: msg };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const bulkDeleteCustomers = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
+    try {
+      setIsLoading(true);
+      const res = await api.bulkDeleteCustomers(ids);
+      if (res && res.success) {
+        await loadBusinessData();
+        return { success: true, message: res.message };
+      }
+      return { success: false, message: 'Bulk customer deletion failed.' };
+    } catch (err: any) {
+      const msg = err.message || 'Failed to delete customers';
+      alert(`Error: ${msg}`);
+      return { success: false, message: msg };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const bulkDeleteEnquiries = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
+    try {
+      setIsLoading(true);
+      const res = await api.bulkDeleteEnquiries(ids);
+      if (res && res.success) {
+        await loadBusinessData();
+        return { success: true, message: res.message };
+      }
+      return { success: false, message: 'Bulk enquiry deletion failed.' };
+    } catch (err: any) {
+      const msg = err.message || 'Failed to delete enquiries';
+      alert(`Error: ${msg}`);
+      return { success: false, message: msg };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const updateEnquiry = async (id: string, updates: Partial<Enquiry>) => {
     try {
       setEnquiries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
@@ -649,10 +706,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       generateProductBarcode,
       updateProduct,
       deleteProduct,
+      bulkDeleteProducts,
       addCustomer,
       deleteCustomer,
+      bulkDeleteCustomers,
       addEnquiry,
       deleteEnquiry,
+      bulkDeleteEnquiries,
       updateEnquiry,
       updateFollowUpStatus,
       sendWhatsAppMock,

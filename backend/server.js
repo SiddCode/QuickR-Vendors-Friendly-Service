@@ -1368,11 +1368,188 @@ app.delete('/api/products/:id', requireAuth, async (req, res) => {
   try {
     const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });
     if (!prod) return res.status(404).json({ error: 'Product not found' });
-    prod.isActive = false; // Soft delete
-    await prod.save();
-    res.json({ success: true });
+    
+    // Safety check: Check if product is referenced in sales
+    const salesWithProduct = await Sale.exists({
+      shopId: req.user.shopId,
+      'items.productId': req.params.id
+    });
+
+    if (salesWithProduct) {
+      // Soft delete / archive to preserve historical sales
+      prod.isActive = false;
+      await prod.save();
+      return res.json({ success: true, isArchived: true, message: 'Product deactivated to preserve historical bill records.' });
+    }
+
+    // Hard delete if never sold
+    await Product.deleteOne({ id: req.params.id, shopId: req.user.shopId });
+    res.json({ success: true, isDeleted: true, message: 'Product deleted permanently.' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete product' });
+  }
+});
+
+// Bulk Delete Products Endpoint
+app.post('/api/products/bulk-delete', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    const shopId = req.user?.shopId;
+
+    if (!shopId) {
+      return res.status(403).json({ success: false, error: 'Shop authorization required' });
+    }
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'No product IDs provided' });
+    }
+
+    // Verify all products belong to authenticated shop
+    const products = await Product.find({ id: { $in: ids }, shopId });
+    const validIds = products.map(p => p.id);
+
+    if (validIds.length === 0) {
+      return res.json({
+        success: true,
+        deletedCount: 0,
+        archivedCount: 0,
+        totalRequested: ids.length,
+        message: 'No matching products found for deletion.'
+      });
+    }
+
+    // Find which products are referenced in completed sales for this shop
+    const salesWithProducts = await Sale.find({
+      shopId,
+      'items.productId': { $in: validIds }
+    }).distinct('items.productId');
+
+    const referencedSet = new Set(salesWithProducts.map(id => String(id)));
+
+    const idsToArchive = validIds.filter(id => referencedSet.has(id));
+    const idsToDelete = validIds.filter(id => !referencedSet.has(id));
+
+    // Perform bulk operations
+    let archivedCount = 0;
+    let deletedCount = 0;
+
+    if (idsToArchive.length > 0) {
+      const archiveResult = await Product.updateMany(
+        { id: { $in: idsToArchive }, shopId },
+        { $set: { isActive: false } }
+      );
+      archivedCount = archiveResult.modifiedCount || idsToArchive.length;
+    }
+
+    if (idsToDelete.length > 0) {
+      const deleteResult = await Product.deleteMany({ id: { $in: idsToDelete }, shopId });
+      deletedCount = deleteResult.deletedCount || idsToDelete.length;
+    }
+
+    let message = `${deletedCount + archivedCount} products processed successfully.`;
+    if (deletedCount > 0 && archivedCount > 0) {
+      message = `${deletedCount} product(s) deleted permanently. ${archivedCount} product(s) were deactivated because they are used in completed bills.`;
+    } else if (archivedCount > 0 && deletedCount === 0) {
+      message = `${archivedCount} product(s) deactivated because they are referenced by completed bills.`;
+    } else if (deletedCount > 0) {
+      message = `${deletedCount} product(s) deleted permanently.`;
+    }
+
+    res.json({
+      success: true,
+      deletedCount,
+      archivedCount,
+      totalProcessed: deletedCount + archivedCount,
+      message
+    });
+  } catch (err) {
+    console.error('Bulk delete products error:', err);
+    res.status(500).json({ success: false, error: 'Failed to perform bulk product deletion' });
+  }
+});
+
+// Bulk Delete Customers Endpoint
+app.post('/api/customers/bulk-delete', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    const shopId = req.user?.shopId;
+
+    if (!shopId) {
+      return res.status(403).json({ success: false, error: 'Shop authorization required' });
+    }
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'No customer IDs provided' });
+    }
+
+    // Verify customers belong to shop
+    const customers = await Customer.find({ id: { $in: ids }, shopId });
+    const validIds = customers.map(c => c.id);
+
+    if (validIds.length === 0) {
+      return res.json({
+        success: true,
+        deletedCount: 0,
+        message: 'No matching customers found for deletion.'
+      });
+    }
+
+    // Remove operational CRM records cascade (Enquiries, FollowUps, Messages, Activities)
+    await Promise.all([
+      Enquiry.deleteMany({ customerId: { $in: validIds }, shopId }),
+      FollowUp.deleteMany({ customerId: { $in: validIds }, shopId }),
+      Message.deleteMany({ customerId: { $in: validIds }, shopId }),
+      Activity.deleteMany({ customerId: { $in: validIds }, shopId }),
+    ]);
+
+    // Note: Historical Sales records retain customer information (customerName, customerPhone) while customer document is deleted
+    const deleteResult = await Customer.deleteMany({ id: { $in: validIds }, shopId });
+    const deletedCount = deleteResult.deletedCount || validIds.length;
+
+    res.json({
+      success: true,
+      deletedCount,
+      message: `${deletedCount} customer(s) deleted successfully.`
+    });
+  } catch (err) {
+    console.error('Bulk delete customers error:', err);
+    res.status(500).json({ success: false, error: 'Failed to perform bulk customer deletion' });
+  }
+});
+
+// Bulk Delete Enquiries Endpoint
+app.post('/api/enquiries/bulk-delete', requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    const shopId = req.user?.shopId;
+
+    if (!shopId) {
+      return res.status(403).json({ success: false, error: 'Shop authorization required' });
+    }
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'No enquiry IDs provided' });
+    }
+
+    // Delete enquiries belonging to shop
+    const deleteResult = await Enquiry.deleteMany({ id: { $in: ids }, shopId });
+    const deletedCount = deleteResult.deletedCount || 0;
+
+    // Delete associated active follow-ups for these enquiries
+    await FollowUp.deleteMany({
+      enquiryId: { $in: ids },
+      shopId,
+      status: { $in: ['ready', 'sent', 'scheduled'] }
+    });
+
+    res.json({
+      success: true,
+      deletedCount,
+      message: `${deletedCount} enquiry(ies) deleted successfully.`
+    });
+  } catch (err) {
+    console.error('Bulk delete enquiries error:', err);
+    res.status(500).json({ success: false, error: 'Failed to perform bulk enquiry deletion' });
   }
 });
 

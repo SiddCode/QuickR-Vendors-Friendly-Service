@@ -9,13 +9,21 @@ interface CustomersProps {
 }
 
 export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelectedCustomerId }) => {
-  const { customers, enquiries, sales, addCustomer, deleteCustomer } = useApp();
+  const { customers, enquiries, sales, addCustomer, deleteCustomer, bulkDeleteCustomers } = useApp();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   
   // Customer Deletion Modal State
   const [customerToDelete, setCustomerToDelete] = useState<{ id: string; name: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Bulk Selection State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isAllShopSelected, setIsAllShopSelected] = useState<boolean>(false);
+  const [isBulkConfirmModalOpen, setIsBulkConfirmModalOpen] = useState<boolean>(false);
+  const [bulkResultMessage, setBulkResultMessage] = useState<string | null>(null);
+
+  const selectAllCheckboxRef = React.useRef<HTMLInputElement>(null);
   
   // Pagination State
   const [page, setPage] = useState(1);
@@ -85,9 +93,71 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
 
   const totalPages = Math.ceil(filteredCustomers.length / pageSize) || 1;
   const paginatedCustomers = filteredCustomers.slice((page - 1) * pageSize, page * pageSize);
+  const visibleIds = paginatedCustomers.map(c => c.id);
+
+  const isAllVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
+  const isSomeVisibleSelected = visibleIds.some(id => selectedIds.includes(id));
+
+  React.useEffect(() => {
+    if (selectAllCheckboxRef.current) {
+      selectAllCheckboxRef.current.indeterminate = isSomeVisibleSelected && !isAllVisibleSelected;
+    }
+  }, [isSomeVisibleSelected, isAllVisibleSelected]);
+
+  const handleToggleSelectAllVisible = () => {
+    if (isAllVisibleSelected || isAllShopSelected) {
+      setSelectedIds([]);
+      setIsAllShopSelected(false);
+    } else {
+      setSelectedIds(visibleIds);
+    }
+  };
+
+  const handleSelectAllShopCustomers = () => {
+    const allShopIds = customers.map(c => c.id);
+    setSelectedIds(allShopIds);
+    setIsAllShopSelected(true);
+  };
+
+  const handleToggleSelectCustomer = (id: string) => {
+    setIsAllShopSelected(false);
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleExecuteBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    setIsDeleting(true);
+    try {
+      const res = await bulkDeleteCustomers(selectedIds);
+      if (res.success) {
+        setBulkResultMessage(res.message);
+        setSelectedIds([]);
+        setIsAllShopSelected(false);
+        setIsBulkConfirmModalOpen(false);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete customers');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const totalSelectedCount = selectedIds.length;
+  const totalShopCustomersCount = customers.length;
 
   return (
     <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">
+      {bulkResultMessage && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-xl flex items-center justify-between text-sm font-semibold shadow-sm">
+          <span>{bulkResultMessage}</span>
+          <button onClick={() => setBulkResultMessage(null)} className="text-emerald-600 hover:text-emerald-800 p-1">
+            ✕
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Customers</h2>
@@ -129,6 +199,50 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
         </div>
       </div>
 
+      {/* Bulk Action Toolbar */}
+      <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700 select-none">
+            <input 
+              type="checkbox" 
+              ref={selectAllCheckboxRef}
+              checked={isAllVisibleSelected}
+              onChange={handleToggleSelectAllVisible}
+              className="w-4 h-4 rounded text-primary-600 focus:ring-primary-500 border-slate-300"
+            />
+            Select All
+          </label>
+
+          <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+            {totalSelectedCount} selected
+          </span>
+
+          {totalSelectedCount > 0 && totalSelectedCount < totalShopCustomersCount && !isAllShopSelected && (
+            <button
+              onClick={handleSelectAllShopCustomers}
+              className="text-xs text-primary-600 hover:text-primary-800 font-bold underline transition-colors"
+            >
+              Select all {totalShopCustomersCount} customers in shop
+            </button>
+          )}
+
+          {isAllShopSelected && (
+            <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+              All {totalShopCustomersCount} shop customers selected
+            </span>
+          )}
+        </div>
+
+        <button
+          onClick={() => setIsBulkConfirmModalOpen(true)}
+          disabled={totalSelectedCount === 0}
+          className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm disabled:cursor-not-allowed"
+        >
+          <Trash2 className="w-4 h-4" />
+          Delete Selected ({totalSelectedCount})
+        </button>
+      </div>
+
       {/* Customers List Grid / Card Layout */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {paginatedCustomers.map((customer) => {
@@ -136,17 +250,28 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
           const totalEnq = custEnquiries.length;
           const custSales = sales.filter(s => s.customerId === customer.id);
           const purchasedCount = Math.max(custSales.length, customer.totalPurchases || 0);
+          const isChecked = selectedIds.includes(customer.id);
 
           return (
             <div 
               key={customer.id}
               onClick={() => handleCustomerClick(customer.id)}
-              className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft hover:shadow-md cursor-pointer transition-all duration-150 flex flex-col justify-between group"
+              className={`bg-white p-6 rounded-2xl border transition-all duration-150 flex flex-col justify-between group cursor-pointer ${isChecked ? 'border-primary-300 bg-primary-50/20 shadow-md' : 'border-slate-100 shadow-soft hover:shadow-md'}`}
             >
               <div>
                 <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3.5">
-                    <div className="w-11 h-11 rounded-full bg-primary-50 text-primary-600 font-extrabold text-sm flex items-center justify-center">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        handleToggleSelectCustomer(customer.id);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded text-primary-600 focus:ring-primary-500 border-slate-300"
+                    />
+                    <div className="w-11 h-11 rounded-full bg-primary-50 text-primary-600 font-extrabold text-sm flex items-center justify-center shrink-0">
                       {customer.name.split(' ').map(n => n[0]).join('')}
                     </div>
                     <div>
@@ -194,6 +319,47 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
           );
         })}
       </div>
+
+      {/* Bulk Delete Confirmation Modal */}
+      {isBulkConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full border border-slate-100 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle className="w-6 h-6 shrink-0" />
+              <h3 className="text-lg font-bold text-slate-800">
+                Delete {totalSelectedCount} {totalSelectedCount === 1 ? 'customer' : 'customers'}?
+              </h3>
+            </div>
+            <p className="text-sm text-slate-600">
+              You are about to delete <strong className="text-slate-800 font-bold">{totalSelectedCount} selected {totalSelectedCount === 1 ? 'customer' : 'customers'}</strong>.
+              {isAllShopSelected && (
+                <span className="block mt-2 text-rose-600 font-bold">
+                  Warning: You have selected ALL {totalShopCustomersCount} customers in your shop!
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-slate-400 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+              Note: Operational CRM records (enquiries, follow-ups) will be cleaned up. Completed historical bills retain billing customer names for audit reports.
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setIsBulkConfirmModalOpen(false)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-bold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteBulkDelete}
+                disabled={isDeleting}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs transition-colors shadow-sm disabled:opacity-50"
+              >
+                {isDeleting ? 'Deleting...' : `Delete ${totalSelectedCount} Customers`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pagination Controls */}
       {totalPages > 1 && (
