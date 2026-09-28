@@ -225,7 +225,7 @@ export const api = {
     return handleResponse(res);
   },
 
-  async importProducts(products: any[]): Promise<{
+  async importProducts(products: any[], gstSettings?: any): Promise<{
     success: boolean;
     summary: {
       totalRows: number;
@@ -247,7 +247,7 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ products }),
+      body: JSON.stringify({ products, gstSettings }),
     });
     return handleResponse(res);
   },

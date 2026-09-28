@@ -9,7 +9,9 @@ import {
   Download, 
   ArrowRight, 
   ArrowLeft,
-  Loader2
+  Loader2,
+  Percent,
+  Receipt
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -23,6 +25,7 @@ const QUICKR_FIELDS = [
   { key: 'name', label: 'Product Name', required: true },
   { key: 'sellingPrice', label: 'Selling Price (₹)', required: true },
   { key: 'originalPrice', label: 'MRP / Original Price (₹)', required: false },
+  { key: 'gstRate', label: 'GST Rate (%)', required: false },
   { key: 'availability', label: 'Stock (Qty)', required: false },
   { key: 'category', label: 'Category', required: false },
   { key: 'sizes', label: 'Size(s)', required: false },
@@ -35,6 +38,7 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   name: ['product name', 'product', 'item name', 'item', 'name', 'description', 'title'],
   sellingPrice: ['selling price', 'sale price', 'price', 'rate', 'selling rate', 'retail price', 'sp'],
   originalPrice: ['mrp', 'maximum retail price', 'retail mrp', 'original price'],
+  gstRate: ['gst', 'gst rate', 'gst%', 'gst %', 'tax', 'tax rate', 'tax%', 'gst rate (%)', 'gstrate'],
   availability: ['stock', 'quantity', 'qty', 'opening stock', 'available stock', 'count'],
   category: ['category', 'product category', 'type', 'department'],
   sizes: ['size', 'sizes'],
@@ -43,10 +47,12 @@ const COLUMN_ALIASES: Record<string, string[]> = {
 };
 
 export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose }) => {
-  const { importProducts } = useApp();
+  const { importProducts, shopProfile } = useApp();
   const { t } = useLanguage();
 
-  const [step, setStep] = useState<'upload' | 'mapping' | 'preview' | 'complete'>('upload');
+  const isGstRegistered = Boolean(shopProfile?.isGstRegistered);
+
+  const [step, setStep] = useState<'upload' | 'mapping' | 'gst_settings' | 'preview' | 'complete'>('upload');
   
   // File state
   const [file, setFile] = useState<File | null>(null);
@@ -61,6 +67,13 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
 
   // Mapping state: QuickR field -> Excel Column Name
   const [mapping, setMapping] = useState<Record<string, string>>({});
+
+  // GST Settings State for GST-registered shops
+  const [defaultGstRate, setDefaultGstRate] = useState<number>(() => {
+    return shopProfile?.gst?.defaultRate !== undefined ? shopProfile.gst.defaultRate : 5;
+  });
+  const [gstRateSource, setGstRateSource] = useState<'excel_or_default' | 'all_default'>('excel_or_default');
+  const [priceIncludesGst, setPriceIncludesGst] = useState<boolean>(true);
 
   // Import Result & Issues state
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -80,6 +93,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
         "Color": "Blue, Black",
         "Selling Price": 999,
         "MRP": 1499,
+        "GST Rate (%)": 5,
         "Stock": 25,
         "Barcode": "8901234567890"
       },
@@ -90,6 +104,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
         "Color": "Dark Blue",
         "Selling Price": 1299,
         "MRP": 1899,
+        "GST Rate (%)": 12,
         "Stock": 15,
         "Barcode": "CP-001245"
       },
@@ -100,6 +115,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
         "Color": "Red",
         "Selling Price": 599,
         "MRP": 799,
+        "GST Rate (%)": 5,
         "Stock": 30,
         "Barcode": "" // Blank barcode to test auto-generation
       }
@@ -196,17 +212,24 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
     }
   };
 
-  // Step 2: Mapping Validation
-  const handleProceedToPreview = () => {
+  // Step 2: Mapping Validation -> Move to GST Settings or Preview
+  const handleProceedFromMapping = () => {
     if (!mapping['name']) {
       alert('Please map the "Product Name" column. It is required.');
       return;
     }
-    setStep('preview');
+
+    if (isGstRegistered) {
+      setStep('gst_settings');
+    } else {
+      setStep('preview');
+    }
   };
 
   // Prepare Normalized Payload for Preview & Import
   const buildNormalizedProducts = () => {
+    const VALID_GST_RATES = [0, 5, 12, 18, 28];
+
     return rawRows.map((rowArray, idx) => {
       const getVal = (fieldKey: string) => {
         const colHeader = mapping[fieldKey];
@@ -219,6 +242,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
       const name = String(getVal('name') || '').trim();
       const rawSellingPrice = getVal('sellingPrice');
       const rawMrp = getVal('originalPrice');
+      const rawGstRate = getVal('gstRate');
       const rawStock = getVal('availability');
       const category = String(getVal('category') || '').trim();
       const sizes = getVal('sizes');
@@ -230,11 +254,38 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
         ? String(barcodeVal).trim()
         : null;
 
+      // Determine GST rate for this row
+      let rowGstRate = 0;
+      let isGstValid = true;
+
+      if (isGstRegistered) {
+        if (gstRateSource === 'all_default') {
+          rowGstRate = defaultGstRate;
+        } else {
+          // excel_or_default
+          if (rawGstRate !== undefined && rawGstRate !== null && String(rawGstRate).trim() !== '') {
+            const parsed = Number(rawGstRate);
+            if (!isNaN(parsed) && VALID_GST_RATES.includes(parsed)) {
+              rowGstRate = parsed;
+            } else {
+              isGstValid = false;
+              rowGstRate = defaultGstRate;
+            }
+          } else {
+            rowGstRate = defaultGstRate;
+          }
+        }
+      }
+
       return {
         excelRow: idx + 2,
         name,
         sellingPrice: rawSellingPrice,
         originalPrice: rawMrp,
+        gstRate: rowGstRate,
+        rawGstRate,
+        isGstValid,
+        priceIncludesGst,
         availability: rawStock,
         category: category || 'General',
         sizes,
@@ -245,15 +296,30 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
   };
 
   const normalizedProducts = buildNormalizedProducts();
-  const validPreviewCount = normalizedProducts.filter(p => p.name).length;
+  const validPreviewCount = normalizedProducts.filter(p => p.name && p.isGstValid).length;
   const invalidPreviewCount = normalizedProducts.length - validPreviewCount;
+
+  // Calculate GST Breakdown for Summary
+  const gstBreakdown = normalizedProducts.reduce((acc: Record<number, number>, p) => {
+    if (p.name && p.isGstValid) {
+      const rate = p.gstRate || 0;
+      acc[rate] = (acc[rate] || 0) + 1;
+    }
+    return acc;
+  }, {});
 
   // Step 3: Execute Import
   const handleStartImport = async () => {
     setIsImporting(true);
     try {
       const payload = buildNormalizedProducts();
-      const res = await importProducts(payload);
+      const gstPayload = isGstRegistered ? {
+        defaultRate: defaultGstRate,
+        rateSource: gstRateSource,
+        priceIncludesGst
+      } : undefined;
+
+      const res = await importProducts(payload, gstPayload);
       setImportSummary(res.summary);
       setImportIssues(res.issues || []);
       setStep('complete');
@@ -316,18 +382,31 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
             Upload File
           </div>
           <ArrowRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+          
           <div className={`flex items-center gap-1.5 ${step === 'mapping' ? 'text-primary-600 font-extrabold' : ''}`}>
             <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'mapping' ? 'bg-primary-600 text-white' : 'bg-slate-300 text-slate-700'}`}>2</span>
             Map Columns
           </div>
           <ArrowRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+
+          {isGstRegistered && (
+            <>
+              <div className={`flex items-center gap-1.5 ${step === 'gst_settings' ? 'text-primary-600 font-extrabold' : ''}`}>
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'gst_settings' ? 'bg-primary-600 text-white' : 'bg-slate-300 text-slate-700'}`}>3</span>
+                GST Settings
+              </div>
+              <ArrowRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+            </>
+          )}
+
           <div className={`flex items-center gap-1.5 ${step === 'preview' ? 'text-primary-600 font-extrabold' : ''}`}>
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'preview' ? 'bg-primary-600 text-white' : 'bg-slate-300 text-slate-700'}`}>3</span>
+            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'preview' ? 'bg-primary-600 text-white' : 'bg-slate-300 text-slate-700'}`}>{isGstRegistered ? '4' : '3'}</span>
             Validate & Preview
           </div>
           <ArrowRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+
           <div className={`flex items-center gap-1.5 ${step === 'complete' ? 'text-emerald-600 font-extrabold' : ''}`}>
-            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'complete' ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'}`}>4</span>
+            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'complete' ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'}`}>{isGstRegistered ? '5' : '4'}</span>
             Complete
           </div>
         </div>
@@ -430,7 +509,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
                   <div className="col-span-7">Your Excel Column</div>
                 </div>
 
-                {QUICKR_FIELDS.map(field => {
+                {QUICKR_FIELDS.filter(f => isGstRegistered || f.key !== 'gstRate').map(field => {
                   const currentMappedHeader = mapping[field.key] || '';
                   return (
                     <div key={field.key} className="px-4 py-3 grid grid-cols-12 gap-4 items-center bg-white hover:bg-slate-50/50">
@@ -471,7 +550,125 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
             </div>
           )}
 
-          {/* STEP 3: VALIDATE & PREVIEW */}
+          {/* STEP 3 (GST SHOPS): GST CONFIGURATION */}
+          {step === 'gst_settings' && isGstRegistered && (
+            <div className="space-y-6 max-w-2xl mx-auto">
+              <div className="bg-indigo-50/60 border border-indigo-100 p-4 rounded-2xl flex items-start gap-3 text-indigo-950">
+                <Receipt className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold">{t('import.gstSettings', 'GST Settings Configuration')}</h3>
+                  <p className="text-xs text-indigo-700">Configure how QuickR should apply GST tax rates and price modes for imported items.</p>
+                </div>
+              </div>
+
+              {/* 1. Default GST Rate */}
+              <div className="space-y-2 bg-white p-4 border border-slate-200 rounded-2xl">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Percent className="w-3.5 h-3.5 text-primary-600" />
+                  {t('import.defaultGstRate', 'Default GST Rate')}
+                </label>
+                <p className="text-[11px] text-slate-500">Fallback tax rate applied when GST cell in file is blank or missing.</p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {[0, 5, 12, 18, 28].map((rate) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      onClick={() => setDefaultGstRate(rate)}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                        defaultGstRate === rate
+                          ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
+                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {rate}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. GST Rate Source */}
+              <div className="space-y-3 bg-white p-4 border border-slate-200 rounded-2xl">
+                <label className="text-xs font-bold text-slate-700">
+                  {t('import.gstRateSource', 'GST Rate Source')}
+                </label>
+                
+                <div className="space-y-2.5">
+                  <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    gstRateSource === 'excel_or_default' 
+                      ? 'border-primary-500 bg-primary-50/20 text-slate-800' 
+                      : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="gstRateSource"
+                      checked={gstRateSource === 'excel_or_default'}
+                      onChange={() => setGstRateSource('excel_or_default')}
+                      className="mt-0.5 text-primary-600 focus:ring-primary-500"
+                    />
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-slate-800">Use GST column from Excel/CSV if present</p>
+                      <p className="text-[11px] text-slate-500">If a product row has a blank GST rate, fallback to default ({defaultGstRate}%).</p>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    gstRateSource === 'all_default' 
+                      ? 'border-primary-500 bg-primary-50/20 text-slate-800' 
+                      : 'border-slate-200 hover:bg-slate-50 text-slate-600'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="gstRateSource"
+                      checked={gstRateSource === 'all_default'}
+                      onChange={() => setGstRateSource('all_default')}
+                      className="mt-0.5 text-primary-600 focus:ring-primary-500"
+                    />
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-slate-800">Apply selected default GST rate ({defaultGstRate}%) to ALL imported products</p>
+                      <p className="text-[11px] text-slate-500">Ignore any individual GST column values in the file.</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* 3. Price Setting */}
+              <div className="space-y-3 bg-white p-4 border border-slate-200 rounded-2xl">
+                <label className="text-xs font-bold text-slate-700">
+                  {t('import.priceIncludesGst', 'Price Setting')}
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPriceIncludesGst(true)}
+                    className={`p-3.5 rounded-xl border text-left space-y-1 transition-all ${
+                      priceIncludesGst
+                        ? 'border-emerald-500 bg-emerald-50/30 text-emerald-900 font-bold'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <p className="text-xs font-bold">Inclusive of GST</p>
+                    <p className="text-[11px] font-normal text-slate-500">Selling Price in file already includes tax.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPriceIncludesGst(false)}
+                    className={`p-3.5 rounded-xl border text-left space-y-1 transition-all ${
+                      !priceIncludesGst
+                        ? 'border-amber-500 bg-amber-50/30 text-amber-900 font-bold'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <p className="text-xs font-bold">Exclusive of GST</p>
+                    <p className="text-[11px] font-normal text-slate-500">GST will be added on top during checkout.</p>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 4: VALIDATE & PREVIEW */}
           {step === 'preview' && (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -492,6 +689,27 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
                 </div>
               </div>
 
+              {/* GST Summary Card if GST shop */}
+              {isGstRegistered && (
+                <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-indigo-900">
+                    <span className="flex items-center gap-1.5">
+                      <Percent className="w-4 h-4 text-indigo-600" /> GST Tax Breakdown
+                    </span>
+                    <span className="text-[11px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">
+                      {priceIncludesGst ? 'Prices Include GST' : 'Prices Exclude GST'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-3 text-xs text-slate-700 font-medium">
+                    {Object.entries(gstBreakdown).map(([rate, count]) => (
+                      <span key={rate} className="bg-white px-3 py-1 rounded-lg border border-indigo-100 shadow-2xs">
+                        <strong className="text-indigo-700">{rate}% GST:</strong> {count} products
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Data Table Preview */}
               <div className="bg-white rounded-2xl border border-slate-200 overflow-x-auto max-h-80">
                 <table className="w-full text-left text-xs">
@@ -501,6 +719,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
                       <th className="p-3">Product Name</th>
                       <th className="p-3">Category</th>
                       <th className="p-3 text-center">Selling Price</th>
+                      {isGstRegistered && <th className="p-3 text-center">GST Rate</th>}
                       <th className="p-3 text-center">MRP</th>
                       <th className="p-3 text-center">Stock</th>
                       <th className="p-3">Barcode</th>
@@ -509,13 +728,26 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {normalizedProducts.slice(0, 100).map((p) => {
-                      const isValid = Boolean(p.name);
+                      const isValid = Boolean(p.name) && p.isGstValid;
                       return (
                         <tr key={p.excelRow} className={!isValid ? 'bg-rose-50/40' : 'hover:bg-slate-50/50'}>
                           <td className="p-3 text-center font-mono text-slate-400">{p.excelRow}</td>
                           <td className="p-3 font-bold text-slate-800">{p.name || <span className="text-rose-500 italic">[Missing Name]</span>}</td>
                           <td className="p-3 font-medium text-slate-600">{p.category}</td>
                           <td className="p-3 text-center font-bold text-slate-800">₹{p.sellingPrice || 0}</td>
+                          {isGstRegistered && (
+                            <td className="p-3 text-center">
+                              {p.isGstValid ? (
+                                <span className="bg-slate-100 text-slate-800 font-bold px-2 py-0.5 rounded text-[11px]">
+                                  {p.gstRate}%
+                                </span>
+                              ) : (
+                                <span className="bg-rose-100 text-rose-700 font-extrabold px-2 py-0.5 rounded text-[10px]" title={`Invalid: ${p.rawGstRate}`}>
+                                  Invalid ({p.rawGstRate})
+                                </span>
+                              )}
+                            </td>
+                          )}
                           <td className="p-3 text-center text-slate-400">{p.originalPrice ? `₹${p.originalPrice}` : '-'}</td>
                           <td className="p-3 text-center font-medium">{p.availability || 0}</td>
                           <td className="p-3 font-mono font-bold text-slate-700">
@@ -537,7 +769,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
             </div>
           )}
 
-          {/* STEP 4: COMPLETE RESULT */}
+          {/* STEP 5: COMPLETE RESULT */}
           {step === 'complete' && importSummary && (
             <div className="space-y-6 text-left">
               <div className="bg-emerald-50 border border-emerald-200 p-6 rounded-3xl text-center space-y-2">
@@ -659,7 +891,30 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
               </button>
               <button
                 type="button"
-                onClick={handleProceedToPreview}
+                onClick={handleProceedFromMapping}
+                className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-sm"
+              >
+                {isGstRegistered ? (
+                  <>Next: GST Settings <ArrowRight className="w-4 h-4" /></>
+                ) : (
+                  <>Next: Validate & Preview <ArrowRight className="w-4 h-4" /></>
+                )}
+              </button>
+            </div>
+          )}
+
+          {step === 'gst_settings' && (
+            <div className="flex justify-between w-full">
+              <button
+                type="button"
+                onClick={() => setStep('mapping')}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" /> Back
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep('preview')}
                 className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-sm"
               >
                 Next: Validate & Preview <ArrowRight className="w-4 h-4" />
@@ -671,7 +926,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
             <div className="flex justify-between w-full">
               <button
                 type="button"
-                onClick={() => setStep('mapping')}
+                onClick={() => setStep(isGstRegistered ? 'gst_settings' : 'mapping')}
                 disabled={isImporting}
                 className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
               >

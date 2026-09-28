@@ -170,8 +170,17 @@
     "importedSuccessfully": "Imported Successfully",
     "skipped": "Skipped",
     "downloadErrorReport": "Download Error Report",
-    "viewIssues": "View Issues",
-    "importComplete": "Import Complete"
+    "importComplete": "Import Complete",
+    "gstSettings": "GST Settings",
+    "defaultGstRate": "Default GST Rate",
+    "gstRateSource": "GST Rate Source",
+    "priceIncludesGst": "Price Setting",
+    "pricesIncludeGst": "Prices include GST",
+    "pricesExcludeGst": "Prices exclude GST",
+    "excelOrDefault": "Use GST column from Excel if present, else fallback to default",
+    "allDefault": "Apply selected default GST rate to ALL imported products",
+    "gstSummary": "GST Summary",
+    "invalidGstRate": "Invalid GST Rate"
   },
   "storage": {
     "title": "Database Storage Monitor",

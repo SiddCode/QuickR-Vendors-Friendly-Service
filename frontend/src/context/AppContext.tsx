@@ -27,7 +27,7 @@ interface AppContextType {
       convertedCount: number;
     };
   } | null;
-  shopProfile: { name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string } | null;
+  shopProfile: { name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string; gst?: { registered?: boolean; defaultRate?: number } } | null;
   shopName: string;
   salesSessionActive: boolean;
   startSalesSession: () => void;
@@ -43,7 +43,7 @@ interface AppContextType {
 
   deleteProduct: (id: string) => Promise<boolean>;
   bulkDeleteProducts: (ids: string[]) => Promise<{ success: boolean; message: string }>;
-  importProducts: (products: any[]) => Promise<{
+  importProducts: (products: any[], gstSettings?: any) => Promise<{
     success: boolean;
     summary: {
       totalRows: number;
@@ -485,10 +485,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const importProducts = async (productsData: any[]) => {
+  const importProducts = async (productsData: any[], gstSettings?: any) => {
     try {
       setIsLoading(true);
-      const res = await api.importProducts(productsData);
+      const res = await api.importProducts(productsData, gstSettings);
       if (res && res.success) {
         await loadBusinessData();
       }

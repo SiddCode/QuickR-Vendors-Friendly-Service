@@ -1476,7 +1476,7 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, error: 'Shop authorization required' });
     }
 
-    const { products: rawProducts } = req.body;
+    const { products: rawProducts, gstSettings } = req.body;
     if (!Array.isArray(rawProducts) || rawProducts.length === 0) {
       return res.status(400).json({ success: false, error: 'No product records provided for import.' });
     }
@@ -1485,6 +1485,14 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
     if (rawProducts.length > 15000) {
       return res.status(400).json({ success: false, error: 'Maximum 15,000 products allowed per import batch.' });
     }
+
+    // Step 0: Fetch Shop to verify GST registration and defaults
+    const shop = await Shop.findOne({ customId: shopId }).lean();
+    const isGstRegistered = shop?.isGstRegistered || shop?.gst?.registered || false;
+    const defaultShopGstRate = Number(gstSettings?.defaultRate ?? shop?.gst?.defaultRate ?? 0);
+    const rateSource = gstSettings?.rateSource || 'excel_or_default';
+    const priceIncludesGstSetting = gstSettings?.priceIncludesGst !== undefined ? Boolean(gstSettings.priceIncludesGst) : true;
+    const VALID_GST_RATES = [0, 5, 12, 18, 28];
 
     // Step 1: Fetch existing barcodes for this shop only
     const existingShopProducts = await Product.find({ shopId }).select('barcode name').lean();
@@ -1542,6 +1550,40 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
             suggestedFix: 'Selling price must be a valid non-negative number'
           });
           continue;
+        }
+      }
+
+      // GST Rate Calculation & Validation for GST registered shops
+      let finalGstRate = 0;
+      let finalPriceIncludesGst = true;
+
+      if (isGstRegistered) {
+        finalPriceIncludesGst = priceIncludesGstSetting;
+        if (rateSource === 'all_default') {
+          finalGstRate = VALID_GST_RATES.includes(defaultShopGstRate) ? defaultShopGstRate : 0;
+        } else {
+          // excel_or_default
+          const rawRowGst = row.gstRate;
+          if (rawRowGst !== undefined && rawRowGst !== null && rawRowGst !== '') {
+            const parsedGst = Number(rawRowGst);
+            if (!isNaN(parsedGst) && VALID_GST_RATES.includes(parsedGst)) {
+              finalGstRate = parsedGst;
+            } else {
+              validationErrorCount++;
+              skippedCount++;
+              issueDetails.push({
+                row: excelRowNumber,
+                productName: name,
+                barcode: row.barcode || '',
+                issue: `Invalid GST Rate: "${rawRowGst}%"`,
+                suggestedFix: 'GST rate must be one of 0%, 5%, 12%, 18%, or 28%'
+              });
+              continue;
+            }
+          } else {
+            // Fallback to default GST rate
+            finalGstRate = VALID_GST_RATES.includes(defaultShopGstRate) ? defaultShopGstRate : 0;
+          }
         }
       }
 
@@ -1643,9 +1685,9 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
         colors,
         availability,
         description: row.description ? String(row.description).trim() : '',
-        gstRate: Number(row.gstRate) || 0,
+        gstRate: finalGstRate,
         hsnCode: row.hsnCode ? String(row.hsnCode).trim() : '',
-        priceIncludesGst: row.priceIncludesGst !== undefined ? Boolean(row.priceIncludesGst) : true,
+        priceIncludesGst: finalPriceIncludesGst,
         isActive: true,
         barcode: rawBarcode,
         barcodeType,
