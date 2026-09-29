@@ -134,15 +134,14 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const discountDropdownRef = useRef<HTMLDivElement>(null);
   const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
 
-  // Filtered Products for Search Dropdown
+  // Filtered Products for Search Dropdown (capped at 20 results, empty when no query)
   const trimmedProdQuery = productSearchQuery.trim().toLowerCase();
-  const filteredSearchProducts = activeProducts.filter(p => {
-    if (!trimmedProdQuery) return true;
+  const filteredSearchProducts = trimmedProdQuery ? activeProducts.filter(p => {
     const nameMatch = p.name ? p.name.toLowerCase().includes(trimmedProdQuery) : false;
     const barcodeMatch = p.barcode ? p.barcode.toLowerCase().includes(trimmedProdQuery) : false;
     const categoryMatch = p.category ? p.category.toLowerCase().includes(trimmedProdQuery) : false;
     return nameMatch || barcodeMatch || categoryMatch;
-  });
+  }).slice(0, 20) : [];
 
   // Filtered Customers for Search Dropdown
   const trimmedQuery = customerSearchQuery.trim().toLowerCase();
@@ -290,7 +289,9 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       }
       if (e.key === 'F2') {
         e.preventDefault();
-        setIsProductDropdownOpen(true);
+        if (productSearchQuery.trim()) {
+          setIsProductDropdownOpen(true);
+        }
         productSearchInputRef.current?.focus();
         return;
       }
@@ -783,33 +784,54 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   <input
                     ref={productSearchInputRef}
                     type="text"
+                    role="combobox"
+                    aria-expanded={isProductDropdownOpen && filteredSearchProducts.length > 0}
+                    aria-haspopup="listbox"
                     placeholder="Type product name or scan barcode (e.g. Cotton Shirt or 890123...)"
                     value={productSearchQuery}
                     onFocus={() => {
-                      setIsProductDropdownOpen(true);
-                      setHighlightedProductIndex(0);
+                      if (productSearchQuery.trim()) {
+                        setIsProductDropdownOpen(true);
+                        setHighlightedProductIndex(0);
+                      }
                     }}
                     onChange={(e) => {
-                      setProductSearchQuery(e.target.value);
-                      if (!isProductDropdownOpen) setIsProductDropdownOpen(true);
+                      const newQuery = e.target.value;
+                      setProductSearchQuery(newQuery);
+                      if (newQuery.trim()) {
+                        setIsProductDropdownOpen(true);
+                      } else {
+                        setIsProductDropdownOpen(false);
+                      }
                       setHighlightedProductIndex(0);
                     }}
                     onKeyDown={(e) => {
-                      if (!isProductDropdownOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-                        setIsProductDropdownOpen(true);
-                        return;
-                      }
-
-                      if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
-                        if (e.key === 'ArrowDown') {
+                      if (e.key === 'ArrowDown') {
+                        if (!isProductDropdownOpen && productSearchQuery.trim()) {
+                          setIsProductDropdownOpen(true);
+                          setHighlightedProductIndex(0);
+                          e.preventDefault();
+                          return;
+                        }
+                        if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
                           e.preventDefault();
                           setHighlightedProductIndex(prev => (prev + 1) % filteredSearchProducts.length);
-                        } else if (e.key === 'ArrowUp') {
+                          return;
+                        }
+                      }
+
+                      if (e.key === 'ArrowUp') {
+                        if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
                           e.preventDefault();
                           setHighlightedProductIndex(prev => (prev - 1 + filteredSearchProducts.length) % filteredSearchProducts.length);
-                        } else if (e.key === 'Enter') {
+                          return;
+                        }
+                      }
+
+                      if (e.key === 'Enter') {
+                        if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
                           e.preventDefault();
-                          const targetProd = filteredSearchProducts[highlightedProductIndex];
+                          const targetProd = filteredSearchProducts[highlightedProductIndex] || filteredSearchProducts[0];
                           if (targetProd) {
                             addScannedProductToCart(targetProd);
                           }
@@ -822,6 +844,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                     <button
                       onClick={() => {
                         setProductSearchQuery('');
+                        setIsProductDropdownOpen(false);
                         productSearchInputRef.current?.focus();
                       }}
                       className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
@@ -832,14 +855,16 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 </div>
 
                 {/* PRODUCT SEARCH DROPDOWN RESULTS */}
-                {isProductDropdownOpen && (
-                  <div className="absolute z-50 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto py-1 text-sm text-slate-800 divide-y divide-slate-100">
+                {isProductDropdownOpen && productSearchQuery.trim() !== '' && (
+                  <div role="listbox" className="absolute z-50 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto py-1 text-sm text-slate-800 divide-y divide-slate-100">
                     {filteredSearchProducts.length > 0 ? (
                       filteredSearchProducts.map((p, idx) => {
                         const isHighlighted = idx === highlightedProductIndex;
                         return (
                           <div
                             key={p.id}
+                            role="option"
+                            aria-selected={isHighlighted}
                             onClick={() => addScannedProductToCart(p)}
                             onMouseEnter={() => setHighlightedProductIndex(idx)}
                             className={`px-4 py-2.5 cursor-pointer flex items-center justify-between transition-colors ${
