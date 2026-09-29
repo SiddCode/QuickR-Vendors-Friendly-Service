@@ -228,7 +228,7 @@ async function executeGenerateAI(prompt, options = {}) {
   const groqApiKey = process.env.GROQ_API_KEY ? String(process.env.GROQ_API_KEY).trim() : '';
 
   if (groqApiKey) {
-    const groqModel = (process.env.GROQ_MODEL || 'qwen/qwen3.6-27b').trim();
+    const groqModel = (process.env.GROQ_MODEL || 'qwen/qwen3.8-27b').trim();
     const groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
     try {
@@ -271,6 +271,15 @@ max_completion_tokens=${payload.max_completion_tokens}`);
         const errorText = await apiRes.text().catch(() => '');
         console.error(`[QuickR Groq AI Error] Status: ${apiRes.status}`);
         console.error(`[QuickR Groq AI Error] Body: ${errorText}`);
+
+        if (apiRes.status === 404) {
+          console.error(`[QuickR Groq AI Error] Configured model unavailable: ${groqModel}`);
+          const err = new Error(`Configured AI model unavailable: ${groqModel}`);
+          err.status = 404;
+          err.errorBody = errorText;
+          err.userMessage = 'AI service is temporarily unavailable. Please try again later.';
+          throw err;
+        }
 
         if (apiRes.status === 429) {
           const resetInfo = getGroqResetInfo(apiRes.headers, errorText);
@@ -323,7 +332,7 @@ Calculated retryAfterSeconds: ${retryAfterSeconds}`);
         const err = new Error(`Groq API error: ${apiRes.status}`);
         err.status = apiRes.status || 503;
         err.errorBody = errorText;
-        if (apiRes.status === 401) {
+        if (apiRes.status === 401 || apiRes.status === 403) {
           err.userMessage = 'AI service authentication failed. Please check backend configuration.';
         } else {
           err.userMessage = 'AI service returned an error. Please try again.';
