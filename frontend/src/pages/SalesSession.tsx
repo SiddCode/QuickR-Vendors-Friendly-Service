@@ -8,7 +8,6 @@ import {
   Check, 
   ChevronDown, 
   Camera, 
-  Barcode, 
   AlertTriangle, 
   Printer, 
   MessageSquare, 
@@ -66,7 +65,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const activeProducts = products.filter(p => p.isActive);
 
   // Focus Refs for Keyboard Navigation
-  const productSearchInputRef = useRef<HTMLInputElement>(null);
   const customerSearchInputRef = useRef<HTMLInputElement>(null);
   const walkinCustomerNameRef = useRef<HTMLInputElement>(null);
   const walkinCustomerPhoneRef = useRef<HTMLInputElement>(null);
@@ -81,12 +79,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
   const [notFoundBarcode, setNotFoundBarcode] = useState<string | null>(null);
   const [outOfStockProduct, setOutOfStockProduct] = useState<any | null>(null);
-
-  // Product Search State
-  const [productSearchQuery, setProductSearchQuery] = useState('');
-  const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
-  const [highlightedProductIndex, setHighlightedProductIndex] = useState(0);
-  const productDropdownRef = useRef<HTMLDivElement>(null);
 
   // Customer state
   const [isWalkIn, setIsWalkIn] = useState(true);
@@ -136,15 +128,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const discountDropdownRef = useRef<HTMLDivElement>(null);
   const [paymentMethod, setPaymentMethod] = useState<string>('Cash');
 
-  // Filtered Products for Search Dropdown (capped at 20 results, empty when no query)
-  const trimmedProdQuery = productSearchQuery.trim().toLowerCase();
-  const filteredSearchProducts = trimmedProdQuery ? activeProducts.filter(p => {
-    const nameMatch = p.name ? p.name.toLowerCase().includes(trimmedProdQuery) : false;
-    const barcodeMatch = p.barcode ? p.barcode.toLowerCase().includes(trimmedProdQuery) : false;
-    const categoryMatch = p.category ? p.category.toLowerCase().includes(trimmedProdQuery) : false;
-    return nameMatch || barcodeMatch || categoryMatch;
-  }).slice(0, 20) : [];
-
   // Filtered Customers for Search Dropdown
   const trimmedQuery = customerSearchQuery.trim().toLowerCase();
   const filteredCustomers = customers.filter(c => {
@@ -156,15 +139,19 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
   const selectedCustomerObj = customers.find(c => c.id === selectedCustomerId);
 
-  // 1. DEFAULT FOCUS: Automatically focus Product Search when session is active
+  // 1. DEFAULT FOCUS: Automatically focus Customer Name/Search when session is active
   useEffect(() => {
     if (salesSessionActive) {
       const timer = setTimeout(() => {
-        productSearchInputRef.current?.focus();
+        if (isWalkIn) {
+          walkinCustomerNameRef.current?.focus();
+        } else {
+          customerSearchInputRef.current?.focus();
+        }
       }, 50);
       return () => clearTimeout(timer);
     }
-  }, [salesSessionActive]);
+  }, [salesSessionActive, isWalkIn]);
 
   // Helper: Add or increment product in cart by product object
   const addScannedProductToCart = (prod: any) => {
@@ -201,13 +188,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
         ];
       }
     });
-
-    // Reset product search and return focus to Product Search input
-    setProductSearchQuery('');
-    setIsProductDropdownOpen(false);
-    setTimeout(() => {
-      productSearchInputRef.current?.focus();
-    }, 50);
   };
 
   // Helper: Process scanned barcode string
@@ -269,11 +249,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           setOutOfStockProduct(null);
           return;
         }
-        if (isProductDropdownOpen) {
-          e.preventDefault();
-          setIsProductDropdownOpen(false);
-          return;
-        }
         if (isDropdownOpen) {
           e.preventDefault();
           setIsDropdownOpen(false);
@@ -290,14 +265,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       if (e.key === 'F10') {
         e.preventDefault();
         handleCompleteSale();
-        return;
-      }
-      if (e.key === 'F2') {
-        e.preventDefault();
-        if (productSearchQuery.trim()) {
-          setIsProductDropdownOpen(true);
-        }
-        productSearchInputRef.current?.focus();
         return;
       }
       if (e.key === 'F4') {
@@ -324,8 +291,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           e.preventDefault();
           if (barcodeEnabled) {
             setIsCameraScannerOpen(true);
-          } else {
-            productSearchInputRef.current?.focus();
           }
           return;
         }
@@ -437,16 +402,13 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       window.removeEventListener('keydown', handleKeyDown);
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
-  }, [salesSessionActive, products, isWalkIn, showKeyboardHelp, isCameraScannerOpen, notFoundBarcode, outOfStockProduct, isProductDropdownOpen, isDropdownOpen, isDiscountDropdownOpen, selectedCartItemId, paymentMethod, barcodeEnabled]);
+  }, [salesSessionActive, products, isWalkIn, showKeyboardHelp, isCameraScannerOpen, notFoundBarcode, outOfStockProduct, isDropdownOpen, isDiscountDropdownOpen, selectedCartItemId, paymentMethod, barcodeEnabled]);
 
   // Handle outside click to close customer dropdown and discount dropdown
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsDropdownOpen(false);
-      }
-      if (productDropdownRef.current && !productDropdownRef.current.contains(e.target as Node)) {
-        setIsProductDropdownOpen(false);
       }
       if (discountDropdownRef.current && !discountDropdownRef.current.contains(e.target as Node)) {
         setIsDiscountDropdownOpen(false);
@@ -698,7 +660,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
     setSelectedCustomerId('');
     setIsWalkIn(true);
     setTimeout(() => {
-      productSearchInputRef.current?.focus();
+      walkinCustomerNameRef.current?.focus();
     }, 50);
   };
 
@@ -784,152 +746,9 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           /* ─── ACTIVE SESSION WORKSPACE ─── */
           <div className="space-y-6">
 
-            {/* KEYBOARD-FIRST PRODUCT SEARCH & BARCODE ACTION BAR */}
-            <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-4 text-white shadow-md space-y-3">
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center shrink-0">
-                    <Barcode className="w-5 h-5 text-indigo-300" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-2">
-                      POS Product Search & Barcode Scanner <span className="bg-indigo-500/30 text-indigo-200 text-[10px] px-2 py-0.5 rounded-md border border-indigo-400/30">F2</span>
-                    </h3>
-                    <p className="text-[11px] text-slate-300 font-medium">Type name/barcode or scan USB scanner. Press ↑ ↓ and Enter to add.</p>
-                  </div>
-                </div>
 
-                {barcodeEnabled && (
-                  <button
-                    onClick={() => setIsCameraScannerOpen(true)}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs shadow-sm transition-colors shrink-0"
-                  >
-                    <Camera className="w-4 h-4" /> Camera Scan <span className="text-[10px] bg-indigo-700/60 px-1.5 py-0.5 rounded">S</span>
-                  </button>
-                )}
-              </div>
 
-              {/* PRODUCT SEARCH DROPDOWN INPUT */}
-              <div ref={productDropdownRef} className="relative">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Search className="w-4 h-4" />
-                  </div>
-                  <input
-                    ref={productSearchInputRef}
-                    type="text"
-                    role="combobox"
-                    aria-expanded={isProductDropdownOpen && filteredSearchProducts.length > 0}
-                    aria-haspopup="listbox"
-                    placeholder="Type product name or scan barcode (e.g. Cotton Shirt or 890123...)"
-                    value={productSearchQuery}
-                    onFocus={() => {
-                      if (productSearchQuery.trim()) {
-                        setIsProductDropdownOpen(true);
-                        setHighlightedProductIndex(0);
-                      }
-                    }}
-                    onChange={(e) => {
-                      const newQuery = e.target.value;
-                      setProductSearchQuery(newQuery);
-                      if (newQuery.trim()) {
-                        setIsProductDropdownOpen(true);
-                      } else {
-                        setIsProductDropdownOpen(false);
-                      }
-                      setHighlightedProductIndex(0);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'ArrowDown') {
-                        if (!isProductDropdownOpen && productSearchQuery.trim()) {
-                          setIsProductDropdownOpen(true);
-                          setHighlightedProductIndex(0);
-                          e.preventDefault();
-                          return;
-                        }
-                        if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
-                          e.preventDefault();
-                          setHighlightedProductIndex(prev => (prev + 1) % filteredSearchProducts.length);
-                          return;
-                        }
-                      }
 
-                      if (e.key === 'ArrowUp') {
-                        if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
-                          e.preventDefault();
-                          setHighlightedProductIndex(prev => (prev - 1 + filteredSearchProducts.length) % filteredSearchProducts.length);
-                          return;
-                        }
-                      }
-
-                      if (e.key === 'Enter') {
-                        if (isProductDropdownOpen && filteredSearchProducts.length > 0) {
-                          e.preventDefault();
-                          const targetProd = filteredSearchProducts[highlightedProductIndex] || filteredSearchProducts[0];
-                          if (targetProd) {
-                            addScannedProductToCart(targetProd);
-                          }
-                        }
-                      }
-                    }}
-                    className="w-full bg-slate-800/90 border border-indigo-400/40 focus:border-indigo-300 rounded-xl py-2.5 pl-10 pr-10 text-sm font-semibold text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/50 shadow-inner transition-all"
-                  />
-                  {productSearchQuery && (
-                    <button
-                      onClick={() => {
-                        setProductSearchQuery('');
-                        setIsProductDropdownOpen(false);
-                        productSearchInputRef.current?.focus();
-                      }}
-                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-white"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* PRODUCT SEARCH DROPDOWN RESULTS */}
-                {isProductDropdownOpen && productSearchQuery.trim() !== '' && (
-                  <div role="listbox" className="absolute z-50 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto py-1 text-sm text-slate-800 divide-y divide-slate-100">
-                    {filteredSearchProducts.length > 0 ? (
-                      filteredSearchProducts.map((p, idx) => {
-                        const isHighlighted = idx === highlightedProductIndex;
-                        return (
-                          <div
-                            key={p.id}
-                            role="option"
-                            aria-selected={isHighlighted}
-                            onClick={() => addScannedProductToCart(p)}
-                            onMouseEnter={() => setHighlightedProductIndex(idx)}
-                            className={`px-4 py-2.5 cursor-pointer flex items-center justify-between transition-colors ${
-                              isHighlighted ? 'bg-primary-50 text-primary-900 font-bold border-l-4 border-primary-600' : 'hover:bg-slate-50'
-                            }`}
-                          >
-                            <div className="flex flex-col">
-                              <span className="font-bold text-slate-900">{p.name}</span>
-                              <span className="text-xs text-slate-500 font-medium">
-                                Category: {p.category} {p.barcode ? `| Barcode: ${p.barcode}` : ''}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3 text-right">
-                              <div>
-                                <span className="block text-xs font-black text-emerald-600">₹{p.sellingPrice.toLocaleString('en-IN')}</span>
-                                <span className="text-[10px] text-slate-400 font-semibold">Stock: {p.availability || 0}</span>
-                              </div>
-                              {isHighlighted && <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded font-bold">Press Enter ↵</span>}
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="px-4 py-3 text-xs text-slate-400 font-semibold text-center">
-                        No matching products found. Try scanning barcode or typing name.
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
 
             {/* MAIN BILLING FORM CARD */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1084,7 +903,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                 setSelectedCustomerId(targetCust.id);
                                 setCustomerSearchQuery('');
                                 setIsDropdownOpen(false);
-                                productSearchInputRef.current?.focus();
                               }
                             }
                           }
@@ -1109,7 +927,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                   setSelectedCustomerId(c.id);
                                   setCustomerSearchQuery('');
                                   setIsDropdownOpen(false);
-                                  productSearchInputRef.current?.focus();
                                 }}
                                 onMouseEnter={() => setHighlightedCustomerIndex(idx)}
                                 className={`px-3.5 py-2.5 cursor-pointer flex items-center justify-between transition-colors ${
@@ -1154,7 +971,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   <div className="p-6 sm:p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50 space-y-2">
                     <ShoppingCart className="w-8 h-8 text-slate-300 mx-auto" />
                     <p className="text-xs font-bold text-slate-600">Cart is empty</p>
-                    <p className="text-[11px] text-slate-400">Scan product barcode or use Product Search above to build customer bill</p>
+                    <p className="text-[11px] text-slate-400">Scan product barcode or click Add Product to build customer bill</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -1461,10 +1278,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-xs font-medium text-slate-700">
-              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
-                <span>Product Search</span>
-                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">F2</kbd>
-              </div>
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
                 <span>Scan Barcode</span>
                 <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">S</kbd>
