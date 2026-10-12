@@ -14,7 +14,7 @@ export const CATEGORIES = {
 };
 
 export const Products = () => {
-  const { products, addProduct, updateProduct, deleteProduct, bulkDeleteProducts, generateProductBarcode, shopName } = useApp();
+  const { products, addProduct, updateProduct, deleteProduct, bulkDeleteProducts, generateProductBarcode, shopName, shopProfile } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
   
@@ -49,6 +49,7 @@ export const Products = () => {
     sizes: '',
     colors: '',
     availability: '10',
+    measurementType: 'piece' as 'piece' | 'length',
     description: '',
     gstRate: '0',
     hsnCode: '',
@@ -139,6 +140,7 @@ export const Products = () => {
         sizes: product.sizes ? product.sizes.join(', ') : '',
         colors: product.colors ? product.colors.join(', ') : '',
         availability: String(product.availability || 0),
+        measurementType: product.measurementType || 'piece',
         description: product.description || '',
         gstRate: String(product.gstRate ?? 0),
         hsnCode: product.hsnCode || '',
@@ -157,6 +159,7 @@ export const Products = () => {
         sizes: 'S, M, L, XL',
         colors: 'Blue, Black',
         availability: '10',
+        measurementType: 'piece',
         description: '',
         gstRate: '0',
         hsnCode: '',
@@ -185,7 +188,8 @@ export const Products = () => {
       originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : undefined,
       sizes: formData.sizes ? formData.sizes.split(',').map(s => s.trim()).filter(Boolean) : [],
       colors: formData.colors ? formData.colors.split(',').map(c => c.trim()).filter(Boolean) : [],
-      availability: parseInt(formData.availability, 10) || 0,
+      availability: parseFloat(formData.availability) || 0,
+      measurementType: formData.measurementType,
       description: formData.description.trim(),
       gstRate: parseFloat(formData.gstRate) || 0,
       hsnCode: formData.hsnCode.trim(),
@@ -396,7 +400,9 @@ export const Products = () => {
                         {prod.originalPrice ? <span className="text-[10px] text-slate-400 line-through ml-1.5">₹{prod.originalPrice}</span> : null}
                       </div>
                       {prod.availability > 0 ? (
-                        <span className="text-emerald-600 font-semibold text-xs">{prod.availability} in stock</span>
+                        <span className="text-emerald-600 font-semibold text-xs">
+                          {prod.measurementType === 'length' ? `${prod.availability} m in stock` : `${prod.availability} in stock`}
+                        </span>
                       ) : (
                         <span className="text-rose-500 font-semibold text-xs">Out of stock</span>
                       )}
@@ -505,7 +511,9 @@ export const Products = () => {
                         </td>
                         <td className="p-4 text-sm font-medium">
                           {prod.availability > 0 ? (
-                            <span className="text-emerald-600 font-semibold">{prod.availability} in stock</span>
+                            <span className="text-emerald-600 font-semibold">
+                              {prod.measurementType === 'length' ? `${prod.availability} m in stock` : `${prod.availability} in stock`}
+                            </span>
                           ) : (
                             <span className="text-rose-500 font-semibold">Out of stock</span>
                           )}
@@ -675,13 +683,47 @@ export const Products = () => {
                 </div>
               )}
 
+              {/* Measurement Type selector when shop has Length-Based Billing enabled */}
+              {shopProfile?.lengthBasedBillingEnabled && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">Measurement Type</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, measurementType: 'piece' })}
+                      className={`px-3 py-2 text-xs font-bold rounded-xl border transition-all ${
+                        formData.measurementType === 'piece'
+                          ? 'bg-primary-50 border-primary-500 text-primary-700 shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      Piece-Based (pcs)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, measurementType: 'length' })}
+                      className={`px-3 py-2 text-xs font-bold rounded-xl border transition-all ${
+                        formData.measurementType === 'length'
+                          ? 'bg-primary-50 border-primary-500 text-primary-700 shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      Length-Based (Metres)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Selling Price (₹) *</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    {formData.measurementType === 'length' ? 'Selling Price (₹ per metre) *' : 'Selling Price (₹) *'}
+                  </label>
                   <input 
                     type="number" 
                     required
                     min="0"
+                    step={formData.measurementType === 'length' ? '0.01' : '1'}
                     placeholder="999"
                     value={formData.sellingPrice}
                     onChange={e => setFormData({ ...formData, sellingPrice: e.target.value })}
@@ -690,10 +732,13 @@ export const Products = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">MRP / Original Price (₹)</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    {formData.measurementType === 'length' ? 'MRP (₹ per metre)' : 'MRP / Original Price (₹)'}
+                  </label>
                   <input 
                     type="number" 
                     min="0"
+                    step={formData.measurementType === 'length' ? '0.01' : '1'}
                     placeholder="1299"
                     value={formData.originalPrice}
                     onChange={e => setFormData({ ...formData, originalPrice: e.target.value })}
@@ -704,10 +749,13 @@ export const Products = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Available Stock (Qty)</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    {formData.measurementType === 'length' ? 'Available Stock (Metres)' : 'Available Stock (Qty)'}
+                  </label>
                   <input 
                     type="number" 
                     min="0"
+                    step={formData.measurementType === 'length' ? '0.01' : '1'}
                     value={formData.availability}
                     onChange={e => setFormData({ ...formData, availability: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 text-sm"

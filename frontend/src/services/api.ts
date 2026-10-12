@@ -1093,9 +1093,9 @@ export const api = {
   },
 
   // Shop Profile
-  async getShopProfile(): Promise<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; isGstRegistered?: boolean; gstin?: string; gst?: any }> {
+  async getShopProfile(): Promise<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; lengthBasedBillingEnabled?: boolean; isGstRegistered?: boolean; gstin?: string; gst?: any }> {
     const res = await fetch(`${API_BASE_URL}/shop/profile`, { credentials: 'include' });
-    return handleResponse<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; isGstRegistered?: boolean; gstin?: string }>(res);
+    return handleResponse<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; lengthBasedBillingEnabled?: boolean; isGstRegistered?: boolean; gstin?: string; gst?: any }>(res);
   },
 
   async translateText(data: { text: string; direction?: 'en-to-ta' | 'ta-to-en' }): Promise<{ success: boolean; translatedText?: string; error?: string }> {
@@ -1108,7 +1108,7 @@ export const api = {
     return handleResponse<{ success: boolean; translatedText?: string; error?: string }>(res);
   },
 
-  async updateShopProfile(data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }): Promise<{ success: boolean; message: string; shop: any }> {
+  async updateShopProfile(data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number; lengthBasedBillingEnabled?: boolean }): Promise<{ success: boolean; message: string; shop: any }> {
     const res = await fetch(`${API_BASE_URL}/shop/profile`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

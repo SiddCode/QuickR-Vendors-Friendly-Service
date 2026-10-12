@@ -81,6 +81,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   const [stateInput, setStateInput] = useState('Tamil Nadu');
   const [stateCodeInput, setStateCodeInput] = useState('33');
   const [defaultRateInput, setDefaultRateInput] = useState<number>(0);
+  const [isLengthBasedBillingInput, setIsLengthBasedBillingInput] = useState<boolean>(false);
 
   const [originalShopName, setOriginalShopName] = useState('');
   const [originalContactPhone, setOriginalContactPhone] = useState('');
@@ -91,6 +92,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
   const [originalState, setOriginalState] = useState('Tamil Nadu');
   const [originalStateCode, setOriginalStateCode] = useState('33');
   const [originalDefaultRate, setOriginalDefaultRate] = useState<number>(0);
+  const [originalIsLengthBasedBilling, setOriginalIsLengthBasedBilling] = useState<boolean>(false);
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
@@ -277,6 +279,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
       setStateInput(gstData.state || 'Tamil Nadu');
       setStateCodeInput(gstData.stateCode || '33');
       setDefaultRateInput(gstData.defaultRate || 0);
+      setIsLengthBasedBillingInput(!!data.lengthBasedBillingEnabled);
 
       setOriginalShopName(data.name || '');
       setOriginalContactPhone(data.phone || '');
@@ -287,6 +290,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
       setOriginalState(gstData.state || 'Tamil Nadu');
       setOriginalStateCode(gstData.stateCode || '33');
       setOriginalDefaultRate(gstData.defaultRate || 0);
+      setOriginalIsLengthBasedBilling(!!data.lengthBasedBillingEnabled);
     } catch (err: any) {
       console.error('Failed to load shop profile:', err);
       setProfileErrMsg(err.message || 'Unable to load shop profile. Please try again.');
@@ -330,7 +334,8 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
         address: addressInput.trim(),
         state: stateInput,
         stateCode: stateCodeInput,
-        defaultRate: Number(defaultRateInput) || 0
+        defaultRate: Number(defaultRateInput) || 0,
+        lengthBasedBillingEnabled: isLengthBasedBillingInput
       });
 
       setOriginalShopName(shopNameInput.trim());
@@ -342,6 +347,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
       setOriginalState(stateInput);
       setOriginalStateCode(stateCodeInput);
       setOriginalDefaultRate(Number(defaultRateInput) || 0);
+      setOriginalIsLengthBasedBilling(isLengthBasedBillingInput);
 
       setIsEditingProfile(false);
       setProfileSuccessMsg('Shop profile updated successfully.');
@@ -358,6 +364,7 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
     setContactPhoneInput(originalContactPhone);
     setIsGstRegisteredInput(originalIsGstRegistered);
     setGstinInput(originalGstin);
+    setIsLengthBasedBillingInput(originalIsLengthBasedBilling);
     setIsEditingProfile(false);
     setProfileErrMsg(null);
   };
@@ -568,6 +575,32 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
                   )}
                 </div>
 
+                {/* Length-Based Billing Toggle */}
+                <div className="pt-3 border-t border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800">Length-Based Billing (Metres & Centimetres)</label>
+                      <p className="text-[11px] text-slate-500">Enable for fabric and textile shops selling cloth in metres and centimetres</p>
+                    </div>
+                    <div className="flex bg-slate-200 p-0.5 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setIsLengthBasedBillingInput(true)}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${isLengthBasedBillingInput ? 'bg-primary-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsLengthBasedBillingInput(false)}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${!isLengthBasedBillingInput ? 'bg-slate-700 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                      >
+                        No
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="submit"
@@ -638,6 +671,22 @@ export const Settings: React.FC<SettingsProps> = ({ setCurrentPage }) => {
                       </div>
                     </div>
                   )}
+
+                  {/* Length-based billing status summary */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">Length-Based Billing</label>
+                      <p className="text-xs font-bold text-slate-700">
+                        {originalIsLengthBasedBilling ? (
+                          <span className="text-emerald-600 flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Enabled (Metres & Centimetres)
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">Disabled (Piece-Based Only)</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

@@ -49,13 +49,18 @@ export function printSaleInvoiceWindow(sale: Sale, shopName?: string) {
   `;
 
   const itemsHtml = (sale.items || []).map(item => {
+    const isLen = item.measurementType === 'length';
+    const unitSuffix = item.sellingUnit || (isLen ? 'm' : '');
+    const qtyDisplay = unitSuffix ? `${item.quantity} ${unitSuffix}` : `${item.quantity}`;
+    const rateDisplay = isLen ? `₹${Number(item.rate).toLocaleString('en-IN')}/m` : `₹${Number(item.rate).toLocaleString('en-IN')}`;
+
     if (isGst) {
       return `
         <tr>
           <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">${item.productName || 'Product'}</td>
           <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: center; font-family: monospace; font-size: 10px;">${item.hsnCode || '—'}</td>
-          <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: center;">${item.quantity}</td>
-          <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right;">₹${Number(item.rate).toLocaleString('en-IN')}</td>
+          <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: center;">${qtyDisplay}</td>
+          <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right;">${rateDisplay}</td>
           <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right;">${item.gstRate || 0}%</td>
           <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right;">₹${Number(item.gstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
           <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">₹${Number(item.total).toLocaleString('en-IN')}</td>
@@ -65,8 +70,8 @@ export function printSaleInvoiceWindow(sale: Sale, shopName?: string) {
     return `
       <tr>
         <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">${item.productName || 'Product'}</td>
-        <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: center;">${item.quantity}</td>
-        <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right;">₹${Number(item.rate).toLocaleString('en-IN')}</td>
+        <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: center;">${qtyDisplay}</td>
+        <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right;">${rateDisplay}</td>
         <td style="padding: 6px 4px; border-bottom: 1px solid #e2e8f0; text-align: right; font-weight: 700;">₹${Number(item.total).toLocaleString('en-IN')}</td>
       </tr>
     `;

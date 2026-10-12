@@ -27,7 +27,7 @@ interface AppContextType {
       convertedCount: number;
     };
   } | null;
-  shopProfile: { name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string; gst?: { registered?: boolean; defaultRate?: number } } | null;
+  shopProfile: { name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string; gst?: { registered?: boolean; defaultRate?: number }; lengthBasedBillingEnabled?: boolean } | null;
   shopName: string;
   salesSessionActive: boolean;
   startSalesSession: () => void;
@@ -78,7 +78,7 @@ interface AppContextType {
   handleOutcomeNotInterested: (followUpId: string) => Promise<void>;
   handleOutcomeNoResponse: (followUpId: string, scheduleNext: boolean) => Promise<void>;
   addNote: (customerId: string, content: string) => void;
-  updateShopProfile: (data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }) => Promise<boolean>;
+  updateShopProfile: (data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number; lengthBasedBillingEnabled?: boolean }) => Promise<boolean>;
   connectionState: 'checking' | 'ready' | 'offline';
   checkHealth: () => Promise<boolean>;
   refreshTodayWork: () => Promise<void>;
@@ -104,7 +104,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [notes, setNotes] = useState<Note[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [todayWork, setTodayWork] = useState<any>(null);
-  const [shopProfile, setShopProfile] = useState<{ name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string } | null>(null);
+  const [shopProfile, setShopProfile] = useState<{ name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string; lengthBasedBillingEnabled?: boolean } | null>(null);
   
   const [salesSessionActive, setSalesSessionActive] = useState<boolean>(() => {
     return localStorage.getItem('quickr_sales_session_active') === 'true';
@@ -261,7 +261,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setShopProfile({
           name: profileData.name || 'QuickR Shop',
           isGstRegistered: !!profileData.isGstRegistered,
-          gstin: profileData.gstin || ''
+          gstin: profileData.gstin || '',
+          lengthBasedBillingEnabled: !!profileData.lengthBasedBillingEnabled
         });
       }
     } catch (err: any) {
@@ -676,7 +677,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotes(prev => [newNote, ...prev]);
   };
 
-  const updateShopProfile = async (data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }): Promise<boolean> => {
+  const updateShopProfile = async (data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number; lengthBasedBillingEnabled?: boolean }): Promise<boolean> => {
     try {
       const res = await api.updateShopProfile(data);
       if (res.success && res.shop) {
@@ -687,8 +688,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         }
         setShopProfile({
+          name: res.shop.name || 'QuickR Shop',
           isGstRegistered: !!res.shop.isGstRegistered,
-          gstin: res.shop.gstin || ''
+          gstin: res.shop.gstin || '',
+          lengthBasedBillingEnabled: !!res.shop.lengthBasedBillingEnabled
         });
         await loadBusinessData();
         return true;

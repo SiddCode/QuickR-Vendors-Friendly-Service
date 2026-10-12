@@ -8,6 +8,7 @@ const shopSchema = new mongoose.Schema(
     address: { type: String, default: 'Chennai, Tamil Nadu' },
     status: { type: String, enum: ['active', 'disabled'], default: 'active' },
     subscriptionStatus: { type: String, enum: ['pending', 'active', 'suspended', 'expired'], default: 'active' },
+    lengthBasedBillingEnabled: { type: Boolean, default: false },
     isGstRegistered: { type: Boolean, default: false },
     gstin: { type: String, default: '' },
     gst: {

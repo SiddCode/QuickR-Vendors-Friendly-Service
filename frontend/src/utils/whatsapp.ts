@@ -123,8 +123,10 @@ export const buildWhatsAppBillMessage = (
     let pName = (i.productName || 'Item').replace(/\(N\/A\)/gi, '').replace(/\bN\/A\b/gi, '').trim() || 'Item';
     pName = pName.replace(emojiRegex, '').trim();
     const qty = i.quantity || 1;
+    const unitSuffix = (i as any).sellingUnit || ((i as any).measurementType === 'length' ? 'm' : '');
+    const qtyStr = unitSuffix ? `${qty} ${unitSuffix}` : `${qty}`;
     const lineTotal = (i.total !== undefined ? i.total : (i.rate || 0) * qty);
-    return `${pName} x ${qty} = Rs.${lineTotal.toLocaleString('en-IN')}`;
+    return `${pName} x ${qtyStr} = Rs.${lineTotal.toLocaleString('en-IN')}`;
   });
 
   // Discount percentage & amount calculations

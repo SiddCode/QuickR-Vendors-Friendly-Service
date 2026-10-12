@@ -859,6 +859,7 @@ app.get('/api/shop/profile', requireAuth, async (req, res) => {
       address: shop.address || '',
       status: shop.status || 'active',
       subscriptionStatus: shop.subscriptionStatus || 'active',
+      lengthBasedBillingEnabled: !!shop.lengthBasedBillingEnabled,
       isGstRegistered: !!(shop.gst?.registered ?? shop.isGstRegistered),
       gstin: shop.gst?.gstin || shop.gstin || '',
       gst: shop.gst || {
@@ -885,7 +886,7 @@ app.patch('/api/shop/profile', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'User does not belong to a shop account.' });
     }
 
-    const { name, phone, isGstRegistered, gstin, legalName, address, state, stateCode, defaultRate } = req.body || {};
+    const { name, phone, isGstRegistered, gstin, legalName, address, state, stateCode, defaultRate, lengthBasedBillingEnabled } = req.body || {};
 
     if (name !== undefined) {
       const cleanName = String(name).trim();
@@ -933,6 +934,9 @@ app.patch('/api/shop/profile', requireAuth, async (req, res) => {
     if (normalizedPhone !== undefined) updateDoc.phone = normalizedPhone;
     if (isGstRegistered !== undefined) updateDoc.isGstRegistered = targetIsGst;
     if (cleanGstin !== undefined) updateDoc.gstin = cleanGstin;
+    if (lengthBasedBillingEnabled !== undefined) {
+      updateDoc.lengthBasedBillingEnabled = (lengthBasedBillingEnabled === true || lengthBasedBillingEnabled === 'true');
+    }
 
     // Update nested gst object
     const currentGst = shop.gst || {};
@@ -969,6 +973,7 @@ app.patch('/api/shop/profile', requireAuth, async (req, res) => {
         address: updatedShop.address,
         status: updatedShop.status,
         subscriptionStatus: updatedShop.subscriptionStatus,
+        lengthBasedBillingEnabled: !!updatedShop.lengthBasedBillingEnabled,
         isGstRegistered: !!updatedShop.isGstRegistered,
         gstin: updatedShop.gstin || '',
         gst: updatedShop.gst,
@@ -1271,7 +1276,7 @@ app.get('/api/products/barcode/:barcode', requireAuth, async (req, res) => {
 
 app.post('/api/products', requireAuth, async (req, res) => {
   try {
-    const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst } = req.body;
+    const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst, measurementType } = req.body;
     if (!name || sellingPrice === undefined) {
       return res.status(400).json({ error: 'Product name and selling price are required' });
     }
@@ -1281,6 +1286,8 @@ app.post('/api/products', requireAuth, async (req, res) => {
     if (isNaN(numGstRate) || numGstRate < 0 || !validRates.includes(numGstRate)) {
       return res.status(400).json({ error: 'GST rate must be one of [0, 5, 12, 18, 28]' });
     }
+
+    const cleanMeasurementType = measurementType === 'length' ? 'length' : 'piece';
 
     // Auto-generate authoritative QuickR barcode
     const barcode = await generateUniqueBarcode(req.user.shopId);
@@ -1300,6 +1307,7 @@ app.post('/api/products', requireAuth, async (req, res) => {
       gstRate: numGstRate,
       hsnCode: hsnCode ? String(hsnCode).trim() : '',
       priceIncludesGst: priceIncludesGst !== undefined ? (priceIncludesGst === true || priceIncludesGst === 'true') : true,
+      measurementType: cleanMeasurementType,
       isActive: isActive !== undefined ? isActive : true,
       barcode,
       shopId: req.user.shopId
@@ -1332,7 +1340,7 @@ app.post('/api/products/:id/generate-barcode', requireAuth, async (req, res) => 
 app.put('/api/products/:id', requireAuth, async (req, res) => {
 
   try {
-    const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst } = req.body;
+    const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst, measurementType } = req.body;
     const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });
     if (!prod) return res.status(404).json({ error: 'Product not found' });
     
@@ -1346,6 +1354,9 @@ app.put('/api/products/:id', requireAuth, async (req, res) => {
     if (availability !== undefined) prod.availability = availability;
     if (description !== undefined) prod.description = description;
     if (isActive !== undefined) prod.isActive = isActive;
+    if (measurementType !== undefined) {
+      prod.measurementType = measurementType === 'length' ? 'length' : 'piece';
+    }
     if (hsnCode !== undefined) prod.hsnCode = String(hsnCode).trim();
     if (priceIncludesGst !== undefined) prod.priceIncludesGst = (priceIncludesGst === true || priceIncludesGst === 'true');
     if (gstRate !== undefined) {
@@ -2269,6 +2280,7 @@ app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
       'Category',
       'Size',
       'Quantity',
+      'Unit',
       'Unit Price',
       'Line Total',
       'Bill Subtotal',
@@ -2318,6 +2330,8 @@ app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
         }
         if (sizeVal === null || sizeVal === undefined) sizeVal = '';
 
+        const unitDisplay = item.sellingUnit || (item.measurementType === 'length' ? 'm' : 'pcs');
+
         const row = worksheet.addRow([
           sale.invoiceNumber || sale.id,
           saleDateIST,
@@ -2327,6 +2341,7 @@ app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
           catVal,
           sizeVal,
           item.quantity || 1,
+          unitDisplay,
           item.rate || 0,
           item.total || 0,
           sale.subtotal || sale.totalAmount,
@@ -2336,12 +2351,12 @@ app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
           sale.source === 'quickr_followup' ? 'Follow-Up Recovery' : 'Direct Sale'
         ]);
 
-        // Currency formatting (updated column indices after adding Size column)
-        row.getCell(9).numberFormat = '₹#,##0.00';
+        // Currency formatting (updated column indices after adding Unit column)
         row.getCell(10).numberFormat = '₹#,##0.00';
         row.getCell(11).numberFormat = '₹#,##0.00';
         row.getCell(12).numberFormat = '₹#,##0.00';
         row.getCell(13).numberFormat = '₹#,##0.00';
+        row.getCell(14).numberFormat = '₹#,##0.00';
       });
     });
 
@@ -3019,17 +3034,39 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       : [];
     const productMap = new Map(dbProducts.map(p => [p.id, p]));
 
+    // Pre-calculate base quantities for stock deduction and validation
+    const itemBaseQuantities = new Map();
+
     if (Array.isArray(items) && items.length > 0) {
       for (const item of items) {
         if (item.productId) {
-          const qty = Number(item.quantity) || 1;
           const prod = productMap.get(item.productId);
           if (!prod) {
             return res.status(404).json({ error: `Product ${item.productName || item.productId} not found` });
           }
-          if ((prod.availability || 0) < qty) {
+
+          const rawQty = Number(item.quantity) || 1;
+          const isLengthProd = prod.measurementType === 'length';
+          const requestedUnit = item.sellingUnit || (isLengthProd ? 'm' : 'piece');
+
+          let baseQty = rawQty;
+          if (isLengthProd) {
+            if (requestedUnit === 'cm') {
+              baseQty = Math.round((rawQty / 100) * 10000) / 10000;
+            } else {
+              baseQty = Math.round(rawQty * 10000) / 10000;
+            }
+          } else {
+            baseQty = Math.round(rawQty * 10000) / 10000;
+          }
+
+          itemBaseQuantities.set(item, baseQty);
+
+          if ((prod.availability || 0) < baseQty) {
+            const availDisplay = isLengthProd ? `${prod.availability || 0} m` : `${prod.availability || 0}`;
+            const reqDisplay = isLengthProd ? `${rawQty} ${requestedUnit} (${baseQty} m)` : `${rawQty}`;
             return res.status(400).json({
-              error: `Insufficient stock for ${prod.name}. Available: ${prod.availability || 0}, Requested: ${qty}`
+              error: `Insufficient stock for ${prod.name}. Available: ${availDisplay}, Requested: ${reqDisplay}`
             });
           }
         }
@@ -3062,9 +3099,18 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 
     if (Array.isArray(items) && items.length > 0) {
       for (const item of items) {
-        const qty = Number(item.quantity) || 1;
-        const rate = Number(item.rate) || 0;
-        const rawLineTotal = Number(item.total) || (qty * rate);
+        const dbProd = item.productId ? productMap.get(item.productId) : null;
+        const isLengthProd = dbProd ? dbProd.measurementType === 'length' : item.measurementType === 'length';
+        const sellingUnit = item.sellingUnit || (isLengthProd ? 'm' : 'piece');
+        const rawQty = Number(item.quantity) || 1;
+        const baseQty = itemBaseQuantities.get(item) !== undefined 
+          ? itemBaseQuantities.get(item) 
+          : (isLengthProd && sellingUnit === 'cm' ? Math.round((rawQty / 100) * 10000) / 10000 : rawQty);
+
+        // Unit rate per base unit (selling price per metre for length, selling price per piece for piece)
+        const trustedRate = dbProd ? Number(dbProd.sellingPrice) : (Number(item.rate) || 0);
+        // Line total: baseQuantity * trustedRate
+        const rawLineTotal = Math.round((baseQty * trustedRate) * 100) / 100;
 
         // Apply proportional discount to line total before computing GST if subtotal > 0
         const lineTaxableSubtotal = numericSubtotal > 0 ? (rawLineTotal * (1 - (numericDiscount / numericSubtotal))) : rawLineTotal;
@@ -3074,13 +3120,10 @@ app.post('/api/sales', requireAuth, async (req, res) => {
         let itemHsnCode = '';
         let itemPriceIncludesGst = false;
 
-        if (item.productId) {
-          const dbProd = productMap.get(item.productId);
-          if (dbProd) {
-            itemGstRate = dbProd.gstRate || 0;
-            itemHsnCode = dbProd.hsnCode || '';
-            itemPriceIncludesGst = dbProd.priceIncludesGst !== undefined ? dbProd.priceIncludesGst : false;
-          }
+        if (dbProd) {
+          itemGstRate = dbProd.gstRate || 0;
+          itemHsnCode = dbProd.hsnCode || '';
+          itemPriceIncludesGst = dbProd.priceIncludesGst !== undefined ? dbProd.priceIncludesGst : false;
         }
 
         const itemGstResult = calculateGST({
@@ -3099,11 +3142,14 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 
         processedItems.push({
           productId: item.productId || '',
-          productName: item.productName || 'Product',
-          category: item.category || (item.productId && productMap.get(item.productId) ? productMap.get(item.productId).category : '') || '',
-          size: item.size || (item.productId && productMap.get(item.productId) && Array.isArray(productMap.get(item.productId).sizes) ? productMap.get(item.productId).sizes.join(', ') : '') || '',
-          quantity: qty,
-          rate,
+          productName: item.productName || (dbProd ? dbProd.name : 'Product'),
+          category: item.category || (dbProd ? dbProd.category : '') || '',
+          size: item.size || (dbProd && Array.isArray(dbProd.sizes) ? dbProd.sizes.join(', ') : '') || '',
+          measurementType: isLengthProd ? 'length' : 'piece',
+          sellingUnit,
+          baseQuantity: baseQty,
+          quantity: rawQty,
+          rate: trustedRate,
           total: rawLineTotal,
           gstRate: itemGstRate,
           gstAmount: itemGstResult.totalTax,
@@ -3176,7 +3222,7 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 
     // ──────────────────────────────────────────────────────────────────────────
     // TRANSACTION & ATOMIC STOCK CONCURRENCY
-    // Atomic stock decrement query enforces { availability: { $gte: qty } }
+    // Atomic stock decrement query enforces { availability: { $gte: baseQty } }
     // Session transaction guarantees Sale + Stock decrement commit or abort together
     // ──────────────────────────────────────────────────────────────────────────
     let session = null;
@@ -3204,20 +3250,20 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       await newSale.save(saveOptions);
 
       // Perform atomic conditional stock decrement
-      if (Array.isArray(items) && items.length > 0) {
-        for (const item of items) {
-          if (item.productId) {
-            const qty = Number(item.quantity) || 1;
+      if (Array.isArray(processedItems) && processedItems.length > 0) {
+        for (const pItem of processedItems) {
+          if (pItem.productId) {
+            const decQty = Number(pItem.baseQuantity) || Number(pItem.quantity) || 1;
             const updateResult = await Product.updateOne(
-              { id: item.productId, shopId: req.user.shopId, availability: { $gte: qty } },
-              { $inc: { availability: -qty } },
+              { id: pItem.productId, shopId: req.user.shopId, availability: { $gte: decQty } },
+              { $inc: { availability: -decQty } },
               saveOptions
             );
 
             if (updateResult.matchedCount === 0) {
-              const currentProd = await Product.findOne({ id: item.productId, shopId: req.user.shopId });
+              const currentProd = await Product.findOne({ id: pItem.productId, shopId: req.user.shopId });
               const currentAvail = currentProd ? currentProd.availability : 0;
-              throw new Error(`INSUFFICIENT_STOCK: Stock changed during checkout for ${item.productName || item.productId}. Available: ${currentAvail}, Requested: ${qty}`);
+              throw new Error(`INSUFFICIENT_STOCK: Stock changed during checkout for ${pItem.productName || pItem.productId}. Available: ${currentAvail}, Requested: ${decQty}`);
             }
           }
         }

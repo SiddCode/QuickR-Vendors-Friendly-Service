@@ -40,6 +40,8 @@ interface BillItem {
   productId: string;
   quantity: number;
   rate: number;
+  measurementType?: 'piece' | 'length';
+  sellingUnit?: 'piece' | 'm' | 'cm';
 }
 
 export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, billingInitialData: _billingInitialData }) => {
@@ -185,13 +187,16 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       } else {
         const newItemId = Date.now().toString();
         setSelectedCartItemId(newItemId);
+        const isLen = prod.measurementType === 'length';
         return [
           ...prevItems,
           {
             id: newItemId,
             productId: prod.id,
             quantity: 1,
-            rate: prod.sellingPrice
+            rate: prod.sellingPrice,
+            measurementType: isLen ? 'length' : 'piece',
+            sellingUnit: isLen ? 'm' : 'piece'
           }
         ];
       }
@@ -454,11 +459,15 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const handleAddItem = () => {
     if (activeProducts.length === 0) return;
     const newItemId = Date.now().toString();
+    const firstProd = activeProducts[0];
+    const isLen = firstProd.measurementType === 'length';
     setItems([...items, {
       id: newItemId,
-      productId: activeProducts[0].id,
+      productId: firstProd.id,
       quantity: 1,
-      rate: activeProducts[0].sellingPrice
+      rate: firstProd.sellingPrice,
+      measurementType: isLen ? 'length' : 'piece',
+      sellingUnit: isLen ? 'm' : 'piece'
     }]);
     setSelectedCartItemId(newItemId);
   };
@@ -476,7 +485,12 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
         const updated = { ...item, [field]: value };
         if (field === 'productId') {
           const prod = activeProducts.find(p => p.id === value);
-          if (prod) updated.rate = prod.sellingPrice;
+          if (prod) {
+            updated.rate = prod.sellingPrice;
+            const isLen = prod.measurementType === 'length';
+            updated.measurementType = isLen ? 'length' : 'piece';
+            updated.sellingUnit = isLen ? 'm' : 'piece';
+          }
         }
         return updated;
       }
@@ -488,7 +502,22 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const isGstRegistered = !!shopProfile?.isGstRegistered;
   const shopGstin = shopProfile?.gstin || '';
 
-  const rawSubtotal = items.reduce((acc, i) => acc + (i.quantity * i.rate), 0);
+  const getItemBaseQuantity = (item: BillItem) => {
+    const isLen = item.measurementType === 'length';
+    const rawQty = Number(item.quantity) || 0;
+    if (isLen && item.sellingUnit === 'cm') {
+      return Math.round((rawQty / 100) * 10000) / 10000;
+    }
+    return rawQty;
+  };
+
+  const getItemLineTotal = (item: BillItem) => {
+    const baseQty = getItemBaseQuantity(item);
+    const rate = Number(item.rate) || 0;
+    return Math.round((baseQty * rate) * 100) / 100;
+  };
+
+  const rawSubtotal = items.reduce((acc, i) => acc + getItemLineTotal(i), 0);
   
   let validatedDiscountValue = Math.max(0, Number(discountValue) || 0);
   let discountAmount = 0;
@@ -503,7 +532,8 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
   const enrichedItems = items.map(item => {
     const prod = products.find(p => p.id === item.productId);
-    const lineTotal = item.quantity * item.rate;
+    const lineTotal = getItemLineTotal(item);
+    const baseQuantity = getItemBaseQuantity(item);
     const itemGstRate = (isGstRegistered && prod && prod.gstRate !== undefined) ? prod.gstRate : 0;
     const priceIncludesGst = prod?.priceIncludesGst !== undefined ? prod.priceIncludesGst : true;
     
@@ -526,6 +556,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
     return {
       ...item,
+      baseQuantity,
       productName: prod?.name || 'Unknown Product',
       category: prod?.category || 'Category',
       gstRate: itemGstRate,
@@ -616,6 +647,9 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
         productId: i.productId,
         productName: i.productName,
         category: i.category,
+        measurementType: i.measurementType || 'piece',
+        sellingUnit: i.sellingUnit || (i.measurementType === 'length' ? 'm' : 'piece'),
+        baseQuantity: i.baseQuantity,
         quantity: i.quantity,
         rate: i.rate,
         total: i.total,
@@ -1126,6 +1160,10 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   <div className="space-y-3">
                     {items.map((item) => {
                       const isCartSelected = item.id === selectedCartItemId;
+                      const isLen = item.measurementType === 'length';
+                      const itemLineTotal = getItemLineTotal(item);
+                      const baseQty = getItemBaseQuantity(item);
+
                       return (
                         <div 
                           key={item.id} 
@@ -1144,28 +1182,71 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                               className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:border-primary-500 truncate"
                             >
                               {activeProducts.map(p => (
-                                <option key={p.id} value={p.id}>{p.name} {p.barcode ? `(${p.barcode})` : ''}</option>
+                                <option key={p.id} value={p.id}>
+                                  {p.name} {p.measurementType === 'length' ? '(Fabric/Length)' : ''} {p.barcode ? `(${p.barcode})` : ''}
+                                </option>
                               ))}
                             </select>
                           </div>
                           
                           <div className="grid grid-cols-2 sm:flex items-center gap-3 w-full sm:w-auto">
+                            {isLen && (
+                              <div className="w-full sm:w-24">
+                                <label className="block text-xs font-semibold text-slate-500 mb-1">Unit</label>
+                                <div className="flex bg-slate-200 p-0.5 rounded-xl">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleItemChange(item.id, 'sellingUnit', 'm');
+                                    }}
+                                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
+                                      item.sellingUnit === 'm' ? 'bg-primary-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    m
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleItemChange(item.id, 'sellingUnit', 'cm');
+                                    }}
+                                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
+                                      item.sellingUnit === 'cm' ? 'bg-primary-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    cm
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="w-full sm:w-24">
-                              <label className="block text-xs font-semibold text-slate-500 mb-1">Quantity</label>
+                              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                                {isLen ? `Quantity (${item.sellingUnit || 'm'})` : 'Quantity'}
+                              </label>
                               <input 
                                 type="number" 
-                                min="1"
+                                min={isLen ? "0.01" : "1"}
+                                step={isLen ? (item.sellingUnit === 'cm' ? "1" : "0.01") : "1"}
                                 value={item.quantity}
-                                onChange={e => handleItemChange(item.id, 'quantity', Math.max(1, Number(e.target.value)))}
+                                onChange={e => {
+                                  const val = parseFloat(e.target.value);
+                                  handleItemChange(item.id, 'quantity', isNaN(val) ? '' : Math.max(0.01, val));
+                                }}
                                 className="w-full bg-white border border-slate-200 rounded-xl py-2 px-2 text-xs sm:text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
                               />
                             </div>
 
                             <div className="w-full sm:w-28">
-                              <label className="block text-xs font-semibold text-slate-500 mb-1">Rate (₹)</label>
+                              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                                {isLen ? 'Rate (₹/m)' : 'Rate (₹)'}
+                              </label>
                               <input 
                                 type="number" 
                                 min="0"
+                                step="0.01"
                                 value={item.rate}
                                 onChange={e => handleItemChange(item.id, 'rate', Math.max(0, Number(e.target.value)))}
                                 className="w-full bg-white border border-slate-200 rounded-xl py-2 px-2 text-xs sm:text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
@@ -1175,8 +1256,10 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
                           <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60 w-full sm:w-auto">
                             <div className="text-left sm:text-right">
-                              <span className="block text-[10px] text-slate-400 font-bold uppercase">Item Total</span>
-                              <span className="text-sm font-black text-slate-800">₹{(item.quantity * item.rate).toLocaleString('en-IN')}</span>
+                              <span className="block text-[10px] text-slate-400 font-bold uppercase">
+                                {isLen && item.sellingUnit === 'cm' ? `Total (${baseQty} m)` : 'Item Total'}
+                              </span>
+                              <span className="text-sm font-black text-slate-800">₹{itemLineTotal.toLocaleString('en-IN')}</span>
                             </div>
 
                             <button 

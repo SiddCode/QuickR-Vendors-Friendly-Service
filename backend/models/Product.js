@@ -16,6 +16,7 @@ const productSchema = new mongoose.Schema(
     gstRate: { type: Number, default: 0, min: 0 },
     hsnCode: { type: String, trim: true, default: '' },
     priceIncludesGst: { type: Boolean, default: true },
+    measurementType: { type: String, enum: ['piece', 'length'], default: 'piece' },
     isActive: { type: Boolean, default: true },
     barcode: { type: String, trim: true, default: null, index: true },
     barcodeType: { type: String, default: 'CODE128' }, // EAN13, UPC, CODE128, CODE39, CUSTOM, QUICKR

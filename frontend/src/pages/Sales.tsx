@@ -528,15 +528,21 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
                       <h4 className="font-extrabold text-slate-700 uppercase text-[10px] tracking-wider">Bill Products Details</h4>
                       
                       <div className="space-y-1.5 bg-white p-3 rounded-lg border border-slate-200">
-                        {sale.items?.map((item: any, idx: number) => (
-                          <div key={idx} className="flex justify-between items-center py-1 border-b border-slate-50 last:border-0">
-                            <div>
-                              <span className="font-bold text-slate-800">{item.productName}</span>
-                              <span className="text-slate-400 ml-2 font-mono">₹{item.rate} × {item.quantity}</span>
+                        {sale.items?.map((item: any, idx: number) => {
+                          const isLen = item.measurementType === 'length';
+                          const unitSuffix = item.sellingUnit || (isLen ? 'm' : '');
+                          const rateLabel = isLen ? `₹${item.rate}/m` : `₹${item.rate}`;
+                          const qtyLabel = unitSuffix ? `${item.quantity} ${unitSuffix}` : `${item.quantity}`;
+                          return (
+                            <div key={idx} className="flex justify-between items-center py-1 border-b border-slate-50 last:border-0">
+                              <div>
+                                <span className="font-bold text-slate-800">{item.productName}</span>
+                                <span className="text-slate-400 ml-2 font-mono">{rateLabel} × {qtyLabel}</span>
+                              </div>
+                              <span className="font-bold text-slate-800">₹{item.total.toLocaleString('en-IN')}</span>
                             </div>
-                            <span className="font-bold text-slate-800">₹{item.total.toLocaleString('en-IN')}</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
 
                       <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-1 text-slate-600 font-medium">

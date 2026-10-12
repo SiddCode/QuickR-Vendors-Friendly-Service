@@ -11,6 +11,7 @@ export interface Shop {
   name: string;
   phone: string;
   address: string;
+  lengthBasedBillingEnabled?: boolean;
   isGstRegistered?: boolean;
   gstin?: string;
   stateCode?: string;
@@ -49,6 +50,7 @@ export interface Product {
   sizes: string[];
   colors: string[];
   availability: number;
+  measurementType?: 'piece' | 'length';
   description?: string;
   image?: string;
   gstRate?: number;
@@ -121,6 +123,9 @@ export interface SaleItem {
   quantity: number;
   rate: number;
   total: number;
+  measurementType?: 'piece' | 'length';
+  sellingUnit?: 'piece' | 'm' | 'cm';
+  baseQuantity?: number;
   gstRate?: number;
   gstAmount?: number;
   hsnCode?: string;

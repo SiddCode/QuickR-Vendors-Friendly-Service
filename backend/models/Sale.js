@@ -18,6 +18,9 @@ const saleSchema = new mongoose.Schema(
         productName: { type: String, required: true },
         category: { type: String, default: '' },
         size: { type: String, default: '' },
+        measurementType: { type: String, enum: ['piece', 'length'], default: 'piece' },
+        sellingUnit: { type: String, enum: ['piece', 'm', 'cm'], default: 'piece' },
+        baseQuantity: { type: Number }, // converted decimal quantity in base unit (metres for length, pieces for piece)
         quantity: { type: Number, required: true },
         rate: { type: Number, required: true },
         total: { type: Number, required: true },
