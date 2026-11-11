@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 
 import { connectDB } from './config/database.js';
 import { requireAuth, requireNonStaff } from './middleware/auth.js';
@@ -13,6 +14,17 @@ import { sendWhatsAppCloudMessage } from './services/whatsapp.js';
 import { normalizeIndianMobileNumber } from './utils/phone.js';
 import { generateUniqueBarcode } from './utils/barcode.js';
 import { getISTDayBounds, calculateScheduledDateIST } from './utils/date.js';
+import {
+  allocateNextInvoiceNumber,
+  ensureInvoiceCounterInitialized
+} from './services/invoiceCounterService.js';
+import {
+  securityHeadersMiddleware,
+  compressionMiddleware,
+  createRateLimiter,
+  sanitizeSpreadsheetCell,
+  asSafeString
+} from './utils/security.js';
 import { adminRouter } from './routes/admin.js';
 
 import { aiRouter } from './routes/ai.js';
@@ -34,6 +46,8 @@ import { Sale } from './models/Sale.js';
 import { Activity } from './models/Activity.js';
 import { SubscriptionRequest } from './models/SubscriptionRequest.js';
 import { OtpVerification } from './models/OtpVerification.js';
+import { PrivacyAuditLog } from './models/PrivacyAuditLog.js';
+import { ConsentRecord } from './models/ConsentRecord.js';
 
 import { getJwtSecret } from './config/jwt.js';
 
@@ -80,8 +94,8 @@ app.use(cors({
       return callback(null, true);
     }
 
-    // Check if origin ends with .vercel.app (for preview/production Vercel deployments)
-    if (cleanOrigin.endsWith('.vercel.app')) {
+    // Check if origin ends with .vercel.app (for preview/production Vercel deployments unless CORS_STRICT=true)
+    if (process.env.CORS_STRICT !== 'true' && cleanOrigin.endsWith('.vercel.app')) {
       return callback(null, true);
     }
 
@@ -94,14 +108,32 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 
-app.use(express.json());
+app.use(securityHeadersMiddleware);
+app.use(compressionMiddleware);
+
+app.use(express.json({
+  limit: '5mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(cookieParser());
 
-connectDB();
+const authRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 30,
+  message: 'Too many authentication attempts. Please wait a few minutes and try again.'
+});
 
-// Dev seed helper for testing & Phase 4 realistic clothing shop data
+const IS_TEST_IMPORT = process.env.QUICKR_TEST_IMPORT === 'true';
+const dbReadyPromise = IS_TEST_IMPORT ? Promise.resolve(null) : connectDB();
+
+// Dev seed helper for testing & Phase 4 realistic clothing shop data (non-production only)
 const seedDatabaseIfNeeded = async () => {
+  if (process.env.NODE_ENV === 'production') return;
   try {
+    await dbReadyPromise;
+    if (mongoose.connection.readyState !== 1) return;
     const userCount = await User.countDocuments();
     if (userCount === 0) {
       console.log('🌱 Seeding Phase 4 realistic clothing-shop demo dataset...');
@@ -142,16 +174,16 @@ const seedDatabaseIfNeeded = async () => {
 
       // 15+ Products across categories (Shirts, Jeans, T-Shirts, Dresses, Sarees, Kids Wear)
       const seedProducts = [
-        { id: 'PROD-1', name: 'Black Casual Shirt', category: 'Shirts', price: 1499, sizes: ['S', 'M', 'L', 'XL', 'XXL'], colors: ['Black'], availableQuantity: 12, shopId: 'demo-shop' },
-        { id: 'PROD-2', name: 'White Linen Shirt', category: 'Shirts', price: 1299, sizes: ['S', 'M', 'L', 'XL'], colors: ['White'], availableQuantity: 20, shopId: 'demo-shop' },
-        { id: 'PROD-3', name: 'Slim Fit Denim Jeans', category: 'Jeans', price: 1999, sizes: ['30', '32', '34', '36'], colors: ['Dark Blue', 'Black'], availableQuantity: 15, shopId: 'demo-shop' },
-        { id: 'PROD-4', name: 'Cotton Graphic T-Shirt', category: 'T-Shirts', price: 799, sizes: ['S', 'M', 'L', 'XL'], colors: ['Black', 'White', 'Olive'], availableQuantity: 30, shopId: 'demo-shop' },
-        { id: 'PROD-5', name: 'Silk Cotton Saree', category: 'Sarees', price: 3499, sizes: ['Free Size'], colors: ['Red', 'Royal Blue', 'Gold'], availableQuantity: 8, shopId: 'demo-shop' },
-        { id: 'PROD-6', name: 'Printed Anarkali Kurti', category: 'Kurtis', price: 1899, sizes: ['S', 'M', 'L', 'XL'], colors: ['Yellow', 'Pink'], availableQuantity: 10, shopId: 'demo-shop' },
-        { id: 'PROD-7', name: 'Kids Party Wear Set', category: 'Kids Wear', price: 1299, sizes: ['2-3Y', '4-5Y', '6-7Y'], colors: ['Bright Blue', 'Red'], availableQuantity: 14, shopId: 'demo-shop' },
-        { id: 'PROD-8', name: 'Floral Summer Dress', category: 'Dresses', price: 2299, sizes: ['S', 'M', 'L'], colors: ['Yellow', 'Mint Green'], availableQuantity: 6, shopId: 'demo-shop' },
-        { id: 'PROD-9', name: 'Nehru Bandhgala Jacket', category: 'Jackets', price: 2999, sizes: ['M', 'L', 'XL'], colors: ['Maroon', 'Black', 'Beige'], availableQuantity: 7, shopId: 'demo-shop' },
-        { id: 'PROD-10', name: 'Formal Chino Trousers', category: 'Trousers', price: 1599, sizes: ['30', '32', '34', '36'], colors: ['Navy', 'Khaki', 'Grey'], availableQuantity: 18, shopId: 'demo-shop' }
+        { id: 'PROD-1', name: 'Black Casual Shirt', category: 'Shirts', sellingPrice: 1499, sizes: ['S', 'M', 'L', 'XL', 'XXL'], colors: ['Black'], availability: 12, shopId: 'demo-shop' },
+        { id: 'PROD-2', name: 'White Linen Shirt', category: 'Shirts', sellingPrice: 1299, sizes: ['S', 'M', 'L', 'XL'], colors: ['White'], availability: 20, shopId: 'demo-shop' },
+        { id: 'PROD-3', name: 'Slim Fit Denim Jeans', category: 'Jeans', sellingPrice: 1999, sizes: ['30', '32', '34', '36'], colors: ['Dark Blue', 'Black'], availability: 15, shopId: 'demo-shop' },
+        { id: 'PROD-4', name: 'Cotton Graphic T-Shirt', category: 'T-Shirts', sellingPrice: 799, sizes: ['S', 'M', 'L', 'XL'], colors: ['Black', 'White', 'Olive'], availability: 30, shopId: 'demo-shop' },
+        { id: 'PROD-5', name: 'Silk Cotton Saree', category: 'Sarees', sellingPrice: 3499, sizes: ['Free Size'], colors: ['Red', 'Royal Blue', 'Gold'], availability: 8, shopId: 'demo-shop' },
+        { id: 'PROD-6', name: 'Printed Anarkali Kurti', category: 'Kurtis', sellingPrice: 1899, sizes: ['S', 'M', 'L', 'XL'], colors: ['Yellow', 'Pink'], availability: 10, shopId: 'demo-shop' },
+        { id: 'PROD-7', name: 'Kids Party Wear Set', category: 'Kids Wear', sellingPrice: 1299, sizes: ['2-3Y', '4-5Y', '6-7Y'], colors: ['Bright Blue', 'Red'], availability: 14, shopId: 'demo-shop' },
+        { id: 'PROD-8', name: 'Floral Summer Dress', category: 'Dresses', sellingPrice: 2299, sizes: ['S', 'M', 'L'], colors: ['Yellow', 'Mint Green'], availability: 6, shopId: 'demo-shop' },
+        { id: 'PROD-9', name: 'Nehru Bandhgala Jacket', category: 'Jackets', sellingPrice: 2999, sizes: ['M', 'L', 'XL'], colors: ['Maroon', 'Black', 'Beige'], availability: 7, shopId: 'demo-shop' },
+        { id: 'PROD-10', name: 'Formal Chino Trousers', category: 'Trousers', sellingPrice: 1599, sizes: ['30', '32', '34', '36'], colors: ['Navy', 'Khaki', 'Grey'], availability: 18, shopId: 'demo-shop' }
       ];
       await Product.insertMany(seedProducts);
 
@@ -189,9 +221,9 @@ const seedDatabaseIfNeeded = async () => {
       await FollowUp.insertMany(seedFollowUps);
 
       const seedSales = [
-        { id: 'SALE-1', customerId: 'CUST-000124', enquiryId: 'ENQ-101', productId: 'PROD-1', quantity: 1, amount: 1399, source: 'quickr_followup', shopId: 'demo-shop' },
-        { id: 'SALE-2', customerId: 'CUST-000125', enquiryId: 'ENQ-102', productId: 'PROD-5', quantity: 1, amount: 3499, source: 'quickr_followup', shopId: 'demo-shop' },
-        { id: 'SALE-3', customerId: 'CUST-000131', enquiryId: 'ENQ-108', productId: 'PROD-9', quantity: 1, amount: 2999, source: 'quickr_followup', shopId: 'demo-shop' }
+        { id: 'SALE-1', invoiceNumber: 'INV-000001', customerId: 'CUST-000124', customerName: 'Rahul', enquiryId: 'ENQ-101', items: [{ productId: 'PROD-1', productName: 'Black Casual Shirt', quantity: 1, rate: 1499, total: 1499 }], subtotal: 1499, totalAmount: 1399, paymentMethod: 'Cash', source: 'quickr_followup', shopId: 'demo-shop' },
+        { id: 'SALE-2', invoiceNumber: 'INV-000002', customerId: 'CUST-000125', customerName: 'Priya R.', enquiryId: 'ENQ-102', items: [{ productId: 'PROD-5', productName: 'Silk Cotton Saree', quantity: 1, rate: 3499, total: 3499 }], subtotal: 3499, totalAmount: 3499, paymentMethod: 'UPI', source: 'quickr_followup', shopId: 'demo-shop' },
+        { id: 'SALE-3', invoiceNumber: 'INV-000003', customerId: 'CUST-000131', customerName: 'Vikram Seth', enquiryId: 'ENQ-108', items: [{ productId: 'PROD-9', productName: 'Nehru Bandhgala Jacket', quantity: 1, rate: 2999, total: 2999 }], subtotal: 2999, totalAmount: 2999, paymentMethod: 'Card', source: 'quickr_followup', shopId: 'demo-shop' }
       ];
       await Sale.insertMany(seedSales);
 
@@ -204,10 +236,14 @@ const seedDatabaseIfNeeded = async () => {
   }
 };
 
-setTimeout(seedDatabaseIfNeeded, 1500);
-
-// Seed admin account (idempotent — only creates if not exists)
-setTimeout(async () => { await seedAdmin(); }, 2000);
+if (!IS_TEST_IMPORT) {
+  dbReadyPromise.then(async () => {
+    if (mongoose.connection.readyState === 1) {
+      await seedDatabaseIfNeeded();
+      await seedAdmin();
+    }
+  }).catch(() => {});
+}
 
 // ===================================
 // LIGHTWEIGHT HEALTH CHECK & COLD-START MITIGATION
@@ -218,12 +254,15 @@ app.get('/api/health', (req, res) => {
   const dbState = dbStateMap[mongoose.connection.readyState] || 'unknown';
 
   const duration = Date.now() - startTime;
-  console.log(`[PERF] GET /api/health: ${duration}ms (DB: ${dbState})`);
+  if (duration > 50) {
+    console.log(`[PERF] GET /api/health: ${duration}ms (DB: ${dbState})`);
+  }
 
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    database: dbState
+    database: dbState,
+    mongoConnected: mongoose.connection.readyState === 1
   });
 });
 
@@ -238,14 +277,14 @@ const setAuthCookie = (res, token) => {
   });
 };
 
-app.post('/api/subscription-requests', async (req, res) => {
+app.post('/api/subscription-requests', authRateLimiter, async (req, res) => {
   try {
-    const { name, shopName, phone, email, requestedPlan, message, password } = req.body || {};
+    const { name, shopName, phone, email, requestedPlan, message, password, otpVerificationToken } = req.body || {};
 
-    if (!name || !String(name).trim()) {
+    if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ success: false, error: 'Your name is required.' });
     }
-    if (!shopName || !String(shopName).trim()) {
+    if (typeof shopName !== 'string' || !shopName.trim()) {
       return res.status(400).json({ success: false, error: 'Shop name is required.' });
     }
 
@@ -254,12 +293,12 @@ app.post('/api/subscription-requests', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
     }
 
-    const cleanEmail = String(email || '').toLowerCase().trim();
+    const cleanEmail = typeof email === 'string' ? email.toLowerCase().trim() : '';
     if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
       return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
     }
 
-    if (!password || String(password).length < 6) {
+    if (typeof password !== 'string' || password.length < 6) {
       return res.status(400).json({ success: false, error: 'Password must contain at least 6 characters.' });
     }
 
@@ -272,7 +311,7 @@ app.post('/api/subscription-requests', async (req, res) => {
     const existingPending = await SubscriptionRequest.findOne({
       $or: [{ phone: normalizedPhone }, { email: cleanEmail }],
       status: 'pending'
-    });
+    }).select('_id').lean();
 
     if (existingPending) {
       return res.status(400).json({
@@ -281,18 +320,31 @@ app.post('/api/subscription-requests', async (req, res) => {
       });
     }
 
+    // Check whether OTP verification token was actually presented and verified
+    let isOtpVerified = false;
+    if (typeof otpVerificationToken === 'string' && otpVerificationToken.trim()) {
+      try {
+        const verifiedPayload = jwt.verify(otpVerificationToken.trim(), JWT_SECRET, { algorithms: ['HS256'] });
+        if (verifiedPayload?.verified && verifiedPayload.phone === normalizedPhone) {
+          isOtpVerified = true;
+        }
+      } catch {
+        isOtpVerified = false;
+      }
+    }
+
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
     const newRequest = new SubscriptionRequest({
-      id: `SUBREQ-${Date.now()}`,
+      id: `SUBREQ-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
       name: name.trim(),
       shopName: shopName.trim(),
       phone: normalizedPhone,
       email: cleanEmail,
       requestedPlan: requestedPlan ? String(requestedPlan).trim() : 'Standard',
       message: message ? String(message).trim().substring(0, 500) : '',
-      otpVerified: true,
+      otpVerified: isOtpVerified,
       passwordHash,
       status: 'pending'
     });
@@ -313,9 +365,13 @@ app.post('/api/subscription-requests', async (req, res) => {
 // OTP VERIFICATION ENDPOINTS (FIRST-TIME CREATION)
 // ===================================
 
-app.post('/api/auth/send-otp', async (req, res) => {
+app.post('/api/auth/send-otp', authRateLimiter, async (req, res) => {
   try {
     const { phone, purpose = 'shop_creation' } = req.body || {};
+    const validPurposes = ['shop_creation', 'password_reset'];
+    if (typeof purpose !== 'string' || !validPurposes.includes(purpose)) {
+      return res.status(400).json({ success: false, error: 'Invalid OTP purpose.' });
+    }
     if (!phone) {
       return res.status(400).json({ success: false, error: 'Mobile number is required.' });
     }
@@ -323,6 +379,15 @@ app.post('/api/auth/send-otp', async (req, res) => {
     const normalizedPhone = normalizeIndianMobileNumber(phone);
     if (!normalizedPhone) {
       return res.status(400).json({ success: false, error: 'Enter a valid 10-digit Indian mobile number.' });
+    }
+
+    // Check SMS provider BEFORE writing/consuming rate-limit slots
+    const smsProvider = process.env.OTP_PROVIDER;
+    if (!smsProvider || smsProvider.toLowerCase() === 'mock') {
+      return res.status(503).json({
+        success: false,
+        error: 'OTP service is currently unavailable. Please try again later.'
+      });
     }
 
     // Rate Limiting: Max 3 OTP requests within 10 minutes for a phone number
@@ -345,15 +410,15 @@ app.post('/api/auth/send-otp', async (req, res) => {
       { $set: { expiresAt: new Date(Date.now() - 1000) } }
     );
 
-    // Generate secure 6-digit OTP
-    const rawOtp = String(Math.floor(100000 + Math.random() * 900000));
+    // Generate cryptographically secure 6-digit OTP
+    const rawOtp = String(crypto.randomInt(100000, 1000000));
     const salt = await bcrypt.genSalt(10);
     const otpHash = await bcrypt.hash(rawOtp, salt);
 
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes TTL
 
     const otpDoc = new OtpVerification({
-      id: `OTP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `OTP-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       phone: normalizedPhone,
       otpHash,
       purpose,
@@ -365,17 +430,7 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
     await otpDoc.save();
 
-    // Check for SMS provider configuration (e.g. MSG91 or custom provider)
-    const smsProvider = process.env.OTP_PROVIDER;
-    if (!smsProvider || smsProvider.toLowerCase() === 'mock') {
-      return res.status(503).json({
-        success: false,
-        error: 'OTP service is currently unavailable. Please try again later.'
-      });
-    }
-
     // Real SMS Delivery logic goes here when provider is configured...
-    // (Ensure rawOtp is never logged to server console or returned in response)
     const responsePayload = {
       success: true,
       message: `OTP sent successfully to ${normalizedPhone}.`,
@@ -389,9 +444,13 @@ app.post('/api/auth/send-otp', async (req, res) => {
   }
 });
 
-app.post('/api/auth/verify-otp', async (req, res) => {
+app.post('/api/auth/verify-otp', authRateLimiter, async (req, res) => {
   try {
     const { phone, otp, purpose = 'shop_creation' } = req.body || {};
+    const validPurposes = ['shop_creation', 'password_reset'];
+    if (typeof purpose !== 'string' || !validPurposes.includes(purpose)) {
+      return res.status(400).json({ success: false, error: 'Invalid OTP purpose.' });
+    }
     if (!phone || !otp) {
       return res.status(400).json({ success: false, error: 'Mobile number and 6-digit OTP are required.' });
     }
@@ -406,41 +465,37 @@ app.post('/api/auth/verify-otp', async (req, res) => {
       return res.status(400).json({ success: false, error: 'OTP must be a 6-digit numeric code.' });
     }
 
-    // Find latest active OTP record for phone & purpose
-    const otpRecord = await OtpVerification.findOne({
-      phone: normalizedPhone,
-      purpose,
-      verified: false,
-      expiresAt: { $gt: new Date() }
-    }).sort({ createdAt: -1 });
+    // Find latest active OTP record for phone & purpose and atomically increment attempt counter first
+    const otpRecord = await OtpVerification.findOneAndUpdate(
+      {
+        phone: normalizedPhone,
+        purpose,
+        verified: false,
+        expiresAt: { $gt: new Date() },
+        attempts: { $lt: 3 }
+      },
+      { $inc: { attempts: 1 } },
+      { sort: { createdAt: -1 }, new: true }
+    );
 
     if (!otpRecord) {
       return res.status(400).json({
         success: false,
-        error: 'OTP has expired or is invalid. Please request a new OTP.'
-      });
-    }
-
-    if (otpRecord.attempts >= 3) {
-      return res.status(429).json({
-        success: false,
-        error: 'Maximum verification attempts exceeded. Please request a new OTP.'
+        error: 'OTP has expired, exceeded attempts, or is invalid. Please request a new OTP.'
       });
     }
 
     const isMatch = await bcrypt.compare(cleanOtp, otpRecord.otpHash);
     if (!isMatch) {
-      otpRecord.attempts += 1;
-      await otpRecord.save();
+      const remaining = Math.max(0, 3 - otpRecord.attempts);
       return res.status(400).json({
         success: false,
-        error: `Incorrect OTP. ${3 - otpRecord.attempts} attempt(s) remaining.`
+        error: `Incorrect OTP. ${remaining} attempt(s) remaining.`
       });
     }
 
-    // Mark verified & burn OTP
-    otpRecord.verified = true;
-    await otpRecord.save();
+    // Mark verified & burn OTP atomically
+    await OtpVerification.updateOne({ _id: otpRecord._id, verified: false }, { $set: { verified: true } });
 
     // Issue short-lived verification token for shop creation
     const otpVerificationToken = jwt.sign(
@@ -460,7 +515,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authRateLimiter, async (req, res) => {
   // Public direct registration is disabled; require admin approval via subscription requests
   const allowReg = process.env.ALLOW_PUBLIC_REGISTRATION;
   if (!allowReg || allowReg === 'false') {
@@ -471,9 +526,9 @@ app.post('/api/auth/register', async (req, res) => {
   let createdUser = null;
 
   try {
-    const { ownerName, shopName, email, password } = req.body;
+    const { ownerName, shopName, email, password } = req.body || {};
 
-    if (!ownerName || !shopName || !email || !password) {
+    if (typeof ownerName !== 'string' || typeof shopName !== 'string' || typeof email !== 'string' || typeof password !== 'string' || !ownerName.trim() || !shopName.trim() || !email.trim()) {
       return res.status(400).json({ error: 'All fields are required.' });
     }
 
@@ -483,13 +538,14 @@ app.post('/api/auth/register', async (req, res) => {
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    const existingUser = await User.findOne({ email: normalizedEmail });
+    const existingUser = await User.findOne({ email: normalizedEmail }).select('_id').lean();
     if (existingUser) {
       return res.status(400).json({ error: 'User with this email already exists.' });
     }
 
-    const shopCustomId = `SHOP-${Date.now()}`;
-    const userCustomId = `USER-${Date.now()}`;
+    const suffix = crypto.randomBytes(2).toString('hex');
+    const shopCustomId = `SHOP-${Date.now()}-${suffix}`;
+    const userCustomId = `USER-${Date.now()}-${suffix}`;
 
     createdShop = new Shop({
       customId: shopCustomId,
@@ -534,19 +590,19 @@ app.post('/api/auth/register', async (req, res) => {
   } catch (err) {
     if (createdUser && createdUser._id) await User.deleteOne({ _id: createdUser._id }).catch(() => {});
     if (createdShop && createdShop._id) await Shop.deleteOne({ _id: createdShop._id }).catch(() => {});
-    return res.status(500).json({ error: `Registration failed: ${err.message}` });
+    return res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
+    const { email, password } = req.body || {};
+    if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    const user = await User.findOne({ email: normalizedEmail }).select('+passwordHash');
+    const user = await User.findOne({ email: normalizedEmail }).select('+passwordHash').lean();
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -558,35 +614,31 @@ app.post('/api/auth/login', async (req, res) => {
 
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) {
-      // Log failed login attempt
-      try {
-        const ipAddress = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1').split(',')[0].trim();
-        const userAgent = req.headers['user-agent'] || 'QuickR-Client';
-        await PrivacyAuditLog.create({
-          id: `PAL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          userId: user.id,
-          shopId: user.shopId || (user.role === 'admin' ? 'ADMIN' : 'SYSTEM'),
-          action: 'LOGIN_FAILED',
-          resourceType: 'User',
-          resourceId: user.id,
-          ipAddress,
-          userAgent,
-          metadata: { email: user.email, reason: 'Invalid password' }
-        });
-      } catch (e) {}
+      // Non-blocking audit log of failed login
+      const ipAddress = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1').split(',')[0].trim();
+      const userAgent = req.headers['user-agent'] || 'QuickR-Client';
+      PrivacyAuditLog.create({
+        id: `PAL-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        userId: user.id,
+        shopId: user.shopId || (user.role === 'admin' ? 'ADMIN' : 'SYSTEM'),
+        action: 'LOGIN_FAILED',
+        resourceType: 'User',
+        resourceId: user.id,
+        ipAddress,
+        userAgent,
+        metadata: { email: user.email, reason: 'Invalid password' }
+      }).catch(() => {});
 
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    // For non-admin users, check if their shop is disabled
+    // For non-admin users, check if their shop is disabled or suspended
     let shop = null;
-    if (user.role !== 'admin' && user.shopId) {
-      shop = await Shop.findOne({ customId: user.shopId });
-      if (shop && shop.status === 'disabled') {
+    if (user.shopId) {
+      shop = await Shop.findOne({ customId: user.shopId }).select('name status subscriptionStatus').lean();
+      if (user.role !== 'admin' && shop && (shop.status === 'disabled' || shop.subscriptionStatus === 'suspended')) {
         return res.status(403).json({ error: 'Your shop account is currently disabled. Please contact the QuickR administrator.' });
       }
-    } else if (user.shopId) {
-      shop = await Shop.findOne({ customId: user.shopId });
     }
 
     const token = jwt.sign(
@@ -597,22 +649,20 @@ app.post('/api/auth/login', async (req, res) => {
 
     setAuthCookie(res, token);
 
-    // Log successful login activity
-    try {
-      const ipAddress = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1').split(',')[0].trim();
-      const userAgent = req.headers['user-agent'] || 'QuickR-Client';
-      await PrivacyAuditLog.create({
-        id: `PAL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        userId: user.id,
-        shopId: user.shopId || (user.role === 'admin' ? 'ADMIN' : 'SYSTEM'),
-        action: 'LOGIN',
-        resourceType: 'User',
-        resourceId: user.id,
-        ipAddress,
-        userAgent,
-        metadata: { role: user.role }
-      });
-    } catch (e) {}
+    // Non-blocking audit log of successful login
+    const ipAddress = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1').split(',')[0].trim();
+    const userAgent = req.headers['user-agent'] || 'QuickR-Client';
+    PrivacyAuditLog.create({
+      id: `PAL-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      userId: user.id,
+      shopId: user.shopId || (user.role === 'admin' ? 'ADMIN' : 'SYSTEM'),
+      action: 'LOGIN',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress,
+      userAgent,
+      metadata: { role: user.role }
+    }).catch(() => {});
 
     return res.json({
       user: {
@@ -626,7 +676,8 @@ app.post('/api/auth/login', async (req, res) => {
       token
     });
   } catch (err) {
-    return res.status(500).json({ error: `Login failed: ${err.message}` });
+    console.error('Login error:', err);
+    return res.status(500).json({ error: 'Login failed. Please try again.' });
   }
 });
 
@@ -636,7 +687,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
     if (req.user.role === 'admin') {
       shopName = 'QuickR Admin';
     } else if (req.user.shopId) {
-      const shop = await Shop.findOne({ customId: req.user.shopId });
+      const shop = await Shop.findOne({ customId: req.user.shopId }).select('name').lean();
       shopName = shop?.name || 'Shop Name';
     }
     return res.json({
@@ -655,7 +706,12 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('token');
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+  res.clearCookie('token', {
+    httpOnly: true,
+    sameSite: isProduction ? 'none' : 'lax',
+    secure: isProduction
+  });
   return res.json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -759,7 +815,7 @@ app.get('/api/shop/gst', requireAuth, async (req, res) => {
     if (!req.user.shopId) {
       return res.status(400).json({ error: 'User does not belong to a shop account.' });
     }
-    const shop = await Shop.findOne({ customId: req.user.shopId });
+    const shop = await Shop.findOne({ customId: req.user.shopId }).lean();
     if (!shop) {
       return res.status(404).json({ error: 'Shop not found.' });
     }
@@ -788,7 +844,7 @@ app.get('/api/shop/gst', requireAuth, async (req, res) => {
 });
 
 // PUT /api/shop/gst
-app.put('/api/shop/gst', requireAuth, async (req, res) => {
+app.put('/api/shop/gst', requireAuth, requireNonStaff, async (req, res) => {
   try {
     if (!req.user.shopId) {
       return res.status(400).json({ error: 'User does not belong to a shop account.' });
@@ -847,11 +903,10 @@ app.get('/api/shop/profile', requireAuth, async (req, res) => {
     if (!req.user.shopId) {
       return res.status(400).json({ error: 'User does not belong to a shop account.' });
     }
-    const shop = await Shop.findOne({ customId: req.user.shopId });
+    const shop = await Shop.findOne({ customId: req.user.shopId }).lean();
     if (!shop) {
       return res.status(404).json({ error: 'Shop profile not found.' });
     }
-    console.log(`[GST DEBUG] GET /api/shop/profile for ${shop.customId}: isGstRegistered=${!!shop.isGstRegistered}, gstin=${shop.gstin || ''}`);
     res.json({
       customId: shop.customId,
       name: shop.name,
@@ -880,7 +935,7 @@ app.get('/api/shop/profile', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/shop/profile', requireAuth, async (req, res) => {
+app.patch('/api/shop/profile', requireAuth, requireNonStaff, async (req, res) => {
   try {
     if (!req.user.shopId) {
       return res.status(400).json({ error: 'User does not belong to a shop account.' });
@@ -932,21 +987,26 @@ app.patch('/api/shop/profile', requireAuth, async (req, res) => {
     const updateDoc = {};
     if (name !== undefined) updateDoc.name = String(name).trim();
     if (normalizedPhone !== undefined) updateDoc.phone = normalizedPhone;
+    if (address !== undefined) updateDoc.address = String(address).trim();
     if (isGstRegistered !== undefined) updateDoc.isGstRegistered = targetIsGst;
     if (cleanGstin !== undefined) updateDoc.gstin = cleanGstin;
     if (lengthBasedBillingEnabled !== undefined) {
       updateDoc.lengthBasedBillingEnabled = (lengthBasedBillingEnabled === true || lengthBasedBillingEnabled === 'true');
     }
 
-    // Update nested gst object
+    // Update nested gst object cleanly without defaulting missing state to Tamil Nadu
     const currentGst = shop.gst || {};
+    const resolvedState = state !== undefined ? String(state).trim() : (currentGst.state || 'Tamil Nadu');
+    const resolvedStateCode = stateCode !== undefined
+      ? String(stateCode).trim()
+      : (state !== undefined ? getStateCodeFromName(resolvedState) : (currentGst.stateCode || getStateCodeFromName(resolvedState)));
     const newGst = {
       registered: targetIsGst,
       gstin: cleanGstin !== undefined ? cleanGstin : (currentGst.gstin || shop.gstin || ''),
-      legalName: legalName !== undefined ? String(legalName).trim() : (currentGst.legalName || name || shop.name),
+      legalName: legalName !== undefined ? String(legalName).trim() : (currentGst.legalName || (name !== undefined ? String(name).trim() : shop.name)),
       address: address !== undefined ? String(address).trim() : (currentGst.address || shop.address || ''),
-      state: state !== undefined ? String(state).trim() : (currentGst.state || 'Tamil Nadu'),
-      stateCode: stateCode !== undefined ? String(stateCode).trim() : (currentGst.stateCode || getStateCodeFromName(state)),
+      state: resolvedState,
+      stateCode: resolvedStateCode,
       defaultRate: defaultRate !== undefined ? Number(defaultRate) : (currentGst.defaultRate || 0)
     };
     updateDoc.gst = newGst;
@@ -955,7 +1015,7 @@ app.patch('/api/shop/profile', requireAuth, async (req, res) => {
       { customId: req.user.shopId },
       { $set: updateDoc },
       { new: true }
-    );
+    ).lean();
 
     if (!updatedShop) {
       return res.status(404).json({ error: 'Shop profile not found.' });
@@ -1048,16 +1108,21 @@ app.get('/api/work/today', requireAuth, async (req, res) => {
     const upcoming = enrichedTasks.filter(t => t.isUpcoming && !t.isOverdue);
     const highPriority = enrichedTasks.filter(t => t.priority === 'High' || t.priority === 'HIGH');
 
-    // Summary statistics fetched in parallel
-    const [salesDocs, enquiriesCount] = await Promise.all([
-      Sale.find({ shopId, source: 'quickr_followup' }).select('totalAmount').lean(),
+    // Summary statistics fetched via parallel aggregation (no full Sales docs loaded; staff privacy enforced)
+    const isStaff = req.user.role === 'staff';
+    const [recoveredAgg, enquiriesCount] = await Promise.all([
+      isStaff
+        ? Promise.resolve([])
+        : Sale.aggregate([
+            { $match: { shopId, source: 'quickr_followup' } },
+            { $group: { _id: null, total: { $sum: '$totalAmount' }, count: { $sum: 1 } } }
+          ]),
       Enquiry.countDocuments({ shopId })
     ]);
 
-    const recoveredSalesAmount = salesDocs.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+    const recoveredSalesAmount = isStaff ? undefined : (recoveredAgg[0]?.total || 0);
+    const convertedCount = isStaff ? undefined : (recoveredAgg[0]?.count || 0);
     const uniqueCustomerCountToday = new Set(dueToday.map(t => t.customerId)).size;
-
-    console.log(`[WORK/TODAY] shopId=${shopId} | rawFollowUps=${rawFollowUps.length} | dueToday=${dueToday.length} | uniqueCustomersToday=${uniqueCustomerCountToday} | overdue=${overdue.length} | IST Date=${istDateStr}`);
 
     res.json({
       totalTasks: dueToday.length,
@@ -1069,8 +1134,7 @@ app.get('/api/work/today', requireAuth, async (req, res) => {
         todayWorkCount: uniqueCustomerCountToday,
         overdueCount: overdue.length,
         enquiriesCount,
-        recoveredSalesAmount,
-        convertedCount: salesDocs.length
+        ...(isStaff ? {} : { recoveredSalesAmount, convertedCount })
       }
     });
   } catch (err) {
@@ -1084,7 +1148,7 @@ app.get('/api/followups/today', requireAuth, async (req, res) => {
     const list = await FollowUp.find({ 
       shopId: req.user.shopId, 
       status: { $in: ['ready', 'sent'] } 
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch today follow-ups' });
@@ -1097,7 +1161,8 @@ app.get('/api/followups/today', requireAuth, async (req, res) => {
 
 app.get('/api/customers', requireAuth, async (req, res) => {
   try {
-    const list = await Customer.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
+    if (!req.user.shopId) return res.status(403).json({ error: 'Shop authorization required' });
+    const list = await Customer.find({ shopId: req.user.shopId }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch customers' });
@@ -1106,7 +1171,8 @@ app.get('/api/customers', requireAuth, async (req, res) => {
 
 app.get('/api/customers/:id', requireAuth, async (req, res) => {
   try {
-    const cust = await Customer.findOne({ id: req.params.id, shopId: req.user.shopId });
+    if (!req.user.shopId) return res.status(403).json({ error: 'Shop authorization required' });
+    const cust = await Customer.findOne({ id: req.params.id, shopId: req.user.shopId }).lean();
     if (!cust) return res.status(404).json({ error: 'Customer not found' });
     res.json(cust);
   } catch (err) {
@@ -1130,26 +1196,28 @@ app.post('/api/customers', requireAuth, async (req, res) => {
     const existing = await Customer.findOne({ shopId: req.user.shopId, phone: normalizedPhone });
     if (existing) {
       if (req.body.allowWhatsAppOffers !== undefined) {
-        const ConsentModel = (await import('./models/ConsentRecord.js')).ConsentRecord;
         const consentStatus = req.body.allowWhatsAppOffers === true || req.body.allowWhatsAppOffers === 'true' ? 'active' : 'withdrawn';
-        await ConsentModel.findOneAndUpdate(
+        await ConsentRecord.findOneAndUpdate(
           { userId: existing.id, shopId: req.user.shopId, purpose: 'marketing' },
-          { id: `CNS-${Date.now()}`, userId: existing.id, shopId: req.user.shopId, purpose: 'marketing', status: consentStatus, consentedAt: consentStatus === 'active' ? new Date() : null, withdrawnAt: consentStatus === 'withdrawn' ? new Date() : null, noticeVersion: '1.0' },
+          {
+            $set: { status: consentStatus, consentedAt: consentStatus === 'active' ? new Date() : null, withdrawnAt: consentStatus === 'withdrawn' ? new Date() : null },
+            $setOnInsert: { id: `CNS-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`, userId: existing.id, shopId: req.user.shopId, purpose: 'marketing', noticeVersion: '1.0' }
+          },
           { upsert: true, new: true }
         );
       }
       return res.status(200).json(existing);
     }
 
-    const id = `CUST-${Date.now()}`;
+    const id = `CUST-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
 
     const newCustomer = new Customer({
       id,
-      name: name.trim(),
+      name: String(name).trim(),
       phone: normalizedPhone,
-      email: email ? email.trim() : '',
-      location: location || 'Chennai, Tamil Nadu',
-      preferences: preferences || {},
+      email: typeof email === 'string' ? email.trim() : '',
+      location: typeof location === 'string' && location.trim() ? location.trim() : 'Chennai, Tamil Nadu',
+      preferences: preferences && typeof preferences === 'object' ? preferences : {},
       status: 'Active',
       shopId: req.user.shopId
     });
@@ -1158,21 +1226,23 @@ app.post('/api/customers', requireAuth, async (req, res) => {
 
     // Store marketing consent record if allowWhatsAppOffers is passed
     const { allowWhatsAppOffers } = req.body;
-    const ConsentModel = (await import('./models/ConsentRecord.js')).ConsentRecord;
     const consentStatus = allowWhatsAppOffers === true || allowWhatsAppOffers === 'true' ? 'active' : 'withdrawn';
-    await ConsentModel.findOneAndUpdate(
+    await ConsentRecord.findOneAndUpdate(
       { userId: id, shopId: req.user.shopId, purpose: 'marketing' },
-      { id: `CNS-${Date.now()}`, userId: id, shopId: req.user.shopId, purpose: 'marketing', status: consentStatus, consentedAt: consentStatus === 'active' ? new Date() : null, withdrawnAt: consentStatus === 'withdrawn' ? new Date() : null, noticeVersion: '1.0' },
+      {
+        $set: { status: consentStatus, consentedAt: consentStatus === 'active' ? new Date() : null, withdrawnAt: consentStatus === 'withdrawn' ? new Date() : null },
+        $setOnInsert: { id: `CNS-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`, userId: id, shopId: req.user.shopId, purpose: 'marketing', noticeVersion: '1.0' }
+      },
       { upsert: true, new: true }
     );
 
-    await Activity.create({
-      id: `ACT-${Date.now()}`,
+    Activity.create({
+      id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
       customerId: id,
       type: 'customer_added',
-      description: `Added new customer: ${name.trim()}`,
+      description: `Added new customer: ${String(name).trim()}`,
       shopId: req.user.shopId
-    });
+    }).catch(() => {});
 
     res.status(201).json(newCustomer);
   } catch (err) {
@@ -1182,21 +1252,41 @@ app.post('/api/customers', requireAuth, async (req, res) => {
 
 app.put('/api/customers/:id', requireAuth, async (req, res) => {
   try {
-    delete req.body.shopId;
-    
-    if (req.body.phone !== undefined) {
-      const normalized = normalizeIndianMobileNumber(req.body.phone);
+    const allowedUpdates = {};
+    const { name, phone, email, location, preferences, status } = req.body || {};
+
+    if (typeof name === 'string' && name.trim()) allowedUpdates.name = name.trim();
+    if (typeof email === 'string') allowedUpdates.email = email.trim();
+    if (typeof location === 'string') allowedUpdates.location = location.trim();
+    if (typeof status === 'string' && ['Active', 'Inactive', 'Lead'].includes(status)) {
+      allowedUpdates.status = status;
+    }
+    if (preferences && typeof preferences === 'object' && !Array.isArray(preferences)) {
+      allowedUpdates.preferences = {
+        interestedIn: typeof preferences.interestedIn === 'string' ? preferences.interestedIn : '',
+        preferredSize: typeof preferences.preferredSize === 'string' ? preferences.preferredSize : '',
+        preferredColors: Array.isArray(preferences.preferredColors) ? preferences.preferredColors.map(c => String(c)) : [],
+        lastPurchase: typeof preferences.lastPurchase === 'string' ? preferences.lastPurchase : ''
+      };
+    }
+
+    if (phone !== undefined) {
+      const normalized = normalizeIndianMobileNumber(phone);
       if (!normalized) {
         return res.status(400).json({ success: false, error: 'Enter a valid 10-digit mobile number.' });
       }
-      req.body.phone = normalized;
+      allowedUpdates.phone = normalized;
+    }
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid updatable customer fields provided.' });
     }
 
     const updated = await Customer.findOneAndUpdate(
       { id: req.params.id, shopId: req.user.shopId },
-      { $set: req.body },
-      { new: true }
-    );
+      { $set: allowedUpdates },
+      { new: true, runValidators: true }
+    ).lean();
     if (!updated) return res.status(404).json({ success: false, error: 'Customer not found' });
     res.json(updated);
   } catch (err) {
@@ -1204,7 +1294,7 @@ app.put('/api/customers/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/customers/:id', requireAuth, async (req, res) => {
+app.delete('/api/customers/:id', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const { id } = req.params;
     const shopId = req.user?.shopId;
@@ -1214,22 +1304,20 @@ app.delete('/api/customers/:id', requireAuth, async (req, res) => {
     }
 
     // Verify customer exists under authenticated shop
-    const customer = await Customer.findOne({ id, shopId });
+    const customer = await Customer.findOne({ id, shopId }).select('_id').lean();
     if (!customer) {
       return res.status(404).json({ success: false, error: 'Customer not found' });
     }
 
-    // Remove operational CRM records (Enquiries, FollowUps, Messages, Activities)
+    // Remove operational CRM & consent records
     await Promise.all([
       Enquiry.deleteMany({ customerId: id, shopId }),
       FollowUp.deleteMany({ customerId: id, shopId }),
       Message.deleteMany({ customerId: id, shopId }),
       Activity.deleteMany({ customerId: id, shopId }),
+      ConsentRecord.deleteMany({ userId: id, shopId }),
+      Customer.deleteOne({ id, shopId })
     ]);
-
-    // Note: Historical Sales records are preserved for accounting/reports
-    // Remove the customer record itself
-    await Customer.deleteOne({ id, shopId });
 
     res.json({
       success: true,
@@ -1243,7 +1331,7 @@ app.delete('/api/customers/:id', requireAuth, async (req, res) => {
 
 app.get('/api/products', requireAuth, async (req, res) => {
   try {
-    const list = await Product.find({ shopId: req.user.shopId });
+    const list = await Product.find({ shopId: req.user.shopId }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch products' });
@@ -1252,7 +1340,7 @@ app.get('/api/products', requireAuth, async (req, res) => {
 
 app.get('/api/products/:id', requireAuth, async (req, res) => {
   try {
-    const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });
+    const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId }).lean();
     if (!prod) return res.status(404).json({ error: 'Product not found' });
     res.json(prod);
   } catch (err) {
@@ -1281,6 +1369,15 @@ app.post('/api/products', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Product name and selling price are required' });
     }
 
+    const numSellingPrice = Number(sellingPrice);
+    const numAvailability = availability !== undefined ? Number(availability) : 10;
+    if (isNaN(numSellingPrice) || numSellingPrice < 0) {
+      return res.status(400).json({ error: 'Selling price must be a non-negative number' });
+    }
+    if (isNaN(numAvailability) || numAvailability < 0) {
+      return res.status(400).json({ error: 'Stock availability cannot be negative' });
+    }
+
     const numGstRate = gstRate !== undefined ? Number(gstRate) : 0;
     const validRates = [0, 5, 12, 18, 28];
     if (isNaN(numGstRate) || numGstRate < 0 || !validRates.includes(numGstRate)) {
@@ -1292,17 +1389,17 @@ app.post('/api/products', requireAuth, async (req, res) => {
     // Auto-generate authoritative QuickR barcode
     const barcode = await generateUniqueBarcode(req.user.shopId);
 
-    const id = `PROD-${Date.now()}`;
+    const id = `PROD-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
     const newProd = new Product({
       id,
-      name,
+      name: String(name).trim(),
       category: category || 'Shirts',
       subcategory: subcategory || '',
-      sellingPrice,
+      sellingPrice: numSellingPrice,
       originalPrice,
       sizes: sizes || [],
       colors: colors || [],
-      availability: availability !== undefined ? availability : 10,
+      availability: numAvailability,
       description: description || '',
       gstRate: numGstRate,
       hsnCode: hsnCode ? String(hsnCode).trim() : '',
@@ -1375,7 +1472,7 @@ app.put('/api/products/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/products/:id', requireAuth, async (req, res) => {
+app.delete('/api/products/:id', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });
     if (!prod) return res.status(404).json({ error: 'Product not found' });
@@ -1402,7 +1499,7 @@ app.delete('/api/products/:id', requireAuth, async (req, res) => {
 });
 
 // Bulk Delete Products Endpoint
-app.post('/api/products/bulk-delete', requireAuth, async (req, res) => {
+app.post('/api/products/bulk-delete', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const { ids } = req.body;
     const shopId = req.user?.shopId;
@@ -1416,7 +1513,7 @@ app.post('/api/products/bulk-delete', requireAuth, async (req, res) => {
     }
 
     // Verify all products belong to authenticated shop
-    const products = await Product.find({ id: { $in: ids }, shopId });
+    const products = await Product.find({ id: { $in: ids }, shopId }).select('id').lean();
     const validIds = products.map(p => p.id);
 
     if (validIds.length === 0) {
@@ -1480,7 +1577,7 @@ app.post('/api/products/bulk-delete', requireAuth, async (req, res) => {
 });
 
 // Bulk Import Products Endpoint
-app.post('/api/products/import', requireAuth, async (req, res) => {
+app.post('/api/products/import', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user?.shopId;
     if (!shopId) {
@@ -1673,9 +1770,13 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
 
         inMemoryBarcodesInBatch.add(rawBarcode);
       } else {
-        // Auto-generate collision-free QuickR barcode
-        const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
-        rawBarcode = `QKR-${timestampBase.toString(36).toUpperCase()}${index.toString(36).toUpperCase()}${randomHex.substring(0, 3)}`;
+        // Auto-generate collision-free QuickR barcode verified against existing & batch sets
+        let candidate = '';
+        do {
+          const randomHex = crypto.randomBytes(4).toString('hex').toUpperCase();
+          candidate = `QKR-${randomHex}`;
+        } while (existingBarcodeSet.has(candidate) || inMemoryBarcodesInBatch.has(candidate));
+        rawBarcode = candidate;
         barcodeType = 'CODE128';
         barcodeSource = 'quickr_generated';
         generatedBarcodeCount++;
@@ -1683,7 +1784,7 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
       }
 
       const category = row.category ? String(row.category).trim() : 'General';
-      const productId = `PROD-IMP-${timestampBase}-${index}-${Math.floor(Math.random() * 1000)}`;
+      const productId = `PROD-IMP-${timestampBase}-${index}-${crypto.randomBytes(2).toString('hex')}`;
 
       validDocsToInsert.push({
         id: productId,
@@ -1696,6 +1797,7 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
         colors,
         availability,
         description: row.description ? String(row.description).trim() : '',
+        measurementType: row.measurementType === 'length' ? 'length' : 'piece',
         gstRate: finalGstRate,
         hsnCode: row.hsnCode ? String(row.hsnCode).trim() : '',
         priceIncludesGst: finalPriceIncludesGst,
@@ -1707,27 +1809,30 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
       });
     }
 
-    // Step 2: Batch Insert in chunks of 500 documents for maximum performance
+    // Step 2: Batch Insert in chunks of 500 documents (gracefully handles partial duplicates)
     const BATCH_SIZE = 500;
     for (let i = 0; i < validDocsToInsert.length; i += BATCH_SIZE) {
       const chunk = validDocsToInsert.slice(i, i + BATCH_SIZE);
-      await Product.insertMany(chunk, { ordered: false });
-      importedCount += chunk.length;
+      try {
+        const inserted = await Product.insertMany(chunk, { ordered: false });
+        importedCount += inserted.length;
+      } catch (bulkErr) {
+        const insertedCount = bulkErr.insertedDocs?.length ?? bulkErr.result?.insertedCount ?? 0;
+        const failedCount = chunk.length - insertedCount;
+        importedCount += insertedCount;
+        skippedCount += failedCount;
+        duplicateBarcodeCount += failedCount;
+      }
     }
 
     // Step 3: Record Audit Activity
-    try {
-      await Activity.create({
-        id: `ACT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        shopId,
-        type: 'product_imported',
-        description: `Imported ${importedCount} products in bulk (${skippedCount} skipped).`,
-        actorName: req.user.name || 'User',
-        createdAt: new Date()
-      });
-    } catch (actErr) {
-      console.warn('Failed to record import activity log:', actErr);
-    }
+    Activity.create({
+      id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      customerId: 'system',
+      shopId,
+      type: 'product_imported',
+      description: `Imported ${importedCount} products in bulk (${skippedCount} skipped).`
+    }).catch(() => {});
 
     res.json({
       success: true,
@@ -1748,7 +1853,7 @@ app.post('/api/products/import', requireAuth, async (req, res) => {
 });
 
 // Bulk Delete Customers Endpoint
-app.post('/api/customers/bulk-delete', requireAuth, async (req, res) => {
+app.post('/api/customers/bulk-delete', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const { ids } = req.body;
     const shopId = req.user?.shopId;
@@ -1762,7 +1867,7 @@ app.post('/api/customers/bulk-delete', requireAuth, async (req, res) => {
     }
 
     // Verify customers belong to shop
-    const customers = await Customer.find({ id: { $in: ids }, shopId });
+    const customers = await Customer.find({ id: { $in: ids }, shopId }).select('id').lean();
     const validIds = customers.map(c => c.id);
 
     if (validIds.length === 0) {
@@ -1773,12 +1878,13 @@ app.post('/api/customers/bulk-delete', requireAuth, async (req, res) => {
       });
     }
 
-    // Remove operational CRM records cascade (Enquiries, FollowUps, Messages, Activities)
+    // Remove operational CRM & consent records cascade
     await Promise.all([
       Enquiry.deleteMany({ customerId: { $in: validIds }, shopId }),
       FollowUp.deleteMany({ customerId: { $in: validIds }, shopId }),
       Message.deleteMany({ customerId: { $in: validIds }, shopId }),
       Activity.deleteMany({ customerId: { $in: validIds }, shopId }),
+      ConsentRecord.deleteMany({ userId: { $in: validIds }, shopId })
     ]);
 
     // Note: Historical Sales records retain customer information (customerName, customerPhone) while customer document is deleted
@@ -1797,7 +1903,7 @@ app.post('/api/customers/bulk-delete', requireAuth, async (req, res) => {
 });
 
 // Bulk Delete Enquiries Endpoint
-app.post('/api/enquiries/bulk-delete', requireAuth, async (req, res) => {
+app.post('/api/enquiries/bulk-delete', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const { ids } = req.body;
     const shopId = req.user?.shopId;
@@ -1834,40 +1940,12 @@ app.post('/api/enquiries/bulk-delete', requireAuth, async (req, res) => {
 
 app.get('/api/enquiries', requireAuth, async (req, res) => {
   try {
-    const list = await Enquiry.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
+    const list = await Enquiry.find({ shopId: req.user.shopId }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch enquiries' });
   }
 });
-
-const calculateScheduledDateBackend = (followUpOptionOrDate, baseDate = new Date()) => {
-  const now = new Date(baseDate);
-  if (!followUpOptionOrDate) return now;
-  if (followUpOptionOrDate instanceof Date) return followUpOptionOrDate;
-
-  const str = String(followUpOptionOrDate).trim().toLowerCase();
-
-  if (str === 'today') {
-    return now;
-  }
-  if (str === 'tomorrow') {
-    return new Date(now.getTime() + 1 * 24 * 60 * 60 * 1000);
-  }
-  if (str === '3 days' || str === '3days' || str === '3_days') {
-    return new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  }
-  if (str === 'next week' || str === 'nextweek' || str === 'next_week') {
-    return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  }
-
-  const parsed = new Date(followUpOptionOrDate);
-  if (!isNaN(parsed.getTime())) {
-    return parsed;
-  }
-
-  return now;
-};
 
 app.post('/api/enquiries', requireAuth, async (req, res) => {
   try {
@@ -1876,16 +1954,18 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'customerId and productId are required' });
     }
 
-    let customer = await Customer.findOne({ id: customerId, shopId: req.user.shopId });
-    if (!customer) customer = await Customer.findOne({ id: customerId });
-    let product = await Product.findOne({ id: productId, shopId: req.user.shopId });
-    if (!product) product = await Product.findOne({ id: productId });
+    // Strictly isolate both Customer and Product to authenticated shopId (no cross-tenant fallback)
+    const [customer, product] = await Promise.all([
+      Customer.findOne({ id: customerId, shopId: req.user.shopId }).lean(),
+      Product.findOne({ id: productId, shopId: req.user.shopId }).lean()
+    ]);
 
     if (!customer || !product) {
       return res.status(404).json({ error: 'Referenced customer or product not found for your shop' });
     }
 
-    const enqId = `ENQ-${Date.now()}`;
+    const suffix = crypto.randomBytes(2).toString('hex');
+    const enqId = `ENQ-${Date.now()}-${suffix}`;
     const newEnquiry = new Enquiry({
       id: enqId,
       customerId,
@@ -1895,7 +1975,7 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
       priceAtEnquiry: product.sellingPrice,
       size: size || 'Free Size',
       color: color || 'Standard',
-      quantity: quantity || 1,
+      quantity: Math.max(1, Number(quantity) || 1),
       interest: interest || 'Interested',
       purchaseStatus: purchaseStatus || 'Pending',
       notes: notes || '',
@@ -1905,18 +1985,19 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
     await newEnquiry.save();
 
     let createdFollowUp = null;
+    const sizeText = size && size !== 'N/A' ? ` (${size})` : '';
 
-    await Activity.create({
-      id: `ACT-${Date.now()}`,
+    Activity.create({
+      id: `ACT-${Date.now()}-${suffix}`,
       customerId,
       type: 'enquiry_created',
-      description: `Enquiry added for ${product.name} (${size})`,
+      description: `Enquiry added for ${product.name}${sizeText}`,
       shopId: req.user.shopId
-    });
+    }).catch(() => {});
 
-    if (purchaseStatus === "Didn't Purchase" && interest !== 'Not Interested') {
-      const fwId = `FW-${Date.now()}`;
-      const prodLabel = product && product.name && product.name !== 'N/A' ? product.name : 'item';
+    if (purchaseStatus === "Didn't Purchase") {
+      const fwId = `FW-${Date.now()}-${suffix}`;
+      const prodLabel = product.name && product.name !== 'N/A' ? product.name : 'item';
       const sizeLabel = size && size !== 'N/A' && size !== 'Free Size' ? ` (${size})` : '';
       const msgText = `Good to see your interest in our ${prodLabel}${sizeLabel}. It is currently available and ready for you. Would you like to place an order or need help with anything?`;
 
@@ -1932,9 +2013,7 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
 
       // Check if targetScheduledAt is past end of today in IST
       const { endOfToday } = getISTDayBounds();
-
       const initialStatus = targetScheduledAt > endOfToday ? 'scheduled' : 'ready';
-
       const priorityResult = calculatePriorityAndReason({ scheduledAt: targetScheduledAt }, newEnquiry, customer, product);
 
       createdFollowUp = new FollowUp({
@@ -1951,25 +2030,25 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
 
       await createdFollowUp.save();
 
-      await Activity.create({
-        id: `ACT-${Date.now() + 1}`,
+      Activity.create({
+        id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         customerId,
         type: 'followup_created',
         description: `Follow-up automatically recommended for ${product.name}`,
         shopId: req.user.shopId
-      });
+      }).catch(() => {});
     }
 
     res.status(201).json({ enquiry: newEnquiry, followUp: createdFollowUp });
   } catch (err) {
     console.error('Create enquiry error:', err);
-    res.status(500).json({ error: `Failed to create enquiry: ${err.message}` });
+    res.status(500).json({ error: 'Failed to create enquiry' });
   }
 });
 
 app.get('/api/followups', requireAuth, async (req, res) => {
   try {
-    const list = await FollowUp.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
+    const list = await FollowUp.find({ shopId: req.user.shopId }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch follow-ups' });
@@ -1978,7 +2057,7 @@ app.get('/api/followups', requireAuth, async (req, res) => {
 
 app.get('/api/followups/:id', requireAuth, async (req, res) => {
   try {
-    const fw = await FollowUp.findOne({ id: req.params.id, shopId: req.user.shopId });
+    const fw = await FollowUp.findOne({ id: req.params.id, shopId: req.user.shopId }).lean();
     if (!fw) return res.status(404).json({ error: 'Follow-up not found' });
     res.json(fw);
   } catch (err) {
@@ -1989,18 +2068,21 @@ app.get('/api/followups/:id', requireAuth, async (req, res) => {
 app.post('/api/followups/:id/send', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { content } = req.body;
+    const { content } = req.body || {};
 
     const fw = await FollowUp.findOne({ id, shopId: req.user.shopId });
     if (!fw) return res.status(404).json({ error: 'Follow-up not found' });
 
-    const customer = await Customer.findOne({ id: fw.customerId, shopId: req.user.shopId });
+    const customer = await Customer.findOne({ id: fw.customerId, shopId: req.user.shopId }).select('phone name').lean();
+    if (!customer || !customer.phone) {
+      return res.status(400).json({ error: 'Customer does not have a valid phone number.' });
+    }
     const targetMessage = content || fw.message;
 
-    // Use centralized WhatsApp Cloud API service (falls back to mock automatically)
-    const result = await sendWhatsAppCloudMessage(customer?.phone || '', targetMessage);
+    // Pass authenticated shopId so connected shop Meta credentials are used
+    const result = await sendWhatsAppCloudMessage(customer.phone, targetMessage, req.user.shopId);
 
-    const msgId = `MSG-${Date.now()}`;
+    const msgId = `MSG-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
     const newMsg = new Message({
       id: msgId,
       customerId: fw.customerId,
@@ -2022,14 +2104,14 @@ app.post('/api/followups/:id/send', requireAuth, async (req, res) => {
     fw.messageId = msgId;
     await fw.save();
 
-    await Activity.create({
-      id: `ACT-${Date.now()}`,
+    Activity.create({
+      id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
       customerId: fw.customerId,
       type: 'message_sent',
       description: `WhatsApp message (${result.provider}): "${targetMessage.substring(0, 30)}..."`,
       metadata: { channel: 'whatsapp', messageId: msgId, provider: result.provider, status: result.status },
       shopId: req.user.shopId
-    });
+    }).catch(() => {});
 
     res.json({ success: true, followUp: fw, message: newMsg, provider: result.provider, status: result.status });
   } catch (err) {
@@ -2041,7 +2123,12 @@ app.post('/api/followups/:id/send', requireAuth, async (req, res) => {
 app.post('/api/followups/:id/outcome', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { outcome, nextDateStr, scheduleNext } = req.body;
+    const { outcome, nextDateStr, scheduleNext } = req.body || {};
+
+    const validOutcomes = ['Purchased', 'Still Interested', 'Not Interested', 'No Response'];
+    if (!outcome || !validOutcomes.includes(outcome)) {
+      return res.status(400).json({ error: 'Invalid follow-up outcome.' });
+    }
 
     const fw = await FollowUp.findOne({ id, shopId: req.user.shopId });
     if (!fw) return res.status(404).json({ error: 'Follow-up not found' });
@@ -2051,58 +2138,64 @@ app.post('/api/followups/:id/outcome', requireAuth, async (req, res) => {
     fw.completedAt = new Date();
     await fw.save();
 
+    const { endOfToday } = getISTDayBounds();
+
     if (outcome === 'Still Interested' && nextDateStr) {
+      const targetDate = calculateScheduledDateIST(nextDateStr);
+      const nextStatus = targetDate > endOfToday ? 'scheduled' : 'ready';
       const newFw = new FollowUp({
-        id: `FW-${Date.now()}`,
+        id: `FW-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         customerId: fw.customerId,
         enquiryId: fw.enquiryId,
         reason: 'Customer is still interested but has not purchased.',
-        scheduledAt: new Date(nextDateStr),
-        status: 'ready',
+        scheduledAt: targetDate,
+        status: nextStatus,
         message: fw.message,
         priority: 'Medium',
         shopId: req.user.shopId
       });
       await newFw.save();
 
-      await Activity.create({
-        id: `ACT-${Date.now()}`,
+      Activity.create({
+        id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         customerId: fw.customerId,
         type: 'followup_created',
         description: `Follow-up rescheduled for ${nextDateStr}`,
         shopId: req.user.shopId
-      });
+      }).catch(() => {});
+    } else if (outcome === 'Purchased' && fw.enquiryId) {
+      await Enquiry.findOneAndUpdate({ id: fw.enquiryId, shopId: req.user.shopId }, { purchaseStatus: 'Purchased' });
     } else if (outcome === 'Not Interested') {
       await Enquiry.findOneAndUpdate({ id: fw.enquiryId, shopId: req.user.shopId }, { purchaseStatus: "Didn't Purchase" });
-      await Activity.create({
-        id: `ACT-${Date.now()}`,
+      Activity.create({
+        id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         customerId: fw.customerId,
         type: 'customer_marked_not_interested',
         description: `Customer marked as not interested`,
         shopId: req.user.shopId
-      });
+      }).catch(() => {});
     } else if (outcome === 'No Response' && scheduleNext) {
       const threeDaysLater = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
       const newFw = new FollowUp({
-        id: `FW-${Date.now()}`,
+        id: `FW-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         customerId: fw.customerId,
         enquiryId: fw.enquiryId,
         reason: 'Follow up again after no response.',
         scheduledAt: threeDaysLater,
-        status: 'ready',
+        status: threeDaysLater > endOfToday ? 'scheduled' : 'ready',
         message: fw.message,
         priority: 'Low',
         shopId: req.user.shopId
       });
       await newFw.save();
 
-      await Activity.create({
-        id: `ACT-${Date.now()}`,
+      Activity.create({
+        id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         customerId: fw.customerId,
         type: 'followup_created',
         description: `Follow-up automatically scheduled in 3 days (No Response)`,
         shopId: req.user.shopId
-      });
+      }).catch(() => {});
     }
 
     res.json({ success: true, followUp: fw });
@@ -2113,7 +2206,7 @@ app.post('/api/followups/:id/outcome', requireAuth, async (req, res) => {
 
 app.get('/api/messages', requireAuth, async (req, res) => {
   try {
-    const list = await Message.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
+    const list = await Message.find({ shopId: req.user.shopId }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch messages' });
@@ -2122,7 +2215,7 @@ app.get('/api/messages', requireAuth, async (req, res) => {
 
 app.get('/api/messages/:customerId', requireAuth, async (req, res) => {
   try {
-    const list = await Message.find({ customerId: req.params.customerId, shopId: req.user.shopId }).sort({ createdAt: -1 });
+    const list = await Message.find({ customerId: req.params.customerId, shopId: req.user.shopId }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch customer messages' });
@@ -2168,8 +2261,10 @@ app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
       queryStart = new Date(Date.UTC(istYear, istMonth, mondayDate, 0, 0, 0, 0) - istOffsetMs);
       queryEnd = new Date(Date.UTC(istYear, istMonth, mondayDate + 6, 23, 59, 59, 999) - istOffsetMs);
 
-      const monStr = `${queryStart.getUTCFullYear()}-${String(queryStart.getUTCMonth() + 1).padStart(2, '0')}-${String(queryStart.getUTCDate()).padStart(2, '0')}`;
-      const sunStr = `${queryEnd.getUTCFullYear()}-${String(queryEnd.getUTCMonth() + 1).padStart(2, '0')}-${String(queryEnd.getUTCDate()).padStart(2, '0')}`;
+      const monIst = new Date(queryStart.getTime() + istOffsetMs);
+      const sunIst = new Date(queryEnd.getTime() + istOffsetMs);
+      const monStr = `${monIst.getUTCFullYear()}-${String(monIst.getUTCMonth() + 1).padStart(2, '0')}-${String(monIst.getUTCDate()).padStart(2, '0')}`;
+      const sunStr = `${sunIst.getUTCFullYear()}-${String(sunIst.getUTCMonth() + 1).padStart(2, '0')}-${String(sunIst.getUTCDate()).padStart(2, '0')}`;
       periodLabel = `This Week (${monStr} to ${sunStr})`;
       filenamePeriod = `Week_${monStr}_to_${sunStr}`;
 
@@ -2333,13 +2428,13 @@ app.get('/api/sales/export', requireAuth, requireNonStaff, async (req, res) => {
         const unitDisplay = item.sellingUnit || (item.measurementType === 'length' ? 'm' : 'pcs');
 
         const row = worksheet.addRow([
-          sale.invoiceNumber || sale.id,
+          sanitizeSpreadsheetCell(sale.invoiceNumber || sale.id),
           saleDateIST,
-          sale.customerName || 'Walk-in Customer',
-          sale.customerPhone || 'N/A',
-          item.productName || 'General Item',
-          catVal,
-          sizeVal,
+          sanitizeSpreadsheetCell(sale.customerName || 'Walk-in Customer'),
+          sanitizeSpreadsheetCell(sale.customerPhone || 'N/A'),
+          sanitizeSpreadsheetCell(item.productName || 'General Item'),
+          sanitizeSpreadsheetCell(catVal),
+          sanitizeSpreadsheetCell(sizeVal),
           item.quantity || 1,
           unitDisplay,
           item.rate || 0,
@@ -2431,8 +2526,10 @@ app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) =>
       queryStart = new Date(Date.UTC(istYear, istMonth, mondayDate, 0, 0, 0, 0) - istOffsetMs);
       queryEnd = new Date(Date.UTC(istYear, istMonth, mondayDate + 6, 23, 59, 59, 999) - istOffsetMs);
 
-      const monStr = `${queryStart.getUTCFullYear()}-${String(queryStart.getUTCMonth() + 1).padStart(2, '0')}-${String(queryStart.getUTCDate()).padStart(2, '0')}`;
-      const sunStr = `${queryEnd.getUTCFullYear()}-${String(queryEnd.getUTCMonth() + 1).padStart(2, '0')}-${String(queryEnd.getUTCDate()).padStart(2, '0')}`;
+      const monIst = new Date(queryStart.getTime() + istOffsetMs);
+      const sunIst = new Date(queryEnd.getTime() + istOffsetMs);
+      const monStr = `${monIst.getUTCFullYear()}-${String(monIst.getUTCMonth() + 1).padStart(2, '0')}-${String(monIst.getUTCDate()).padStart(2, '0')}`;
+      const sunStr = `${sunIst.getUTCFullYear()}-${String(sunIst.getUTCMonth() + 1).padStart(2, '0')}-${String(sunIst.getUTCDate()).padStart(2, '0')}`;
       periodLabel = `This Week (${monStr} to ${sunStr})`;
       filenamePeriod = `Week_${monStr}_to_${sunStr}`;
 
@@ -2540,23 +2637,39 @@ app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) =>
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
       });
 
+      const enqByCust = new Map();
+      allEnquiries.forEach(e => {
+        const list = enqByCust.get(e.customerId) || [];
+        list.push(e);
+        enqByCust.set(e.customerId, list);
+      });
+      const salesByCust = new Map();
+      allSales.forEach(s => {
+        const list = salesByCust.get(s.customerId) || [];
+        list.push(s);
+        salesByCust.set(s.customerId, list);
+      });
+      const actByCust = new Map();
+      allActivities.forEach(a => {
+        if (!actByCust.has(a.customerId)) actByCust.set(a.customerId, a);
+      });
+
+      const fmtDate = (d) => d ? new Date(new Date(d).getTime() + istOffsetMs).toISOString().replace('T', ' ').substring(0, 19) : 'N/A';
+
       customers.forEach(c => {
-        const cEnquiries = allEnquiries.filter(e => e.customerId === c.id);
-        const cSales = allSales.filter(s => s.customerId === c.id);
-        const cActivities = allActivities.filter(a => a.customerId === c.id);
+        const cEnquiries = enqByCust.get(c.id) || [];
+        const cSales = salesByCust.get(c.id) || [];
+        const lastAct = actByCust.get(c.id);
 
         const purchasedCount = cEnquiries.filter(e => e.purchaseStatus === 'Purchased').length;
-        const notPurchasedCount = cEnquiries.filter(e => e.purchaseStatus !== 'Purchased').length;
+        const notPurchasedCount = cEnquiries.length - purchasedCount;
         const totalSpent = cSales.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
 
-        const lastEnquiry = cEnquiries.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-        const lastSale = cSales.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-        const lastAct = cActivities[0];
-
-        const fmtDate = (d) => d ? new Date(new Date(d).getTime() + istOffsetMs).toISOString().replace('T', ' ').substring(0, 19) : 'N/A';
+        const lastEnquiry = cEnquiries.reduce((latest, e) => (!latest || new Date(e.createdAt) > new Date(latest.createdAt)) ? e : latest, null);
+        const lastSale = cSales.reduce((latest, s) => (!latest || new Date(s.createdAt) > new Date(latest.createdAt)) ? s : latest, null);
 
         const r = worksheet.addRow([
-          c.id, c.name, c.phone || 'N/A', c.email || 'N/A',
+          sanitizeSpreadsheetCell(c.id), sanitizeSpreadsheetCell(c.name), sanitizeSpreadsheetCell(c.phone || 'N/A'), sanitizeSpreadsheetCell(c.email || 'N/A'),
           cEnquiries.length, purchasedCount, notPurchasedCount,
           cSales.length, totalSpent,
           fmtDate(lastEnquiry?.createdAt), fmtDate(lastSale?.createdAt), fmtDate(lastAct?.createdAt || c.updatedAt)
@@ -2717,42 +2830,60 @@ app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) =>
         createdAt: { $gte: queryStart, $lte: queryEnd }
       }).lean();
 
+      const enqStatsByProd = new Map();
+      enquiries.forEach(e => {
+        const cur = enqStatsByProd.get(e.productId) || { total: 0, purchased: 0 };
+        cur.total += 1;
+        if (e.purchaseStatus === 'Purchased') cur.purchased += 1;
+        enqStatsByProd.set(e.productId, cur);
+      });
+
+      const saleStatsByProdId = new Map();
+      const saleStatsByProdName = new Map();
+      sales.forEach(s => {
+        if (Array.isArray(s.items)) {
+          s.items.forEach(item => {
+            const q = item.quantity || 0;
+            const rev = item.total || 0;
+            if (item.productId) {
+              const cur = saleStatsByProdId.get(item.productId) || { qty: 0, rev: 0 };
+              cur.qty += q;
+              cur.rev += rev;
+              saleStatsByProdId.set(item.productId, cur);
+            } else if (item.productName) {
+              const cur = saleStatsByProdName.get(item.productName) || { qty: 0, rev: 0 };
+              cur.qty += q;
+              cur.rev += rev;
+              saleStatsByProdName.set(item.productName, cur);
+            }
+          });
+        }
+      });
+
       let grandRevenue = 0;
       let grandQty = 0;
 
       const productStats = products.map(p => {
-        const pEnquiries = enquiries.filter(e => e.productId === p.id);
-        const purchasedEnquiries = pEnquiries.filter(e => e.purchaseStatus === 'Purchased').length;
-        const notPurchasedEnquiries = pEnquiries.length - purchasedEnquiries;
-
-        let qtySold = 0;
-        let revenue = 0;
-
-        sales.forEach(s => {
-          if (Array.isArray(s.items)) {
-            s.items.forEach(item => {
-              if (item.productId === p.id || item.productName === p.name) {
-                qtySold += (item.quantity || 0);
-                revenue += (item.total || 0);
-              }
-            });
-          }
-        });
+        const eStat = enqStatsByProd.get(p.id) || { total: 0, purchased: 0 };
+        const sStatId = saleStatsByProdId.get(p.id) || { qty: 0, rev: 0 };
+        const sStatName = saleStatsByProdName.get(p.name) || { qty: 0, rev: 0 };
+        const qtySold = sStatId.qty + sStatName.qty;
+        const revenue = sStatId.rev + sStatName.rev;
 
         grandRevenue += revenue;
         grandQty += qtySold;
 
-        const conversionRate = pEnquiries.length > 0
-          ? Number(((purchasedEnquiries / pEnquiries.length) * 100).toFixed(1))
+        const conversionRate = eStat.total > 0
+          ? Number(((eStat.purchased / eStat.total) * 100).toFixed(1))
           : 0;
 
         return {
           id: p.id,
           name: p.name,
           category: p.category || 'General',
-          enquiries: pEnquiries.length,
-          purchasedEnquiries,
-          notPurchasedEnquiries,
+          enquiries: eStat.total,
+          purchasedEnquiries: eStat.purchased,
+          notPurchasedEnquiries: eStat.total - eStat.purchased,
           qtySold,
           revenue,
           conversionRate
@@ -2851,6 +2982,49 @@ app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) =>
           r.getCell(2).font = { bold: true };
         }
       });
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // REPORT TYPE F: SALES REPORT (via unified reports endpoint)
+    // ──────────────────────────────────────────────────────────────────────────
+    } else if (type === 'sales') {
+      const salesDocs = await Sale.find({
+        shopId,
+        createdAt: { $gte: queryStart, $lte: queryEnd }
+      }).sort({ createdAt: -1 }).lean();
+
+      const totalRevenue = salesDocs.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+      worksheet.addRow(['Summary Totals']);
+      worksheet.addRow(['Total Bills:', salesDocs.length]);
+      worksheet.addRow(['Total Revenue:', totalRevenue]);
+      worksheet.addRow([]);
+      worksheet.getCell('B9').numberFormat = '₹#,##0.00';
+
+      const headerRow = worksheet.addRow([
+        'Invoice #', 'Sale Date (IST)', 'Customer Name', 'Customer Phone',
+        'Items Count', 'Subtotal', 'Discount', 'GST', 'Total Amount', 'Payment Method', 'Source'
+      ]);
+      headerRow.eachCell(c => {
+        c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+      });
+
+      salesDocs.forEach(s => {
+        const saleDateIST = new Date(new Date(s.createdAt).getTime() + istOffsetMs).toISOString().replace('T', ' ').substring(0, 19);
+        const r = worksheet.addRow([
+          sanitizeSpreadsheetCell(s.invoiceNumber || s.id),
+          saleDateIST,
+          sanitizeSpreadsheetCell(s.customerName || 'Walk-in Customer'),
+          sanitizeSpreadsheetCell(s.customerPhone || 'N/A'),
+          Array.isArray(s.items) ? s.items.length : 0,
+          s.subtotal || 0,
+          s.discount || 0,
+          s.totalGst || 0,
+          s.totalAmount || 0,
+          s.paymentMethod || 'Cash',
+          s.source || 'direct'
+        ]);
+        [6, 7, 8, 9].forEach(colIdx => { r.getCell(colIdx).numberFormat = '₹#,##0.00'; });
+      });
     }
 
     // Auto-fit Column Widths
@@ -2883,36 +3057,86 @@ app.get('/api/reports/export', requireAuth, requireNonStaff, async (req, res) =>
 app.get('/api/sales', requireAuth, async (req, res) => {
   try {
     const shopId = req.user.shopId;
-    let query = { shopId };
+    if (!shopId) {
+      return res.status(403).json({ error: 'No shop associated with user' });
+    }
+    const query = { shopId };
 
     // Staff sees ONLY sales created by that specific Staff user
     if (req.user.role === 'staff') {
       query['createdBy.userId'] = req.user.id;
     }
 
-    const list = await Sale.find(query).sort({ createdAt: -1 });
+    const list = await Sale.find(query).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch sales' });
   }
 });
 
+// Idempotency recovery lookup for uncertain / timed-out submissions
+app.get('/api/sales/status/:requestId', requireAuth, async (req, res) => {
+  try {
+    const shopId = req.user.shopId;
+    if (!shopId) {
+      return res.status(403).json({ error: 'No shop associated with user' });
+    }
+    const cleanRequestId = asSafeString(req.params.requestId);
+    if (!cleanRequestId) {
+      return res.status(400).json({ error: 'Valid requestId is required' });
+    }
+
+    const query = { shopId, requestId: cleanRequestId };
+    if (req.user.role === 'staff') {
+      query['createdBy.userId'] = req.user.id;
+    }
+
+    const existingSale = await Sale.findOne(query).lean();
+    return res.json({
+      found: Boolean(existingSale),
+      sale: existingSale || null
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to verify sale status' });
+  }
+});
+
 app.post('/api/sales', requireAuth, async (req, res) => {
   try {
-    let { customerId, customerName, customerPhone, enquiryId, followUpId, items, subtotal, discount, discountType = 'percentage', totalAmount, paymentMethod, source, saleSource, campaignId, requestId } = req.body;
-    
-    if (!items || !items.length || totalAmount === undefined || !paymentMethod) {
+    const shopId = req.user.shopId;
+    if (!shopId) {
+      return res.status(403).json({ error: 'Shop context required to create a sale' });
+    }
+
+    const {
+      customerId,
+      customerName,
+      customerPhone,
+      enquiryId,
+      followUpId,
+      items,
+      discount,
+      discountType = 'percentage',
+      totalAmount,
+      paymentMethod,
+      source,
+      saleSource,
+      campaignId,
+      requestId
+    } = req.body || {};
+
+    if (!Array.isArray(items) || !items.length || totalAmount === undefined || !paymentMethod) {
       return res.status(400).json({ error: 'Items, totalAmount, and paymentMethod are required' });
     }
 
-    const cleanRequestId = requestId ? String(requestId).trim() : null;
+    const cleanRequestId = requestId && String(requestId).trim() ? String(requestId).trim() : undefined;
 
     // ──────────────────────────────────────────────────────────────────────────
     // IDEMPOTENCY CHECK (FIRST PASS)
     // Return existing sale if this shop already processed this requestId
     // ──────────────────────────────────────────────────────────────────────────
     if (cleanRequestId) {
-      const existingSale = await Sale.findOne({ shopId: req.user.shopId, requestId: cleanRequestId }).lean();
+      const existingSale = await Sale.findOne({ shopId, requestId: cleanRequestId }).lean();
       if (existingSale) {
         console.log(`[IDEMPOTENCY] Returned existing sale for requestId: ${cleanRequestId}`);
         return res.status(200).json({
@@ -2923,158 +3147,111 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       }
     }
 
-    const numericSubtotal = Number(subtotal) || 0;
-    const rawDiscount = Number(discount) || 0;
-
-    if (rawDiscount < 0) {
+    const rawDiscount = discount === undefined || discount === null || discount === '' ? 0 : Number(discount);
+    if (!Number.isFinite(rawDiscount) || rawDiscount < 0) {
       return res.status(400).json({ error: 'Discount cannot be negative' });
     }
 
     const cleanDiscountType = discountType === 'amount' ? 'amount' : 'percentage';
-    let numericDiscount = 0;
-
-    if (cleanDiscountType === 'percentage') {
-      if (rawDiscount > 100) {
-        return res.status(400).json({ error: 'Discount percentage cannot exceed 100%' });
-      }
-      numericDiscount = Math.round(((numericSubtotal * rawDiscount) / 100) * 100) / 100;
-    } else {
-      // Amount discount
-      if (rawDiscount > numericSubtotal) {
-        return res.status(400).json({ error: 'Discount amount cannot exceed subtotal' });
-      }
-      numericDiscount = Math.round(rawDiscount * 100) / 100;
+    if (cleanDiscountType === 'percentage' && rawDiscount > 100) {
+      return res.status(400).json({ error: 'Discount percentage cannot exceed 100%' });
     }
 
-    const numericTotal = Number(totalAmount) || 0;
-
-    if (numericTotal < 0) {
-      return res.status(400).json({ error: 'Total amount cannot be negative' });
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // WALK-IN CUSTOMER AUTO-SAVE WORKFLOW
-    // Cases 1 - 5 Implementation:
-    // Case 1 & 2: Phone provided -> Normalize, find or create Customer in shop, link sale
-    // Case 3: Name provided, Phone empty -> Do NOT create Customer, keep name on Sale
-    // Case 4: Name & Phone empty -> Do NOT create Customer, set customerName = 'Walk-in Customer'
-    // Case 5: Existing phone in same shop -> Reuse existing Customer, do NOT duplicate
-    // ──────────────────────────────────────────────────────────────────────────
-    let finalCustomerId = customerId || '';
-    let finalCustomerName = customerName ? customerName.trim() : '';
-
-    if (customerId && customerId.trim()) {
-      let existingById = await Customer.findOne({ shopId: req.user.shopId, id: customerId.trim() });
-      if (existingById) {
-        finalCustomerId = existingById.id;
-        if (!finalCustomerName) finalCustomerName = existingById.name;
+    for (const item of items) {
+      if (!item || typeof item !== 'object') {
+        return res.status(400).json({ error: 'Invalid sale item entry' });
       }
-    }
-
-    if (!finalCustomerId && customerPhone && customerPhone.trim()) {
-      const normalizedPhone = normalizeIndianMobileNumber(customerPhone);
-      if (normalizedPhone) {
-        // Search for existing customer in the authenticated shop (Case 5)
-        let existingCust = await Customer.findOne({ shopId: req.user.shopId, phone: normalizedPhone });
-        
-        if (existingCust) {
-          finalCustomerId = existingCust.id;
-          if (!finalCustomerName) finalCustomerName = existingCust.name;
-        } else {
-          // Create new Customer automatically (Case 1 & Case 2)
-          const newCustId = `CUST-${Date.now()}`;
-          const displayName = finalCustomerName || normalizedPhone; // Use phone if name is empty
-          
-          const newCust = new Customer({
-            id: newCustId,
-            name: displayName,
-            phone: normalizedPhone,
-            email: '', // NO email required
-            location: 'Chennai, Tamil Nadu',
-            status: 'Active',
-            shopId: req.user.shopId
-          });
-          await newCust.save();
-
-          // Save marketing consent record if offer permission specified
-          const { allowWhatsAppOffers } = req.body;
-          const ConsentModel = (await import('./models/ConsentRecord.js')).ConsentRecord;
-          const consentStatus = allowWhatsAppOffers === true || allowWhatsAppOffers === 'true' ? 'active' : 'withdrawn';
-          await ConsentModel.findOneAndUpdate(
-            { userId: newCustId, shopId: req.user.shopId, purpose: 'marketing' },
-            { id: `CNS-${Date.now()}`, userId: newCustId, shopId: req.user.shopId, purpose: 'marketing', status: consentStatus, consentedAt: consentStatus === 'active' ? new Date() : null, withdrawnAt: consentStatus === 'withdrawn' ? new Date() : null, noticeVersion: '1.0' },
-            { upsert: true, new: true }
-          );
-
-          await Activity.create({
-            id: `ACT-${Date.now()}`,
-            customerId: newCustId,
-            type: 'customer_added',
-            description: `Auto-saved walk-in customer: ${displayName}`,
-            shopId: req.user.shopId
-          });
-
-          finalCustomerId = newCustId;
-          finalCustomerName = displayName;
+      const rawQty = Number(item.quantity);
+      if (!Number.isFinite(rawQty) || rawQty <= 0) {
+        return res.status(400).json({ error: `Invalid quantity for ${item.productName || item.productId || 'item'}` });
+      }
+      if (!item.productId) {
+        const customRate = Number(item.rate);
+        if (!Number.isFinite(customRate) || customRate < 0) {
+          return res.status(400).json({ error: `Invalid rate for custom item ${item.productName || 'item'}` });
         }
       }
-    }
-
-    if (!finalCustomerName) {
-      finalCustomerName = 'Walk-in Customer'; // Case 4
     }
 
     // Performance measurement timing start
     const perfStart = Date.now();
 
-    // Validate Product Stock Availability in batch
-    const productIds = Array.isArray(items) ? items.map(i => i.productId).filter(Boolean) : [];
-    const dbProducts = productIds.length > 0 
-      ? await Product.find({ id: { $in: productIds }, shopId: req.user.shopId }).lean()
-      : [];
+    // Fetch Products & Shop in parallel
+    const productIds = [...new Set(items.map(i => i.productId).filter(Boolean).map(String))];
+    const [dbProducts, shop] = await Promise.all([
+      productIds.length > 0 ? Product.find({ id: { $in: productIds }, shopId }).lean() : Promise.resolve([]),
+      Shop.findOne({ customId: shopId }).lean()
+    ]);
     const productMap = new Map(dbProducts.map(p => [p.id, p]));
 
-    // Pre-calculate base quantities for stock deduction and validation
-    const itemBaseQuantities = new Map();
+    // Validate stock and compute authoritative server-side line totals
+    const requestedQtyByProduct = new Map();
+    const preparedLines = [];
+    let serverSubtotal = 0;
 
-    if (Array.isArray(items) && items.length > 0) {
-      for (const item of items) {
-        if (item.productId) {
-          const prod = productMap.get(item.productId);
-          if (!prod) {
-            return res.status(404).json({ error: `Product ${item.productName || item.productId} not found` });
-          }
+    for (const item of items) {
+      const dbProd = item.productId ? productMap.get(String(item.productId)) : null;
+      if (item.productId && !dbProd) {
+        return res.status(404).json({ error: `Product ${item.productName || item.productId} not found` });
+      }
 
-          const rawQty = Number(item.quantity) || 1;
-          const isLengthProd = prod.measurementType === 'length';
-          const requestedUnit = item.sellingUnit || (isLengthProd ? 'm' : 'piece');
+      const rawQty = Number(item.quantity);
+      const isLengthProd = dbProd ? dbProd.measurementType === 'length' : item.measurementType === 'length';
+      const sellingUnit = isLengthProd ? (item.sellingUnit === 'cm' ? 'cm' : 'm') : 'piece';
 
-          let baseQty = rawQty;
-          if (isLengthProd) {
-            if (requestedUnit === 'cm') {
-              baseQty = Math.round((rawQty / 100) * 10000) / 10000;
-            } else {
-              baseQty = Math.round(rawQty * 10000) / 10000;
-            }
-          } else {
-            baseQty = Math.round(rawQty * 10000) / 10000;
-          }
+      const baseQty = (isLengthProd && sellingUnit === 'cm')
+        ? Math.round((rawQty / 100) * 10000) / 10000
+        : Math.round(rawQty * 10000) / 10000;
 
-          itemBaseQuantities.set(item, baseQty);
+      if (baseQty <= 0) {
+        return res.status(400).json({ error: `Invalid base quantity for ${item.productName || item.productId || 'item'}` });
+      }
 
-          if ((prod.availability || 0) < baseQty) {
-            const availDisplay = isLengthProd ? `${prod.availability || 0} m` : `${prod.availability || 0}`;
-            const reqDisplay = isLengthProd ? `${rawQty} ${requestedUnit} (${baseQty} m)` : `${rawQty}`;
-            return res.status(400).json({
-              error: `Insufficient stock for ${prod.name}. Available: ${availDisplay}, Requested: ${reqDisplay}`
-            });
-          }
-        }
+      if (dbProd) {
+        requestedQtyByProduct.set(dbProd.id, Math.round(((requestedQtyByProduct.get(dbProd.id) || 0) + baseQty) * 10000) / 10000);
+      }
+
+      const trustedRate = dbProd ? Number(dbProd.sellingPrice) : Number(item.rate);
+      const rawLineTotal = Math.round((baseQty * trustedRate) * 100) / 100;
+      serverSubtotal += rawLineTotal;
+
+      preparedLines.push({
+        item,
+        dbProd,
+        isLengthProd,
+        sellingUnit,
+        rawQty,
+        baseQty,
+        trustedRate,
+        rawLineTotal
+      });
+    }
+
+    // Aggregate check across duplicate cart lines for the same product
+    for (const [prodId, totalBaseReq] of requestedQtyByProduct.entries()) {
+      const prod = productMap.get(prodId);
+      if ((prod.availability || 0) < totalBaseReq) {
+        const isLengthProd = prod.measurementType === 'length';
+        const availDisplay = isLengthProd ? `${prod.availability || 0} m` : `${prod.availability || 0}`;
+        const reqDisplay = isLengthProd ? `${totalBaseReq} m` : `${totalBaseReq}`;
+        return res.status(400).json({
+          error: `Insufficient stock for ${prod.name}. Available: ${availDisplay}, Requested: ${reqDisplay}`
+        });
       }
     }
 
-    // Fetch Shop Profile to check GST status and State using fast lean query
-    const shop = await Shop.findOne({ customId: req.user.shopId }).lean();
+    serverSubtotal = Math.round(serverSubtotal * 100) / 100;
+
+    let numericDiscount = 0;
+    if (cleanDiscountType === 'percentage') {
+      numericDiscount = Math.round(((serverSubtotal * rawDiscount) / 100) * 100) / 100;
+    } else {
+      if (rawDiscount > serverSubtotal) {
+        return res.status(400).json({ error: 'Discount amount cannot exceed subtotal' });
+      }
+      numericDiscount = Math.round(rawDiscount * 100) / 100;
+    }
+
     const isGstRegistered = !!(shop && (shop.gst?.registered ?? shop.isGstRegistered));
     const shopGstin = isGstRegistered ? (shop.gst?.gstin || shop.gstin || '') : '';
     const shopState = shop?.gst?.state || 'Tamil Nadu';
@@ -3097,71 +3274,59 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 
     const processedItems = [];
 
-    if (Array.isArray(items) && items.length > 0) {
-      for (const item of items) {
-        const dbProd = item.productId ? productMap.get(item.productId) : null;
-        const isLengthProd = dbProd ? dbProd.measurementType === 'length' : item.measurementType === 'length';
-        const sellingUnit = item.sellingUnit || (isLengthProd ? 'm' : 'piece');
-        const rawQty = Number(item.quantity) || 1;
-        const baseQty = itemBaseQuantities.get(item) !== undefined 
-          ? itemBaseQuantities.get(item) 
-          : (isLengthProd && sellingUnit === 'cm' ? Math.round((rawQty / 100) * 10000) / 10000 : rawQty);
+    for (const line of preparedLines) {
+      const { item, dbProd, isLengthProd, sellingUnit, rawQty, baseQty, trustedRate, rawLineTotal } = line;
+      const lineTaxableSubtotal = serverSubtotal > 0
+        ? (rawLineTotal * (1 - (numericDiscount / serverSubtotal)))
+        : rawLineTotal;
 
-        // Unit rate per base unit (selling price per metre for length, selling price per piece for piece)
-        const trustedRate = dbProd ? Number(dbProd.sellingPrice) : (Number(item.rate) || 0);
-        // Line total: baseQuantity * trustedRate
-        const rawLineTotal = Math.round((baseQty * trustedRate) * 100) / 100;
+      let itemGstRate = 0;
+      let itemHsnCode = '';
+      let itemPriceIncludesGst = true;
 
-        // Apply proportional discount to line total before computing GST if subtotal > 0
-        const lineTaxableSubtotal = numericSubtotal > 0 ? (rawLineTotal * (1 - (numericDiscount / numericSubtotal))) : rawLineTotal;
-
-        // Fetch exact product from pre-fetched batch productMap
-        let itemGstRate = 0;
-        let itemHsnCode = '';
-        let itemPriceIncludesGst = false;
-
-        if (dbProd) {
-          itemGstRate = dbProd.gstRate || 0;
-          itemHsnCode = dbProd.hsnCode || '';
-          itemPriceIncludesGst = dbProd.priceIncludesGst !== undefined ? dbProd.priceIncludesGst : false;
-        }
-
-        const itemGstResult = calculateGST({
-          amount: lineTaxableSubtotal,
-          gstRate: itemGstRate,
-          priceIncludesGst: itemPriceIncludesGst,
-          isInterState,
-          enabled: isGstRegistered
-        });
-
-        calculatedTotalGst += itemGstResult.totalTax;
-        calculatedTotalTaxable += itemGstResult.taxableAmount;
-        calculatedCgst += itemGstResult.cgst;
-        calculatedSgst += itemGstResult.sgst;
-        calculatedIgst += itemGstResult.igst;
-
-        processedItems.push({
-          productId: item.productId || '',
-          productName: item.productName || (dbProd ? dbProd.name : 'Product'),
-          category: item.category || (dbProd ? dbProd.category : '') || '',
-          size: item.size || (dbProd && Array.isArray(dbProd.sizes) ? dbProd.sizes.join(', ') : '') || '',
-          measurementType: isLengthProd ? 'length' : 'piece',
-          sellingUnit,
-          baseQuantity: baseQty,
-          quantity: rawQty,
-          rate: trustedRate,
-          total: rawLineTotal,
-          gstRate: itemGstRate,
-          gstAmount: itemGstResult.totalTax,
-          hsnCode: itemHsnCode,
-          priceIncludesGst: itemPriceIncludesGst,
-          taxableAmount: itemGstResult.taxableAmount,
-          cgst: itemGstResult.cgst,
-          sgst: itemGstResult.sgst,
-          igst: itemGstResult.igst,
-          totalTax: itemGstResult.totalTax
-        });
+      if (dbProd) {
+        itemGstRate = dbProd.gstRate || 0;
+        itemHsnCode = dbProd.hsnCode || '';
+        itemPriceIncludesGst = dbProd.priceIncludesGst !== undefined ? Boolean(dbProd.priceIncludesGst) : true;
+      } else if (item.priceIncludesGst !== undefined) {
+        itemPriceIncludesGst = Boolean(item.priceIncludesGst);
       }
+
+      const itemGstResult = calculateGST({
+        amount: lineTaxableSubtotal,
+        gstRate: itemGstRate,
+        priceIncludesGst: itemPriceIncludesGst,
+        isInterState,
+        enabled: isGstRegistered
+      });
+
+      calculatedTotalGst += itemGstResult.totalTax;
+      calculatedTotalTaxable += itemGstResult.taxableAmount;
+      calculatedCgst += itemGstResult.cgst;
+      calculatedSgst += itemGstResult.sgst;
+      calculatedIgst += itemGstResult.igst;
+
+      processedItems.push({
+        productId: item.productId || '',
+        productName: item.productName || (dbProd ? dbProd.name : 'Product'),
+        category: item.category || (dbProd ? dbProd.category : '') || '',
+        size: item.size || (dbProd && Array.isArray(dbProd.sizes) ? dbProd.sizes.join(', ') : '') || '',
+        measurementType: isLengthProd ? 'length' : 'piece',
+        sellingUnit,
+        baseQuantity: baseQty,
+        quantity: rawQty,
+        rate: trustedRate,
+        total: rawLineTotal,
+        gstRate: itemGstRate,
+        gstAmount: itemGstResult.totalTax,
+        hsnCode: itemHsnCode,
+        priceIncludesGst: itemPriceIncludesGst,
+        taxableAmount: itemGstResult.taxableAmount,
+        cgst: itemGstResult.cgst,
+        sgst: itemGstResult.sgst,
+        igst: itemGstResult.igst,
+        totalTax: itemGstResult.totalTax
+      });
     }
 
     calculatedTotalGst = Math.round(calculatedTotalGst * 100) / 100;
@@ -3171,26 +3336,104 @@ app.post('/api/sales', requireAuth, async (req, res) => {
     calculatedIgst = Math.round(calculatedIgst * 100) / 100;
 
     const taxType = !isGstRegistered ? 'NONE' : (isInterState ? 'IGST' : 'CGST_SGST');
-    const finalTotalAmount = isGstRegistered ? Math.round((calculatedTotalTaxable + calculatedTotalGst) * 100) / 100 : Math.max(0, numericSubtotal - numericDiscount);
+    const finalTotalAmount = isGstRegistered
+      ? Math.round((calculatedTotalTaxable + calculatedTotalGst) * 100) / 100
+      : Math.round(Math.max(0, serverSubtotal - numericDiscount) * 100) / 100;
 
-    // Generate Invoice Number
-    const existingSalesCount = await Sale.countDocuments({ shopId: req.user.shopId });
-    const invoiceNumber = `INV-${String(existingSalesCount + 1).padStart(6, '0')}`;
-    const saleId = `SALE-${Date.now()}`;
+    // ──────────────────────────────────────────────────────────────────────────
+    // WALK-IN CUSTOMER AUTO-SAVE WORKFLOW (runs after input/stock validation)
+    // ──────────────────────────────────────────────────────────────────────────
+    let finalCustomerId = customerId ? String(customerId).trim() : '';
+    let finalCustomerName = customerName ? String(customerName).trim() : '';
 
-    const newSale = new Sale({
+    if (finalCustomerId) {
+      const existingById = await Customer.findOne({ shopId, id: finalCustomerId }).lean();
+      if (existingById) {
+        finalCustomerId = existingById.id;
+        if (!finalCustomerName) finalCustomerName = existingById.name;
+      } else {
+        finalCustomerId = '';
+      }
+    }
+
+    if (!finalCustomerId && customerPhone && String(customerPhone).trim()) {
+      const normalizedPhone = normalizeIndianMobileNumber(customerPhone);
+      if (normalizedPhone) {
+        const existingCust = await Customer.findOne({ shopId, phone: normalizedPhone }).lean();
+        if (existingCust) {
+          finalCustomerId = existingCust.id;
+          if (!finalCustomerName) finalCustomerName = existingCust.name;
+        } else {
+          const newCustId = `CUST-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+          const displayName = finalCustomerName || normalizedPhone;
+
+          const newCust = new Customer({
+            id: newCustId,
+            name: displayName,
+            phone: normalizedPhone,
+            email: '',
+            location: shop?.address || 'Tamil Nadu',
+            status: 'Active',
+            shopId
+          });
+          await newCust.save();
+
+          const { allowWhatsAppOffers } = req.body;
+          const consentStatus = allowWhatsAppOffers === true || allowWhatsAppOffers === 'true' ? 'active' : 'withdrawn';
+          await ConsentRecord.findOneAndUpdate(
+            { userId: newCustId, shopId, purpose: 'marketing' },
+            {
+              $set: {
+                status: consentStatus,
+                consentedAt: consentStatus === 'active' ? new Date() : null,
+                withdrawnAt: consentStatus === 'withdrawn' ? new Date() : null
+              },
+              $setOnInsert: {
+                id: `CNS-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+                userId: newCustId,
+                shopId,
+                purpose: 'marketing',
+                noticeVersion: '1.0'
+              }
+            },
+            { upsert: true, new: true }
+          );
+
+          Activity.create({
+            id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+            customerId: newCustId,
+            type: 'customer_added',
+            description: `Auto-saved walk-in customer: ${displayName}`,
+            shopId
+          }).catch(e => console.error('Walk-in customer activity logging failed:', e));
+
+          finalCustomerId = newCustId;
+          finalCustomerName = displayName;
+        }
+      }
+    }
+
+    if (!finalCustomerName) {
+      finalCustomerName = 'Walk-in Customer';
+    }
+
+    // Generate atomic per-shop Invoice Number & unique Sale ID
+    let invoiceNumber = await allocateNextInvoiceNumber(shopId);
+    const saleId = `SALE-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+    const salePayload = {
       id: saleId,
       invoiceNumber,
       customerId: finalCustomerId,
       customerName: finalCustomerName,
-      customerPhone: customerPhone ? customerPhone.trim() : undefined,
+      customerPhone: customerPhone ? String(customerPhone).trim() : undefined,
       customerState: finalCustState,
       customerStateCode: finalCustStateCode,
       customerGstin: finalCustGstin,
       enquiryId: enquiryId || '',
       followUpId: followUpId || '',
       items: processedItems,
-      subtotal: numericSubtotal,
+      subtotal: serverSubtotal,
       discount: numericDiscount,
       discountType: cleanDiscountType,
       totalGst: isGstRegistered ? calculatedTotalGst : 0,
@@ -3211,121 +3454,156 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       source: source || 'direct',
       saleSource: saleSource || (campaignId ? 'campaign' : 'normal'),
       campaignId: campaignId || '',
-      requestId: cleanRequestId,
       createdBy: {
         userId: req.user.id,
         name: req.user.name || 'User',
         role: req.user.role || 'staff'
       },
-      shopId: req.user.shopId || (req.user.role === 'admin' ? 'ADMIN' : 'demo-shop')
-    });
+      shopId
+    };
+    if (cleanRequestId) {
+      salePayload.requestId = cleanRequestId;
+    }
+
+    let newSale = new Sale(salePayload);
 
     // ──────────────────────────────────────────────────────────────────────────
     // TRANSACTION & ATOMIC STOCK CONCURRENCY
-    // Atomic stock decrement query enforces { availability: { $gte: baseQty } }
-    // Session transaction guarantees Sale + Stock decrement commit or abort together
+    // Deduct stock BEFORE saving Sale so failed stock checks never commit orphan
+    // sales even on standalone MongoDB without replica-set transactions.
     // ──────────────────────────────────────────────────────────────────────────
-    let session = null;
-    let useTransaction = false;
+    for (let invAttempt = 0; invAttempt < 2; invAttempt++) {
+      let session = null;
+      let useTransaction = false;
 
-    try {
-      session = await mongoose.startSession();
-      if (session && session.supports.transactions) {
-        session.startTransaction();
-        useTransaction = true;
-      } else if (session) {
-        await session.endSession();
+      try {
+        session = await mongoose.startSession();
+        if (session && session.supports.transactions) {
+          session.startTransaction();
+          useTransaction = true;
+        } else if (session) {
+          await session.endSession();
+          session = null;
+        }
+      } catch (txInitErr) {
+        if (session) {
+          try { await session.endSession(); } catch (e) {}
+        }
         session = null;
+        useTransaction = false;
       }
-    } catch (txInitErr) {
-      if (session) {
-        try { await session.endSession(); } catch (e) {}
-      }
-      session = null;
-      useTransaction = false;
-    }
 
-    try {
-      const saveOptions = (useTransaction && session) ? { session } : {};
-      await newSale.save(saveOptions);
+      const decrementedProducts = [];
 
-      // Perform atomic conditional stock decrement
-      if (Array.isArray(processedItems) && processedItems.length > 0) {
-        for (const pItem of processedItems) {
-          if (pItem.productId) {
-            const decQty = Number(pItem.baseQuantity) || Number(pItem.quantity) || 1;
-            const updateResult = await Product.updateOne(
-              { id: pItem.productId, shopId: req.user.shopId, availability: { $gte: decQty } },
-              { $inc: { availability: -decQty } },
-              saveOptions
-            );
+      try {
+        const saveOptions = (useTransaction && session) ? { session } : {};
 
-            if (updateResult.matchedCount === 0) {
-              const currentProd = await Product.findOne({ id: pItem.productId, shopId: req.user.shopId });
-              const currentAvail = currentProd ? currentProd.availability : 0;
-              throw new Error(`INSUFFICIENT_STOCK: Stock changed during checkout for ${pItem.productName || pItem.productId}. Available: ${currentAvail}, Requested: ${decQty}`);
-            }
+        // Perform atomic conditional stock decrement per unique product FIRST
+        for (const [prodId, decQty] of requestedQtyByProduct.entries()) {
+          const updateResult = await Product.updateOne(
+            { id: prodId, shopId, availability: { $gte: decQty } },
+            { $inc: { availability: -decQty } },
+            saveOptions
+          );
+
+          if (updateResult.matchedCount === 0) {
+            const currentProd = await Product.findOne({ id: prodId, shopId }).select('name availability').lean();
+            const currentAvail = currentProd ? currentProd.availability : 0;
+            const prodName = currentProd?.name || productMap.get(prodId)?.name || prodId;
+            throw new Error(`INSUFFICIENT_STOCK: Stock changed during checkout for ${prodName}. Available: ${currentAvail}, Requested: ${decQty}`);
+          }
+          decrementedProducts.push({ prodId, decQty });
+        }
+
+        await newSale.save(saveOptions);
+
+        if (enquiryId) {
+          await Enquiry.findOneAndUpdate({ id: enquiryId, shopId }, { purchaseStatus: 'Purchased' }, saveOptions);
+        }
+
+        if (followUpId) {
+          await FollowUp.findOneAndUpdate({ id: followUpId, shopId }, { status: 'closed', outcome: 'Purchased', completedAt: new Date() }, saveOptions);
+        }
+
+        if (useTransaction && session) {
+          await session.commitTransaction();
+        }
+        break;
+      } catch (saveErr) {
+        if (useTransaction && session) {
+          await session.abortTransaction();
+        } else if (decrementedProducts.length > 0) {
+          // Manual compensating rollback for standalone MongoDB
+          for (const dec of decrementedProducts) {
+            await Product.updateOne(
+              { id: dec.prodId, shopId },
+              { $inc: { availability: dec.decQty } }
+            ).catch(rbErr => console.error('Stock rollback failed:', dec.prodId, rbErr));
           }
         }
-      }
 
-      if (enquiryId) {
-        await Enquiry.findOneAndUpdate({ id: enquiryId, shopId: req.user.shopId }, { purchaseStatus: 'Purchased' }, saveOptions);
-      }
-
-      if (followUpId) {
-        await FollowUp.findOneAndUpdate({ id: followUpId, shopId: req.user.shopId }, { status: 'closed', outcome: 'Purchased', completedAt: new Date() }, saveOptions);
-      }
-
-      if (useTransaction && session) {
-        await session.commitTransaction();
-      }
-    } catch (saveErr) {
-      if (useTransaction && session) {
-        await session.abortTransaction();
-      }
-
-      // Handle MongoDB Duplicate Key (E11000) race condition for requestId
-      if (saveErr.code === 11000 && cleanRequestId && saveErr.message.includes('requestId')) {
-        console.warn(`[IDEMPOTENCY] Race condition caught by MongoDB unique index for requestId: ${cleanRequestId}`);
-        const existingSale = await Sale.findOne({ shopId: req.user.shopId, requestId: cleanRequestId }).lean();
-        if (existingSale) {
-          return res.status(200).json({
-            success: true,
-            sale: existingSale,
-            duplicate: true
-          });
+        // Handle MongoDB Duplicate Key (E11000) race condition for requestId
+        if (saveErr.code === 11000 && cleanRequestId) {
+          const existingSale = await Sale.findOne({ shopId, requestId: cleanRequestId }).lean();
+          if (existingSale) {
+            console.warn(`[IDEMPOTENCY] Race condition caught by MongoDB unique index for requestId: ${cleanRequestId}`);
+            return res.status(200).json({
+              success: true,
+              sale: existingSale,
+              duplicate: true
+            });
+          }
         }
-      }
 
-      if (saveErr.message && saveErr.message.startsWith('INSUFFICIENT_STOCK:')) {
-        return res.status(400).json({ error: saveErr.message.replace('INSUFFICIENT_STOCK: ', '') });
-      }
+        // Recover once if an unseeded historical invoice collided on { shopId, invoiceNumber }
+        const isInvoiceDup = saveErr.code === 11000 && (saveErr.keyPattern?.invoiceNumber || saveErr.message?.includes('invoiceNumber'));
+        if (isInvoiceDup && invAttempt === 0) {
+          console.warn(`[INVOICE COUNTER SYNC] Repairing sequence after collision for shop ${shopId}`);
+          await ensureInvoiceCounterInitialized(shopId);
+          invoiceNumber = await allocateNextInvoiceNumber(shopId);
+          salePayload.invoiceNumber = invoiceNumber;
+          newSale = new Sale(salePayload);
+          continue;
+        }
 
-      throw saveErr;
-    } finally {
-      if (session) {
-        await session.endSession();
+        if (saveErr.message && saveErr.message.startsWith('INSUFFICIENT_STOCK:')) {
+          return res.status(400).json({ error: saveErr.message.replace('INSUFFICIENT_STOCK: ', '') });
+        }
+
+        throw saveErr;
+      } finally {
+        if (session) {
+          await session.endSession();
+        }
       }
     }
 
-    // Helper for reliable customer statistics recalculation
+    // Helper for reliable customer statistics recalculation via aggregation
     const recalculateCustomerStats = async (custId, sId) => {
       try {
-        const custSales = await Sale.find({ customerId: custId, shopId: sId }).lean();
-        const count = custSales.length;
-        const totalSpend = custSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
-        const lastSale = custSales.length > 0 ? custSales.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] : null;
-        const lastPurchaseStr = lastSale ? new Date(lastSale.createdAt).toISOString() : '';
+        const [stats] = await Sale.aggregate([
+          { $match: { customerId: custId, shopId: sId } },
+          {
+            $group: {
+              _id: null,
+              count: { $sum: 1 },
+              totalSpend: { $sum: { $ifNull: ['$totalAmount', 0] } },
+              lastCreatedAt: { $max: '$createdAt' }
+            }
+          }
+        ]);
+        const count = stats?.count || 0;
+        const totalSpend = Math.round((stats?.totalSpend || 0) * 100) / 100;
+        const lastPurchaseStr = stats?.lastCreatedAt ? new Date(stats.lastCreatedAt).toISOString() : '';
 
         await Customer.updateOne(
           { id: custId, shopId: sId },
-          { 
-            $set: { 
-              totalPurchases: count, 
+          {
+            $set: {
+              totalPurchases: count,
               totalSpending: totalSpend,
               'preferences.lastPurchase': lastPurchaseStr
-            } 
+            }
           }
         );
       } catch (e) {
@@ -3333,23 +3611,19 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       }
     };
 
-    // Atomic background recalculation of derived Customer purchase count, spending, & last purchase
     if (finalCustomerId) {
-      recalculateCustomerStats(finalCustomerId, req.user.shopId);
+      recalculateCustomerStats(finalCustomerId, shopId);
     }
-
-
 
     const totalDuration = Date.now() - perfStart;
     console.log(`[PERF] POST /api/sales - total: ${totalDuration}ms`);
 
-    // Asynchronous non-blocking activity logging
     Activity.create({
-      id: `ACT-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      customerId: customerId || 'walk-in',
+      id: `ACT-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      customerId: finalCustomerId || 'walk-in',
       type: 'sale_completed',
-      description: `Bill generated: ${invoiceNumber} for ₹${totalAmount}`,
-      shopId: req.user.shopId
+      description: `Bill generated: ${newSale.invoiceNumber} for ₹${finalTotalAmount}`,
+      shopId
     }).catch(e => console.error('Background activity logging failed:', e));
 
     res.status(201).json({ success: true, sale: newSale, duplicate: false });
@@ -3361,51 +3635,77 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 });
 
 
-app.delete('/api/sales', requireAuth, async (req, res) => {
+app.delete('/api/sales', requireAuth, requireNonStaff, async (req, res) => {
   try {
+    const shopId = req.user.shopId;
+    if (!shopId) {
+      return res.status(403).json({ success: false, error: 'Shop context required' });
+    }
+
     let rawBody = req.body;
     if (typeof rawBody === 'string') {
       try { rawBody = JSON.parse(rawBody); } catch (e) {}
     }
-    let ids = rawBody?.ids || (rawBody?.id ? [rawBody.id] : null) || (req.query?.id ? [req.query.id] : null) || (req.query?.ids ? String(req.query.ids).split(',') : null);
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    const rawIds = rawBody?.ids || (rawBody?.id ? [rawBody.id] : null) || (req.query?.id ? [req.query.id] : null) || (req.query?.ids ? String(req.query.ids).split(',') : null);
+    const ids = Array.isArray(rawIds)
+      ? [...new Set(rawIds.map(id => (typeof id === 'string' ? id.trim() : '')).filter(Boolean))]
+      : [];
+
+    if (ids.length === 0) {
       return res.status(400).json({ success: false, error: 'A non-empty array of sale IDs is required.' });
     }
 
-    // Find all sales belonging to authenticated shop matching provided IDs
-    const salesToDelete = await Sale.find({ id: { $in: ids }, shopId: req.user.shopId });
-    if (salesToDelete.length === 0) {
-      return res.status(404).json({ success: false, error: 'No matching sales found for your shop.' });
-    }
-
-    // Restore Product Stock for each deleted sale using bulk increment
-    for (const sale of salesToDelete) {
-      if (Array.isArray(sale.items) && sale.items.length > 0) {
-        for (const item of sale.items) {
-          if (item.productId) {
-            const qty = Number(item.quantity) || 1;
-            await Product.updateOne(
-              { id: item.productId, shopId: req.user.shopId },
-              { $inc: { availability: qty } }
-            );
+    // Atomically claim and delete each sale BEFORE restoring stock to prevent double-restoration under concurrency
+    const deletedSales = [];
+    for (const saleId of ids) {
+      const deletedSale = await Sale.findOneAndDelete({ id: saleId, shopId }).lean();
+      if (deletedSale) {
+        deletedSales.push(deletedSale);
+        if (Array.isArray(deletedSale.items) && deletedSale.items.length > 0) {
+          for (const item of deletedSale.items) {
+            if (item.productId) {
+              const restoreQty = Number(item.baseQuantity) || Number(item.quantity) || 0;
+              if (restoreQty > 0) {
+                await Product.updateOne(
+                  { id: item.productId, shopId },
+                  { $inc: { availability: restoreQty } }
+                );
+              }
+            }
           }
         }
       }
     }
 
-    // Permanently remove matching sale records
-    const deletedIds = salesToDelete.map(s => s.id);
-    const affectedCustIds = [...new Set(salesToDelete.map(s => s.customerId).filter(Boolean))];
-    await Sale.deleteMany({ id: { $in: deletedIds }, shopId: req.user.shopId });
+    if (deletedSales.length === 0) {
+      return res.status(404).json({ success: false, error: 'No matching sales found for your shop.' });
+    }
 
-    // Recalculate purchase count & total spending for affected customers
+    const deletedIds = deletedSales.map(s => s.id);
+    const affectedCustIds = [...new Set(deletedSales.map(s => s.customerId).filter(Boolean))];
+
+    // Recalculate purchase count & total spending for affected customers via aggregation
     for (const cId of affectedCustIds) {
-      const remainingSales = await Sale.find({ customerId: cId, shopId: req.user.shopId }).lean();
-      const count = remainingSales.length;
-      const totalSpend = remainingSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+      const [stats] = await Sale.aggregate([
+        { $match: { customerId: cId, shopId } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            totalSpend: { $sum: { $ifNull: ['$totalAmount', 0] } },
+            lastCreatedAt: { $max: '$createdAt' }
+          }
+        }
+      ]);
       await Customer.updateOne(
-        { id: cId, shopId: req.user.shopId },
-        { $set: { totalPurchases: count, totalSpending: totalSpend } }
+        { id: cId, shopId },
+        {
+          $set: {
+            totalPurchases: stats?.count || 0,
+            totalSpending: Math.round((stats?.totalSpend || 0) * 100) / 100,
+            'preferences.lastPurchase': stats?.lastCreatedAt ? new Date(stats.lastCreatedAt).toISOString() : ''
+          }
+        }
       );
     }
 
@@ -3422,18 +3722,26 @@ app.delete('/api/sales', requireAuth, async (req, res) => {
 
 app.get('/api/activities', requireAuth, async (req, res) => {
   try {
-    const list = await Activity.find({ shopId: req.user.shopId }).sort({ createdAt: -1 });
+    if (!req.user.shopId) {
+      return res.status(403).json({ error: 'Shop context required' });
+    }
+    const parsedLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const list = await Activity.find({ shopId: req.user.shopId }).sort({ createdAt: -1 }).limit(limit).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch activities' });
   }
 });
 // Delete Enquiry endpoint with safe cascade
-app.delete('/api/enquiries/:id', requireAuth, async (req, res) => {
+app.delete('/api/enquiries/:id', requireAuth, requireNonStaff, async (req, res) => {
   try {
+    if (!req.user.shopId) {
+      return res.status(403).json({ error: 'Shop context required' });
+    }
     const enquiryId = req.params.id;
     // Find and delete the enquiry belonging to the shop
-    const enquiry = await Enquiry.findOneAndDelete({ id: enquiryId, shopId: req.user.shopId });
+    const enquiry = await Enquiry.findOneAndDelete({ id: enquiryId, shopId: req.user.shopId }).lean();
     if (!enquiry) {
       return res.status(404).json({ error: 'Enquiry not found' });
     }
@@ -3460,16 +3768,8 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Shop context required for dashboard metrics' });
     }
 
-    // Authoritative IST Today Date Boundaries
-    const istOffsetMs = 5.5 * 60 * 60 * 1000;
-    const now = new Date();
-    const istNow = new Date(now.getTime() + istOffsetMs);
-    const istYear = istNow.getUTCFullYear();
-    const istMonth = istNow.getUTCMonth();
-    const istDate = istNow.getUTCDate();
-
-    const startOfToday = new Date(Date.UTC(istYear, istMonth, istDate, 0, 0, 0, 0) - istOffsetMs);
-    const endOfToday = new Date(Date.UTC(istYear, istMonth, istDate, 23, 59, 59, 999) - istOffsetMs);
+    const isStaff = req.user.role === 'staff';
+    const { startOfToday, endOfToday } = getISTDayBounds();
 
     const [
       activeFollowUpsCount,
@@ -3479,12 +3779,12 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       totalEnquiriesCount,
       todayEnquiriesCount,
       todayPurchasedEnquiriesCount,
-      todaySalesDocs,
+      todaySalesAgg,
       totalCustomersCount,
       totalProductsCount,
-      recoveredSalesDocs,
+      recoveredSalesAgg,
       completedFwCount,
-      totalMsgs
+      totalOutreachFwCount
     ] = await Promise.all([
       FollowUp.countDocuments({ shopId, status: { $in: ['ready', 'sent', 'scheduled', 'snoozed'] } }),
       FollowUp.countDocuments({ shopId, status: { $in: ['ready', 'scheduled', 'snoozed'] }, scheduledAt: { $lt: startOfToday } }),
@@ -3492,22 +3792,27 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       FollowUp.countDocuments({ shopId, status: { $in: ['ready', 'scheduled', 'snoozed'] }, scheduledAt: { $gt: endOfToday } }),
       Enquiry.countDocuments({ shopId }),
       Enquiry.countDocuments({ shopId, createdAt: { $gte: startOfToday, $lte: endOfToday } }),
-      Enquiry.countDocuments({ shopId, createdAt: { $gte: startOfToday, $lte: endOfToday }, purchaseStatus: 'Purchased' }),
-      Sale.find({ shopId, createdAt: { $gte: startOfToday, $lte: endOfToday } }).lean(),
+      isStaff ? Promise.resolve(0) : Enquiry.countDocuments({ shopId, createdAt: { $gte: startOfToday, $lte: endOfToday }, purchaseStatus: 'Purchased' }),
+      isStaff ? Promise.resolve([]) : Sale.aggregate([
+        { $match: { shopId, createdAt: { $gte: startOfToday, $lte: endOfToday } } },
+        { $group: { _id: null, count: { $sum: 1 }, revenue: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+      ]),
       Customer.countDocuments({ shopId }),
       Product.countDocuments({ shopId }),
-      Sale.find({ shopId, source: 'quickr_followup' }).lean(),
+      isStaff ? Promise.resolve([]) : Sale.aggregate([
+        { $match: { shopId, source: 'quickr_followup' } },
+        { $group: { _id: null, count: { $sum: 1 }, revenue: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+      ]),
       FollowUp.countDocuments({ shopId, status: { $in: ['completed', 'closed'] } }),
-      Message.countDocuments({ shopId })
+      FollowUp.countDocuments({ shopId, status: { $in: ['sent', 'completed', 'closed'] } })
     ]);
 
-    const todaySalesCount = todaySalesDocs.length;
-    const todayRevenue = todaySalesDocs.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-    const recoveredSalesAmount = recoveredSalesDocs.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-    const conversionsCount = recoveredSalesDocs.length;
-    const conversionRate = completedFwCount > 0 ? Math.round((conversionsCount / completedFwCount) * 100) : 0;
-
-    const isStaff = req.user.role === 'staff';
+    const todaySalesCount = todaySalesAgg[0]?.count || 0;
+    const todayRevenue = Math.round((todaySalesAgg[0]?.revenue || 0) * 100) / 100;
+    const recoveredSalesAmount = Math.round((recoveredSalesAgg[0]?.revenue || 0) * 100) / 100;
+    const conversionsCount = recoveredSalesAgg[0]?.count || 0;
+    const conversionRate = completedFwCount > 0 ? Math.min(100, Math.round((conversionsCount / completedFwCount) * 100)) : 0;
+    const responseRate = totalOutreachFwCount > 0 ? Math.min(100, Math.round((completedFwCount / totalOutreachFwCount) * 100)) : 0;
 
     res.json({
       // Today Specific Metrics (IST) - Hidden for Staff
@@ -3516,7 +3821,7 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       todayEnquiriesCount,
       todayPurchasesCount: isStaff ? undefined : todayPurchasedEnquiriesCount,
       todayFollowUpsCount,
-      
+
       // Follow-up Breakdown
       activeFollowUps: activeFollowUpsCount,
       overdueFollowUps: overdueFollowUpsCount,
@@ -3528,11 +3833,11 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       totalProducts: totalProductsCount,
       totalEnquiries: totalEnquiriesCount,
 
-      // Historical Conversions & Messages - Hidden for Staff
+      // Historical Conversions & Follow-Up Outcomes - Hidden for Staff
       recoveredSales: isStaff ? undefined : recoveredSalesAmount,
       conversions: isStaff ? undefined : conversionsCount,
       conversionRate: isStaff ? undefined : conversionRate,
-      responseRate: totalMsgs > 0 ? 85 : 0
+      responseRate
     });
   } catch (err) {
     console.error('Dashboard metrics error:', err);
@@ -3550,12 +3855,9 @@ app.use('/api/privacy', privacyRouter);
 app.use('/api/campaigns', campaignRouter);
 app.use('/api/reengagement', reengagementRouter);
 
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'QuickR Phase 6 Admin API Operational', 
-    mongoConnected: mongoose.connection.readyState === 1 
-  });
+// Unmatched API routes return clean JSON 404 instead of HTML
+app.use('/api', (req, res) => {
+  res.status(404).json({ success: false, error: 'API endpoint not found' });
 });
 
 // Centralized Global Express Error Handling Middleware
@@ -3578,25 +3880,38 @@ app.use((err, req, res, next) => {
   });
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`🚀 QuickR API Server running on port ${PORT}`);
-  
-  // Background campaign media cleanup on server start and every 6 hours
-  import('./routes/campaigns.js').then(({ cleanupExpiredCampaignMedia }) => {
-    cleanupExpiredCampaignMedia();
-    setInterval(() => {
-      cleanupExpiredCampaignMedia();
-    }, 6 * 60 * 60 * 1000);
-  }).catch(() => {});
+let campaignCleanupInterval = null;
+let storageCleanupInterval = null;
+let server = null;
 
-  // Background 90-day storage cleanup runner (processes approved shop cleanups)
-  import('./services/storageCleanupService.js').then(({ runScheduledStorageCleanup }) => {
-    runScheduledStorageCleanup();
-    setInterval(() => {
+if (!IS_TEST_IMPORT) {
+  server = app.listen(PORT, () => {
+    console.log(`🚀 QuickR API Server running on port ${PORT}`);
+
+    // Background campaign media cleanup on server start and every 6 hours
+    import('./routes/campaigns.js').then(({ cleanupExpiredCampaignMedia }) => {
+      cleanupExpiredCampaignMedia();
+      campaignCleanupInterval = setInterval(() => {
+        cleanupExpiredCampaignMedia();
+      }, 6 * 60 * 60 * 1000);
+      campaignCleanupInterval.unref();
+    }).catch(() => {});
+
+    // Background campaign worker recovery (resumes interrupted campaigns safely)
+    import('./services/campaignWorker.js').then(({ initWorkerRecovery }) => {
+      initWorkerRecovery();
+    }).catch(() => {});
+
+    // Background 90-day storage cleanup runner (processes approved shop cleanups)
+    import('./services/storageCleanupService.js').then(({ runScheduledStorageCleanup }) => {
       runScheduledStorageCleanup();
-    }, 6 * 60 * 60 * 1000);
-  }).catch(() => {});
-});
+      storageCleanupInterval = setInterval(() => {
+        runScheduledStorageCleanup();
+      }, 6 * 60 * 60 * 1000);
+      storageCleanupInterval.unref();
+    }).catch(() => {});
+  });
+}
 
 // Graceful Shutdown Handlers (SIGTERM & SIGINT)
 let isShuttingDown = false;
@@ -3606,11 +3921,17 @@ const gracefulShutdown = (signal) => {
   isShuttingDown = true;
 
   console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+  if (campaignCleanupInterval) {
+    clearInterval(campaignCleanupInterval);
+    campaignCleanupInterval = null;
+  }
+  if (storageCleanupInterval) {
+    clearInterval(storageCleanupInterval);
+    storageCleanupInterval = null;
+  }
 
-  // Stop accepting new HTTP connections
-  server.close(async () => {
+  const finishClose = async () => {
     console.log('🔒 HTTP server closed to new connections.');
-
     try {
       if (mongoose.connection.readyState !== 0) {
         await mongoose.connection.close(false);
@@ -3619,10 +3940,15 @@ const gracefulShutdown = (signal) => {
     } catch (err) {
       console.error('Error during MongoDB closure:', err.message);
     }
-
     console.log('👋 QuickR Backend graceful shutdown complete.');
     process.exit(0);
-  });
+  };
+
+  if (server) {
+    server.close(finishClose);
+  } else {
+    finishClose();
+  }
 
   // Force shutdown after 10 seconds timeout if requests hang
   setTimeout(() => {
@@ -3631,6 +3957,13 @@ const gracefulShutdown = (signal) => {
   }, 10000).unref();
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+if (!IS_TEST_IMPORT) {
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => {
+    console.error('[UNHANDLED PROMISE REJECTION]:', reason instanceof Error ? reason.stack || reason.message : reason);
+  });
+}
+
+export { app };
 

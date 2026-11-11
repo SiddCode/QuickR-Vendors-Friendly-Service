@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { useLanguage } from '../context/LanguageContext';
 import { api } from '../services/api';
+import { useDebounce } from '../hooks/useDebounce';
 import { 
   Users, 
   RefreshCw, 
@@ -28,6 +29,7 @@ export const CustomerReengagement: React.FC<CustomerReengagementProps> = ({
   const [permissionFilter, setPermissionFilter] = useState<string>('ALL');
   const [phoneFilter, setPhoneFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const debouncedSearch = useDebounce(searchQuery, 200);
 
   const [summary, setSummary] = useState<any>(null);
   const [customersList, setCustomersList] = useState<any[]>([]);
@@ -85,12 +87,16 @@ export const CustomerReengagement: React.FC<CustomerReengagementProps> = ({
 
   const activeProducts = products.filter(p => p.isActive);
 
-  // Client-side search filtering
-  const filteredCustomers = customersList.filter(c => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return c.name.toLowerCase().includes(q) || c.phone.includes(q) || c.lastPurchasedProduct.toLowerCase().includes(q);
-  });
+  // Client-side debounced search filtering
+  const filteredCustomers = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return customersList;
+    return customersList.filter(c =>
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.phone || '').includes(debouncedSearch.trim()) ||
+      (c.lastPurchasedProduct || '').toLowerCase().includes(q)
+    );
+  }, [customersList, debouncedSearch]);
 
   return (
     <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">

@@ -29,4 +29,7 @@ userSchema.pre('save', function (next) {
   next();
 });
 
+userSchema.index({ id: 1, shopId: 1 });
+userSchema.index({ id: 1, role: 1 });
+
 export const User = mongoose.model('User', userSchema);

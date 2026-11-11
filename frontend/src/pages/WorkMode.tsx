@@ -12,18 +12,13 @@ interface WorkModeProps {
 }
 
 export const WorkMode: React.FC<WorkModeProps> = ({ setCurrentPage, setSelectedCustomerId, setBillingInitialData }) => {
-  const { todayWork, handleOutcomeNoResponse, handleOutcomeNotInterested, shopName } = useApp();
+  const { todayWork, handleOutcomeNoResponse, handleOutcomeNotInterested, shopName, refreshTodayWork } = useApp();
+  const [workFetchFailed, setWorkFetchFailed] = useState(false);
 
   // ─── QUEUE STATE ─────────────────────────────────────────────────────────────
   // null  = not yet initialised (show loading spinner)
   // []    = initialised and genuinely empty (show "all caught up")
   // [...]  = has tasks (show work mode UI)
-  //
-  // IMPORTANT: We use null vs [] to distinguish "loading" from "empty" so we
-  // never accidentally show "You're all caught up!" on the first render while
-  // the useEffect is still pending. React renders synchronously; useEffect runs
-  // AFTER paint — so a queue initialised with [] would flash "all caught up" on
-  // every component mount even when 8 tasks exist.
   const [queue, setQueue] = useState<any[] | null>(null);
 
   // Guard: only snapshot the queue once per component mount. We must NOT rebuild
@@ -55,6 +50,28 @@ export const WorkMode: React.FC<WorkModeProps> = ({ setCurrentPage, setSelectedC
   }> | null>(null);
 
   useEffect(() => {
+    if (queueInitialised.current) return;
+    if (todayWork) return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled && !queueInitialised.current) {
+        setWorkFetchFailed(true);
+      }
+    }, 6000);
+
+    refreshTodayWork()
+      .catch(() => {
+        if (!cancelled) setWorkFetchFailed(true);
+      });
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [todayWork, refreshTodayWork]);
+
+  useEffect(() => {
     // Only initialise once.
     if (queueInitialised.current) return;
     if (!todayWork) return;
@@ -62,15 +79,8 @@ export const WorkMode: React.FC<WorkModeProps> = ({ setCurrentPage, setSelectedC
     const dueToday: any[] = Array.isArray(todayWork.dueToday) ? todayWork.dueToday : [];
     const overdue: any[] = Array.isArray(todayWork.overdue) ? todayWork.overdue : [];
 
-    console.log('========== WORK MODE QUEUE BUILD ==========');
-    console.log('API dueToday length:', dueToday.length);
-    console.log('API overdue length:', overdue.length);
-    console.log('API dueToday IDs:', dueToday.map(t => t.id));
-    console.log('API overdue IDs:', overdue.map(t => t.id));
-
     // Combine: today's tasks first (most relevant), then overdue.
     // Deduplicate strictly by unique follow-up ID — never by customerId.
-    // Different customers must always have separate queue entries.
     const seen = new Set<string>();
     const combined: any[] = [];
 
@@ -82,21 +92,41 @@ export const WorkMode: React.FC<WorkModeProps> = ({ setCurrentPage, setSelectedC
       }
     });
 
-    console.log('FINAL QUEUE length:', combined.length);
-    console.log('FINAL QUEUE IDs:', combined.map(t => t.id + ' cust=' + (t.customer?.name || t.customerId)));
-    console.log('===========================================');
-
     setQueue(combined);
+    setWorkFetchFailed(false);
     queueInitialised.current = true;
   }, [todayWork]);
 
   // ─── DERIVE CURRENT TASK ─────────────────────────────────────────────────────
   const currentTask = queue !== null ? (queue[currentIndex] ?? null) : null;
 
-  console.log('[WorkMode] queue:', queue?.length, 'currentIndex:', currentIndex, 'currentTask id:', currentTask?.id);
-
-  // ─── LOADING STATE (queue not yet built) ─────────────────────────────────────
+  // ─── LOADING / ERROR STATE (queue not yet built) ─────────────────────────────
   if (queue === null) {
+    if (workFetchFailed) {
+      return (
+        <div className="flex-grow p-8 flex flex-col items-center justify-center font-sans text-center">
+          <AlertCircle className="w-10 h-10 text-amber-500 mb-3" />
+          <p className="text-slate-700 font-semibold text-sm mb-3">Couldn&apos;t load today&apos;s work queue.</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setWorkFetchFailed(false);
+                refreshTodayWork().catch(() => setWorkFetchFailed(true));
+              }}
+              className="px-4 py-2 bg-primary-600 text-white text-xs font-bold rounded-xl hover:bg-primary-700 inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Retry
+            </button>
+            <button
+              onClick={() => setCurrentPage('dashboard')}
+              className="px-4 py-2 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl hover:bg-slate-50"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex-grow p-8 flex flex-col items-center justify-center font-sans">
         <p className="text-slate-500 text-sm">Loading work queue…</p>
@@ -117,10 +147,6 @@ export const WorkMode: React.FC<WorkModeProps> = ({ setCurrentPage, setSelectedC
           {totalDone > 0
             ? `You've worked through all ${totalDone} tasks. Great job!`
             : 'There are no customers needing your attention right now. Great job keeping your queue clean.'}
-        </p>
-        {/* DEBUG: remove before production */}
-        <p className="text-xs text-slate-300 mb-4">
-          [DEBUG] API dueToday: {todayWork?.dueToday?.length ?? 0} | API overdue: {todayWork?.overdue?.length ?? 0} | Queue: {queue.length} | Index: {currentIndex}
         </p>
         <button
           onClick={() => setCurrentPage('dashboard')}

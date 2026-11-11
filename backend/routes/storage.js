@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireNonStaff } from '../middleware/auth.js';
 import { StorageCleanupSetting } from '../models/StorageCleanupSetting.js';
 import { PrivacyAuditLog } from '../models/PrivacyAuditLog.js';
 import { getCleanupMetrics, executeShopCleanup } from '../services/storageCleanupService.js';
@@ -8,42 +8,24 @@ export const storageRouter = express.Router();
 
 /**
  * GET /api/storage/cleanup
- * Returns cleanup metrics and approval status for the authenticated shop.
- * Enforces strict shop isolation (req.user.shopId).
+ * Returns cleanup metrics and approval status for the authenticated shop (read-only).
+ * Enforces strict shop isolation (req.user.shopId) and non-staff access.
  */
-storageRouter.get('/cleanup', requireAuth, async (req, res) => {
+storageRouter.get('/cleanup', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user.shopId;
     if (!shopId) {
       return res.status(400).json({ error: 'Shop ID is required' });
     }
 
-    const metrics = await getCleanupMetrics(shopId);
+    const [metrics, setting] = await Promise.all([
+      getCleanupMetrics(shopId),
+      StorageCleanupSetting.findOne({ shopId }).lean()
+    ]);
 
-    let setting = await StorageCleanupSetting.findOne({ shopId });
-    if (!setting) {
-      setting = await StorageCleanupSetting.create({
-        shopId,
-        status: metrics.totalEligible > 0 ? 'PENDING_APPROVAL' : 'NO_ACTION',
-        eligibleEnquiriesCount: metrics.eligibleEnquiries,
-        eligibleFollowUpsCount: metrics.eligibleFollowUps,
-        eligibleActivitiesCount: metrics.eligibleActivities,
-        totalEligibleCount: metrics.totalEligible
-      });
-    } else {
-      // Update fresh counts
-      setting.eligibleEnquiriesCount = metrics.eligibleEnquiries;
-      setting.eligibleFollowUpsCount = metrics.eligibleFollowUps;
-      setting.eligibleActivitiesCount = metrics.eligibleActivities;
-      setting.totalEligibleCount = metrics.totalEligible;
-
-      if (setting.status === 'APPROVED' && setting.approvedAt) {
-        // Kept as APPROVED until completed
-      } else {
-        setting.status = metrics.totalEligible > 0 ? 'PENDING_APPROVAL' : 'NO_ACTION';
-      }
-      await setting.save();
-    }
+    const currentStatus = (setting?.status === 'APPROVED' && setting?.approvedAt)
+      ? 'APPROVED'
+      : (metrics.totalEligible > 0 ? 'PENDING_APPROVAL' : 'NO_ACTION');
 
     res.json({
       success: true,
@@ -52,12 +34,12 @@ storageRouter.get('/cleanup', requireAuth, async (req, res) => {
       eligibleFollowUps: metrics.eligibleFollowUps,
       eligibleActivities: metrics.eligibleActivities,
       totalEligible: metrics.totalEligible,
-      approvalRequired: metrics.totalEligible > 0 && setting.status !== 'APPROVED',
-      status: setting.status,
-      approvedAt: setting.approvedAt,
-      approvedByUserId: setting.approvedByUserId,
-      lastCleanupAt: setting.lastCleanupAt,
-      lastCleanupSummary: setting.lastCleanupSummary || null
+      approvalRequired: metrics.totalEligible > 0 && currentStatus !== 'APPROVED',
+      status: currentStatus,
+      approvedAt: setting?.approvedAt || null,
+      approvedByUserId: setting?.approvedByUserId || '',
+      lastCleanupAt: setting?.lastCleanupAt || null,
+      lastCleanupSummary: setting?.lastCleanupSummary || null
     });
 
   } catch (err) {
@@ -71,7 +53,7 @@ storageRouter.get('/cleanup', requireAuth, async (req, res) => {
  * Records owner approval for 30-day cleanup.
  * DOES NOT delete records immediately — sets approvedAt timestamp and marks status as APPROVED.
  */
-storageRouter.post('/cleanup/approve', requireAuth, async (req, res) => {
+storageRouter.post('/cleanup/approve', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user.shopId;
     if (!shopId) {

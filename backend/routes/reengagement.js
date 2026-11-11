@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireNonStaff } from '../middleware/auth.js';
 import { Sale } from '../models/Sale.js';
 import { Customer } from '../models/Customer.js';
 import { Product } from '../models/Product.js';
@@ -8,9 +8,13 @@ import { CampaignRecipient } from '../models/CampaignRecipient.js';
 
 export const reengagementRouter = express.Router();
 
-// Helper: Fetch marketing consent map for a list of customer IDs
+// Helper: Fetch explicit active marketing consent map (fail-closed)
 const getMarketingConsentMap = async (customerIds, shopId) => {
+  if (!Array.isArray(customerIds) || customerIds.length === 0) {
+    return { hasPermission: () => false };
+  }
   const consents = await ConsentRecord.find({
+    shopId,
     userId: { $in: customerIds },
     purpose: 'marketing'
   }).lean();
@@ -18,38 +22,41 @@ const getMarketingConsentMap = async (customerIds, shopId) => {
   const consentMap = new Map(consents.map(c => [c.userId, c.status]));
   return {
     hasPermission: (cust) => {
-      const status = consentMap.get(cust.id);
-      if (status === 'active') return true;
-      if (status === 'withdrawn') return false;
-      // Default: Active status customers have offer permission enabled
-      return cust.status === 'Active' || !cust.status;
+      // Fail-closed: only explicit active marketing consent grants permission
+      return consentMap.get(cust.id) === 'active';
     }
   };
 };
 
 // Helper: Fetch recently contacted customer IDs (contacted via campaign in past 14 days)
 const getRecentlyContactedMap = async (customerIds, shopId) => {
+  if (!Array.isArray(customerIds) || customerIds.length === 0) {
+    return new Set();
+  }
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
   const recentRecipients = await CampaignRecipient.find({
     shopId,
     customerId: { $in: customerIds },
     createdAt: { $gte: fourteenDaysAgo }
-  }).lean();
+  }).select('customerId').lean();
   return new Set(recentRecipients.map(r => r.customerId));
 };
 
 // ----------------------------------------------------------------------
 // 1. GET /api/reengagement/summary — Dashboard summary metrics for shop
 // ----------------------------------------------------------------------
-reengagementRouter.get('/summary', requireAuth, async (req, res) => {
+reengagementRouter.get('/summary', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user.shopId;
     if (req.user.role === 'admin') {
       return res.status(400).json({ error: 'Admin operates in aggregate numbers-only mode.' });
     }
+    if (!shopId) {
+      return res.status(403).json({ error: 'Shop context required' });
+    }
 
-    const { days = '30' } = req.query;
-    const daysCutoffNum = parseInt(days, 10) || 30;
+    const parsedDays = parseInt(String(req.query?.days ?? '30'), 10);
+    const daysCutoffNum = Number.isFinite(parsedDays) ? Math.min(Math.max(parsedDays, 1), 3650) : 30;
     const cutoffDate = new Date(Date.now() - daysCutoffNum * 24 * 60 * 60 * 1000);
 
     // Aggregate latest sale per customer for this shop
@@ -105,7 +112,8 @@ reengagementRouter.get('/summary', requireAuth, async (req, res) => {
       recommendedCount
     });
   } catch (err) {
-    res.status(500).json({ error: `Failed to fetch re-engagement summary: ${err.message}` });
+    console.error('Failed to fetch re-engagement summary:', err);
+    res.status(500).json({ error: 'Failed to fetch re-engagement summary' });
   }
 });
 
@@ -113,20 +121,28 @@ reengagementRouter.get('/summary', requireAuth, async (req, res) => {
 // 2. GET /api/reengagement/customers — Filtered re-engagement candidates
 // Query params: ?days=30&productId=PROD-1&permission=ALL|ENABLED|DISABLED&phone=ALL|HAS_PHONE|NO_PHONE
 // ----------------------------------------------------------------------
-reengagementRouter.get('/customers', requireAuth, async (req, res) => {
+reengagementRouter.get('/customers', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const shopId = req.user.shopId;
     if (req.user.role === 'admin') {
       return res.status(400).json({ error: 'Admin operates in aggregate numbers-only mode.' });
     }
+    if (!shopId) {
+      return res.status(403).json({ error: 'Shop context required' });
+    }
 
-    const { days = '30', productId, permission = 'ALL', phone = 'ALL' } = req.query;
-    const daysCutoffNum = parseInt(days, 10) || 30;
+    const rawDays = req.query?.days ?? '30';
+    const rawProductId = typeof req.query?.productId === 'string' ? req.query.productId.trim() : '';
+    const permission = ['ALL', 'ENABLED', 'DISABLED'].includes(req.query?.permission) ? req.query.permission : 'ALL';
+    const phone = ['ALL', 'HAS_PHONE', 'NO_PHONE'].includes(req.query?.phone) ? req.query.phone : 'ALL';
+
+    const parsedDays = parseInt(String(rawDays), 10);
+    const daysCutoffNum = Number.isFinite(parsedDays) ? Math.min(Math.max(parsedDays, 1), 3650) : 30;
     const cutoffDate = new Date(Date.now() - daysCutoffNum * 24 * 60 * 60 * 1000);
 
     const saleMatch = { shopId, customerId: { $ne: null, $ne: '' } };
-    if (productId && productId.trim()) {
-      saleMatch['items.productId'] = productId.trim();
+    if (rawProductId) {
+      saleMatch['items.productId'] = rawProductId;
     }
 
     // Aggregate sales history per customer for this shop
@@ -239,6 +255,7 @@ reengagementRouter.get('/customers', requireAuth, async (req, res) => {
       customers: candidateList
     });
   } catch (err) {
-    res.status(500).json({ error: `Failed to fetch re-engagement customers: ${err.message}` });
+    console.error('Failed to fetch re-engagement customers:', err);
+    res.status(500).json({ error: 'Failed to fetch re-engagement customers' });
   }
 });

@@ -192,3 +192,81 @@ export interface Note {
   content: string;
   createdAt: string;
 }
+
+export type CampaignStatus = 
+  | 'DRAFT' 
+  | 'READY' 
+  | 'SCHEDULED' 
+  | 'SENDING' 
+  | 'COMPLETED' 
+  | 'PARTIALLY_COMPLETED' 
+  | 'FAILED' 
+  | 'CANCELLED';
+
+export interface Campaign {
+  id: string;
+  shopId: string;
+  title: string;
+  description: string;
+  campaignType?: 'discount_offer' | 'new_arrival' | 'clearance' | 'festive_deal' | 'general_announcement';
+  templateName?: string;
+  templateLanguage?: string;
+  templateVariables?: Record<string, any>;
+  discountType: 'Percentage' | 'Fixed Amount';
+  discountValue: number;
+  productIds: string[];
+  startDate: string;
+  endDate: string;
+  scheduledAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  selectedCustomerIds: string[];
+  targetAudienceType: 'all_eligible' | 'product_buyers' | 'enquiry_customers' | 'followup_customers' | 'custom_selected';
+  eligibleCustomerCount: number;
+  totalRecipients?: number;
+  queuedCount?: number;
+  sentCount?: number;
+  deliveredCount?: number;
+  readCount?: number;
+  failedCount?: number;
+  skippedCount?: number;
+  cancelledCount?: number;
+  campaignCost?: number;
+  status: CampaignStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CampaignRecipient {
+  id: string;
+  campaignId: string;
+  shopId: string;
+  customerId: string;
+  customerName: string;
+  phone: string;
+  status: 'PENDING' | 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'SKIPPED' | 'CANCELLED' | 'MANUAL_SENT' | 'OPENED';
+  sendingMethod: 'OFFICIAL_API' | 'MANUAL_WHATSAPP';
+  templateName?: string;
+  renderedMessage?: string;
+  providerMessageId?: string;
+  attempts?: number;
+  lastAttemptAt?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  readAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CampaignTemplate {
+  name: string;
+  title: string;
+  category: string;
+  language: string;
+  description: string;
+  variables: string[];
+  sampleText: string;
+}

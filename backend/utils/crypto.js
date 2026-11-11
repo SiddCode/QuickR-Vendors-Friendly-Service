@@ -4,8 +4,19 @@ import crypto from 'crypto';
  * Encryption service for securing Meta WhatsApp Access Tokens at rest in MongoDB.
  * Uses AES-256-GCM authenticated encryption.
  */
+let warnedDefaultKey = false;
 const getEncryptionKey = () => {
-  const secret = process.env.META_TOKEN_ENCRYPTION_KEY || process.env.JWT_SECRET || 'quickr_meta_whatsapp_default_secure_encryption_key_32bytes!';
+  const configuredSecret = process.env.META_TOKEN_ENCRYPTION_KEY || process.env.JWT_SECRET;
+  if (!configuredSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('META_TOKEN_ENCRYPTION_KEY or JWT_SECRET is required in production');
+    }
+    if (!warnedDefaultKey) {
+      warnedDefaultKey = true;
+      console.warn('[SECURITY] Using development fallback token encryption key. Set META_TOKEN_ENCRYPTION_KEY in production.');
+    }
+  }
+  const secret = configuredSecret || 'quickr_meta_whatsapp_default_secure_encryption_key_32bytes!';
   return crypto.createHash('sha256').update(secret).digest();
 };
 

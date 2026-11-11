@@ -2,7 +2,6 @@ import { Enquiry } from '../models/Enquiry.js';
 import { FollowUp } from '../models/FollowUp.js';
 import { Activity } from '../models/Activity.js';
 import { StorageCleanupSetting } from '../models/StorageCleanupSetting.js';
-import { PrivacyAuditLog } from '../models/PrivacyAuditLog.js';
 
 // Status constants based on codebase audit
 const INACTIVE_ENQUIRY_STATUSES = ['Purchased', "Didn't Purchase"];
@@ -89,8 +88,8 @@ export const executeShopCleanup = async (shopId) => {
   // Recalculate remaining eligible count (>= 30 days)
   const remainingMetrics = await getCleanupMetrics(shopId);
 
-  // Update setting state
-  setting.status = remainingMetrics.totalEligible > 0 ? 'PENDING_APPROVAL' : 'COMPLETED';
+  // Update setting state: keep APPROVED so remaining 30-89d records auto-clean when reaching 90 days
+  setting.status = remainingMetrics.totalEligible > 0 ? 'APPROVED' : 'COMPLETED';
   setting.eligibleEnquiriesCount = remainingMetrics.eligibleEnquiries;
   setting.eligibleFollowUpsCount = remainingMetrics.eligibleFollowUps;
   setting.eligibleActivitiesCount = remainingMetrics.eligibleActivities;

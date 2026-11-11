@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import * as XLSX from 'xlsx';
+import type * as XLSXType from 'xlsx';
 import { 
   X, 
   Upload, 
@@ -59,7 +59,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
   const [fileError, setFileError] = useState<string | null>(null);
   const [sheets, setSheets] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
-  const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [workbook, setWorkbook] = useState<XLSXType.WorkBook | null>(null);
 
   // Raw file headers and data rows
   const [headers, setHeaders] = useState<string[]>([]);
@@ -84,7 +84,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Download Sample Template
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
     const templateData = [
       {
         "Product Name": "Cotton Formal Shirt",
@@ -121,6 +121,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
       }
     ];
 
+    const XLSX = await import('xlsx');
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Products");
@@ -149,8 +150,9 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
     setFile(selectedFile);
     const reader = new FileReader();
 
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
+        const XLSX = await import('xlsx');
         const data = new Uint8Array(event.target?.result as ArrayBuffer);
         // raw: true to preserve leading zeroes in string columns
         const wb = XLSX.read(data, { type: 'array', cellText: true, cellDates: true, raw: true });
@@ -158,7 +160,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
         setSheets(wb.SheetNames);
         const firstSheetName = wb.SheetNames[0];
         setSelectedSheet(firstSheetName);
-        parseSheet(wb, firstSheetName);
+        parseSheet(wb, firstSheetName, XLSX);
       } catch (err) {
         setFileError('Failed to parse Excel/CSV file. Please verify file format.');
       }
@@ -167,7 +169,8 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
     reader.readAsArrayBuffer(selectedFile);
   };
 
-  const parseSheet = (wb: XLSX.WorkBook, sheetName: string) => {
+  const parseSheet = async (wb: XLSXType.WorkBook, sheetName: string, loadedXlsx?: typeof XLSXType) => {
+    const XLSX = loadedXlsx || await import('xlsx');
     const sheet = wb.Sheets[sheetName];
     if (!sheet) return;
 
@@ -331,9 +334,10 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
   };
 
   // Download Error Report CSV
-  const handleDownloadErrorReport = () => {
+  const handleDownloadErrorReport = async () => {
     if (!importIssues || importIssues.length === 0) return;
 
+    const XLSX = await import('xlsx');
     const reportRows = importIssues.map(issue => ({
       "Row Number": issue.row,
       "Product Name": issue.productName,
@@ -356,7 +360,7 @@ export const ProductImportModal: React.FC<ProductImportModalProps> = ({ onClose 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm font-sans animate-fadeIn">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col border border-slate-100 overflow-hidden">
+      <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90dvh] flex flex-col border border-slate-100 overflow-hidden">
         
         {/* Modal Header */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">

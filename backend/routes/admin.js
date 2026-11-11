@@ -1,8 +1,9 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { requireAuth } from '../middleware/auth.js';
-import { requireAdmin } from '../middleware/auth.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { asSafeString } from '../utils/security.js';
+import { getJwtSecret } from '../config/jwt.js';
 import { User } from '../models/User.js';
 import { Shop } from '../models/Shop.js';
 import { Customer } from '../models/Customer.js';
@@ -13,6 +14,14 @@ import { Sale } from '../models/Sale.js';
 import { Activity } from '../models/Activity.js';
 import { Message } from '../models/Message.js';
 import { SubscriptionRequest } from '../models/SubscriptionRequest.js';
+import { ConsentRecord } from '../models/ConsentRecord.js';
+import { Campaign } from '../models/Campaign.js';
+import { CampaignRecipient } from '../models/CampaignRecipient.js';
+import { CampaignResponse } from '../models/CampaignResponse.js';
+import { WhatsAppConnection } from '../models/WhatsAppConnection.js';
+import { StorageCleanupSetting } from '../models/StorageCleanupSetting.js';
+import { PrivacyRequest } from '../models/PrivacyRequest.js';
+import { InvoiceCounter } from '../models/InvoiceCounter.js';
 
 const router = express.Router();
 
@@ -86,11 +95,11 @@ router.get('/stats', async (req, res) => {
 // GET all shops with their owners
 router.get('/shops', async (req, res) => {
   try {
-    const shops = await Shop.find().sort({ createdAt: -1 });
+    const shops = await Shop.find().sort({ createdAt: -1 }).lean();
 
     // Find owners for each shop
     const shopIds = shops.map(s => s.customId);
-    const owners = await User.find({ role: 'owner', shopId: { $in: shopIds } });
+    const owners = await User.find({ role: 'owner', shopId: { $in: shopIds } }).select('id name email status shopId').lean();
     const ownerMap = new Map(owners.map(o => [o.shopId, { id: o.id, name: o.name, email: o.email, status: o.status }]));
 
     const result = shops.map(s => ({
@@ -122,21 +131,17 @@ router.post('/shops', async (req, res) => {
       return res.status(400).json({ error: 'All fields are required: shopName, ownerName, ownerEmail, password' });
     }
 
-    if (!otpVerificationToken && req.headers['x-bypass-otp'] !== 'true') {
+    if (!otpVerificationToken || typeof otpVerificationToken !== 'string') {
       return res.status(400).json({ error: 'Mobile number must be verified via OTP prior to account creation.' });
     }
 
-    // Verify OTP token if provided
-    if (otpVerificationToken && otpVerificationToken !== 'TEST_BYPASS') {
-      try {
-        const jwtSecret = process.env.JWT_SECRET || 'quickr_super_secret_jwt_key_987654321_production_grade_security';
-        const decoded = jwt.verify(otpVerificationToken, jwtSecret);
-        if (!decoded || !decoded.verified || decoded.purpose !== 'shop_creation') {
-          return res.status(400).json({ error: 'Invalid or expired OTP verification. Please verify mobile number again.' });
-        }
-      } catch (e) {
-        return res.status(400).json({ error: 'Invalid or expired OTP verification token.' });
+    try {
+      const decoded = jwt.verify(otpVerificationToken, getJwtSecret(), { algorithms: ['HS256'] });
+      if (!decoded || !decoded.verified || decoded.purpose !== 'shop_creation') {
+        return res.status(400).json({ error: 'Invalid or expired OTP verification. Please verify mobile number again.' });
       }
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid or expired OTP verification token.' });
     }
 
     if (password.length < 6) {
@@ -285,6 +290,14 @@ router.delete('/shops/:shopId', async (req, res) => {
       salesDel,
       messagesDel,
       activitiesDel,
+      consentsDel,
+      campaignsDel,
+      campaignRecipientsDel,
+      campaignResponsesDel,
+      whatsappConnDel,
+      storageCleanupDel,
+      privacyReqDel,
+      _invoiceCounterDel,
       shopDel
     ] = await Promise.all([
       User.deleteMany({ shopId }),
@@ -295,6 +308,14 @@ router.delete('/shops/:shopId', async (req, res) => {
       Sale.deleteMany({ shopId }),
       Message.deleteMany({ shopId }),
       Activity.deleteMany({ shopId, customerId: { $ne: 'SYSTEM' } }),
+      ConsentRecord.deleteMany({ shopId }),
+      Campaign.deleteMany({ shopId }),
+      CampaignRecipient.deleteMany({ shopId }),
+      CampaignResponse.deleteMany({ shopId }),
+      WhatsAppConnection.deleteMany({ shopId }),
+      StorageCleanupSetting.deleteMany({ shopId }),
+      PrivacyRequest.deleteMany({ shopId }),
+      InvoiceCounter.deleteMany({ shopId }),
       Shop.deleteOne({ customId: shopId })
     ]);
 
@@ -389,10 +410,11 @@ router.put('/shops/:shopId', async (req, res) => {
       return res.status(404).json({ error: 'Shop not found' });
     }
 
-    const { name, status } = req.body;
+    const { name, status } = req.body || {};
     const oldStatus = shop.status || 'active';
+    const oldName = shop.name || '';
 
-    if (name) shop.name = name.trim();
+    if (typeof name === 'string' && name.trim()) shop.name = name.trim();
     if (status && ['active', 'disabled'].includes(status)) {
       shop.status = status;
     }
@@ -405,7 +427,7 @@ router.put('/shops/:shopId', async (req, res) => {
       await logAdminActivity(req.user.id, action, `Shop "${shop.name}" (${shop.customId}) ${status === 'disabled' ? 'disabled' : 'enabled'}`, shop.customId);
     }
 
-    if (name && name.trim() !== shop.name) {
+    if (shop.name !== oldName) {
       await logAdminActivity(req.user.id, 'SHOP_UPDATED', `Shop "${shop.customId}" name updated`, shop.customId);
     }
 
@@ -431,14 +453,16 @@ router.put('/shops/:shopId', async (req, res) => {
 router.get('/users', async (req, res) => {
   try {
     const filter = {};
-    if (req.query.shopId) filter.shopId = req.query.shopId;
-    if (req.query.role) filter.role = req.query.role;
+    const safeShopId = asSafeString(req.query.shopId);
+    const safeRole = asSafeString(req.query.role);
+    if (safeShopId) filter.shopId = safeShopId;
+    if (safeRole) filter.role = safeRole;
 
-    const users = await User.find(filter).sort({ createdAt: -1 });
+    const users = await User.find(filter).select('id name email role shopId status createdAt').sort({ createdAt: -1 }).lean();
 
     // Get shop names for each user
     const shopIds = [...new Set(users.filter(u => u.shopId).map(u => u.shopId))];
-    const shops = await Shop.find({ customId: { $in: shopIds } });
+    const shops = await Shop.find({ customId: { $in: shopIds } }).select('customId name').lean();
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
 
     const result = users.map(u => ({
@@ -593,7 +617,7 @@ router.post('/users/:userId/reset-password', async (req, res) => {
 
 router.get('/dashboard-stats', async (req, res) => {
   try {
-    const { shopId } = req.query;
+    const shopId = asSafeString(req.query.shopId);
     const filter = shopId ? { shopId } : {};
     const shopFilter = shopId ? { customId: shopId } : {};
 
@@ -645,7 +669,7 @@ router.get('/dashboard-stats', async (req, res) => {
 
 router.get('/dashboard', async (req, res) => {
   try {
-    const { shopId } = req.query;
+    const shopId = asSafeString(req.query.shopId);
     const filter = shopId ? { shopId } : {};
     const shopFilter = shopId ? { customId: shopId } : {};
 
@@ -750,19 +774,19 @@ router.get('/dashboard', async (req, res) => {
 
 router.get('/customers', async (req, res) => {
   try {
-    const { shopId } = req.query;
+    const shopId = asSafeString(req.query.shopId);
     const filter = {};
     if (shopId) filter.shopId = shopId;
 
-    const customers = await Customer.find(filter).sort({ createdAt: -1 });
+    const customers = await Customer.find(filter).sort({ createdAt: -1 }).lean();
     const custIds = customers.map(c => c.id);
     const shopIds = [...new Set(customers.map(c => c.shopId))];
 
     const [shops, enquiries, sales, followUps] = await Promise.all([
-      Shop.find({ customId: { $in: shopIds } }),
-      Enquiry.find({ customerId: { $in: custIds } }),
-      Sale.find({ customerId: { $in: custIds } }),
-      FollowUp.find({ customerId: { $in: custIds } }).sort({ scheduledAt: -1 })
+      Shop.find({ customId: { $in: shopIds } }).select('customId name').lean(),
+      Enquiry.find({ customerId: { $in: custIds } }).select('customerId').lean(),
+      Sale.find({ customerId: { $in: custIds } }).select('customerId totalAmount').lean(),
+      FollowUp.find({ customerId: { $in: custIds } }).select('customerId scheduledAt').sort({ scheduledAt: -1 }).lean()
     ]);
 
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
@@ -811,20 +835,20 @@ router.get('/customers', async (req, res) => {
 
 router.get('/customers/:id', async (req, res) => {
   try {
-    const customer = await Customer.findOne({ id: req.params.id });
+    const customer = await Customer.findOne({ id: req.params.id }).lean();
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    const shop = await Shop.findOne({ customId: customer.shopId });
+    const shop = await Shop.findOne({ customId: customer.shopId }).select('name').lean();
     const [enquiries, followUps, sales, activities] = await Promise.all([
-      Enquiry.find({ customerId: customer.id }).sort({ createdAt: -1 }),
-      FollowUp.find({ customerId: customer.id }).sort({ scheduledAt: -1 }),
-      Sale.find({ customerId: customer.id }).sort({ createdAt: -1 }),
-      Activity.find({ customerId: customer.id }).sort({ createdAt: -1 })
+      Enquiry.find({ customerId: customer.id }).sort({ createdAt: -1 }).lean(),
+      FollowUp.find({ customerId: customer.id }).sort({ scheduledAt: -1 }).lean(),
+      Sale.find({ customerId: customer.id }).sort({ createdAt: -1 }).lean(),
+      Activity.find({ customerId: customer.id }).sort({ createdAt: -1 }).lean()
     ]);
 
     // Mask PII in single customer response as well
     const anonymizedCustomer = {
-      ...customer.toObject(),
+      ...customer,
       name: `Customer #${customer.id.split('-').pop() || customer.id}`,
       phone: '••••••••••',
       email: 'protected@privacy.quickr',
@@ -833,12 +857,12 @@ router.get('/customers/:id', async (req, res) => {
     };
 
     const anonymizedEnquiries = enquiries.map(e => ({
-      ...e.toObject(),
+      ...e,
       notes: '[Privacy Protected]'
     }));
 
     const anonymizedFollowUps = followUps.map(f => ({
-      ...f.toObject(),
+      ...f,
       message: '[Privacy Protected]'
     }));
 
@@ -860,18 +884,19 @@ router.get('/customers/:id', async (req, res) => {
 
 router.get('/products', async (req, res) => {
   try {
-    const { shopId, category } = req.query;
+    const shopId = asSafeString(req.query.shopId);
+    const category = asSafeString(req.query.category);
     const filter = {};
     if (shopId) filter.shopId = shopId;
     if (category) filter.category = category;
 
-    const products = await Product.find(filter).sort({ createdAt: -1 });
+    const products = await Product.find(filter).sort({ createdAt: -1 }).lean();
     const shopIds = [...new Set(products.map(p => p.shopId))];
-    const shops = await Shop.find({ customId: { $in: shopIds } });
+    const shops = await Shop.find({ customId: { $in: shopIds } }).select('customId name').lean();
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
 
     const result = products.map(p => ({
-      ...p.toObject(),
+      ...p,
       shopName: shopMap.get(p.shopId) || p.shopId
     }));
 
@@ -887,34 +912,39 @@ router.get('/products', async (req, res) => {
 
 router.get('/enquiries', async (req, res) => {
   try {
-    const { shopId, interest, purchaseStatus, startDate, endDate } = req.query;
+    const shopId = asSafeString(req.query.shopId);
+    const interest = asSafeString(req.query.interest);
+    const purchaseStatus = asSafeString(req.query.purchaseStatus);
+    const startDateStr = asSafeString(req.query.startDate);
+    const endDateStr = asSafeString(req.query.endDate);
     const filter = {};
     if (shopId) filter.shopId = shopId;
     if (interest) filter.interest = interest;
     if (purchaseStatus) filter.purchaseStatus = purchaseStatus;
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(endDate);
+    if (startDateStr || endDateStr) {
+      const startD = startDateStr ? new Date(startDateStr) : null;
+      const endD = endDateStr ? new Date(endDateStr) : null;
+      if ((startD && !isNaN(startD.getTime())) || (endD && !isNaN(endD.getTime()))) {
+        filter.createdAt = {};
+        if (startD && !isNaN(startD.getTime())) filter.createdAt.$gte = startD;
+        if (endD && !isNaN(endD.getTime())) filter.createdAt.$lte = endD;
+      }
     }
 
-    const enquiries = await Enquiry.find(filter).sort({ createdAt: -1 });
+    const enquiries = await Enquiry.find(filter).sort({ createdAt: -1 }).lean();
     const shopIds = [...new Set(enquiries.map(e => e.shopId))];
-    const custIds = [...new Set(enquiries.map(e => e.customerId))];
     const enqIds = enquiries.map(e => e.id);
 
-    const [shops, customers, followUps] = await Promise.all([
-      Shop.find({ customId: { $in: shopIds } }),
-      Customer.find({ id: { $in: custIds } }),
-      FollowUp.find({ enquiryId: { $in: enqIds } })
+    const [shops, followUps] = await Promise.all([
+      Shop.find({ customId: { $in: shopIds } }).select('customId name').lean(),
+      FollowUp.find({ enquiryId: { $in: enqIds } }).select('enquiryId scheduledAt').lean()
     ]);
 
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
-    const custMap = new Map(customers.map(c => [c.id, c.name]));
     const fwMap = new Map(followUps.map(f => [f.enquiryId, f.scheduledAt]));
 
     const result = enquiries.map(e => ({
-      ...e.toObject(),
+      ...e,
       customerName: `Customer #${e.customerId.split('-').pop() || e.customerId}`,
       notes: '[Privacy Protected]',
       shopName: shopMap.get(e.shopId) || e.shopId,
@@ -933,7 +963,8 @@ router.get('/enquiries', async (req, res) => {
 
 router.get('/followups', async (req, res) => {
   try {
-    const { shopId, filter } = req.query;
+    const shopId = asSafeString(req.query.shopId);
+    const filter = asSafeString(req.query.filter);
     const query = {};
     if (shopId) query.shopId = shopId;
 
@@ -963,22 +994,20 @@ router.get('/followups', async (req, res) => {
       query.status = { $in: ['completed', 'closed'] };
     }
 
-    const followUps = await FollowUp.find(query).sort({ scheduledAt: 1 });
+    const followUps = await FollowUp.find(query).sort({ scheduledAt: 1 }).lean();
     const shopIds = [...new Set(followUps.map(f => f.shopId))];
-    const custIds = [...new Set(followUps.map(f => f.customerId))];
-    const enqIds = [...new Set(followUps.map(f => f.enquiryId))];
+    const enqIds = [...new Set(followUps.map(f => f.enquiryId).filter(Boolean))];
 
-    const [shops, customers, enquiries] = await Promise.all([
-      Shop.find({ customId: { $in: shopIds } }),
-      Customer.find({ id: { $in: custIds } }),
-      Enquiry.find({ id: { $in: enqIds } })
+    const [shops, enquiries] = await Promise.all([
+      Shop.find({ customId: { $in: shopIds } }).select('customId name').lean(),
+      Enquiry.find({ id: { $in: enqIds } }).select('id productName').lean()
     ]);
 
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
     const enqMap = new Map(enquiries.map(e => [e.id, e.productName || 'Product']));
 
     const result = followUps.map(f => ({
-      ...f.toObject(),
+      ...f,
       customerName: `Customer #${f.customerId.split('-').pop() || f.customerId}`,
       message: '[Privacy Protected]',
       productName: enqMap.get(f.enquiryId) || 'Product',
@@ -997,18 +1026,24 @@ router.get('/followups', async (req, res) => {
 
 router.get('/sales', async (req, res) => {
   try {
-    const { shopId, startDate, endDate } = req.query;
+    const shopId = asSafeString(req.query.shopId);
+    const startDateStr = asSafeString(req.query.startDate);
+    const endDateStr = asSafeString(req.query.endDate);
     const filter = {};
     if (shopId) filter.shopId = shopId;
-    if (startDate || endDate) {
-      filter.createdAt = {};
-      if (startDate) filter.createdAt.$gte = new Date(startDate);
-      if (endDate) filter.createdAt.$lte = new Date(endDate);
+    if (startDateStr || endDateStr) {
+      const startD = startDateStr ? new Date(startDateStr) : null;
+      const endD = endDateStr ? new Date(endDateStr) : null;
+      if ((startD && !isNaN(startD.getTime())) || (endD && !isNaN(endD.getTime()))) {
+        filter.createdAt = {};
+        if (startD && !isNaN(startD.getTime())) filter.createdAt.$gte = startD;
+        if (endD && !isNaN(endD.getTime())) filter.createdAt.$lte = endD;
+      }
     }
 
-    const sales = await Sale.find(filter).sort({ createdAt: -1 });
+    const sales = await Sale.find(filter).sort({ createdAt: -1 }).lean();
     const shopIds = [...new Set(sales.map(s => s.shopId))];
-    const shops = await Shop.find({ customId: { $in: shopIds } });
+    const shops = await Shop.find({ customId: { $in: shopIds } }).select('customId name').lean();
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
 
     const totalSalesAmount = sales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
@@ -1016,7 +1051,7 @@ router.get('/sales', async (req, res) => {
     const averageSaleValue = totalInvoices > 0 ? Math.round(totalSalesAmount / totalInvoices) : 0;
 
     const resultSales = sales.map(s => ({
-      ...s.toObject(),
+      ...s,
       customerName: `Customer #${s.customerId ? s.customerId.split('-').pop() : 'Walk-in'}`,
       shopName: shopMap.get(s.shopId) || s.shopId
     }));
@@ -1036,12 +1071,12 @@ router.get('/sales', async (req, res) => {
 
 router.get('/billing', async (req, res) => {
   try {
-    const { shopId } = req.query;
+    const shopId = asSafeString(req.query.shopId);
     const filter = shopId ? { shopId } : {};
 
-    const invoices = await Sale.find(filter).sort({ createdAt: -1 });
+    const invoices = await Sale.find(filter).sort({ createdAt: -1 }).lean();
     const shopIds = [...new Set(invoices.map(s => s.shopId))];
-    const shops = await Shop.find({ customId: { $in: shopIds } });
+    const shops = await Shop.find({ customId: { $in: shopIds } }).select('customId name').lean();
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
 
     const result = invoices.map(inv => ({
@@ -1072,7 +1107,10 @@ router.get('/billing', async (req, res) => {
 
 router.get('/reports', async (req, res) => {
   try {
-    const { shopId, period, startDate, endDate } = req.query;
+    const shopId = asSafeString(req.query.shopId);
+    const period = asSafeString(req.query.period);
+    const startDateStr = asSafeString(req.query.startDate);
+    const endDateStr = asSafeString(req.query.endDate);
 
     const matchFilter = {};
     if (shopId) matchFilter.shopId = shopId;
@@ -1097,9 +1135,15 @@ router.get('/reports', async (req, res) => {
     } else if (period === 'this_month') {
       rangeStart = new Date(Date.UTC(istYear, istMonth, 1, 0, 0, 0, 0) - istOffsetMs);
       rangeEnd = new Date(Date.UTC(istYear, istMonth, istDate, 23, 59, 59, 999) - istOffsetMs);
-    } else if (startDate || endDate) {
-      if (startDate) rangeStart = new Date(startDate);
-      if (endDate) rangeEnd = new Date(endDate);
+    } else if (startDateStr || endDateStr) {
+      if (startDateStr) {
+        const sd = new Date(startDateStr);
+        if (!isNaN(sd.getTime())) rangeStart = sd;
+      }
+      if (endDateStr) {
+        const ed = new Date(endDateStr);
+        if (!isNaN(ed.getTime())) rangeEnd = ed;
+      }
     }
 
     if (rangeStart || rangeEnd) {
@@ -1108,7 +1152,7 @@ router.get('/reports', async (req, res) => {
       if (rangeEnd) matchFilter.createdAt.$lte = rangeEnd;
     }
 
-    const shops = await Shop.find();
+    const shops = await Shop.find().select('customId name').lean();
     const shopMap = new Map(shops.map(s => [s.customId, s.name]));
 
     // 1. Sales by Shop

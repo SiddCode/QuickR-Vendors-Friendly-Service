@@ -27,21 +27,16 @@ export const InstallPwaPrompt: React.FC = () => {
   };
 
   useEffect(() => {
-    const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent browser default mini-infobar prompt
-      e.preventDefault();
-      (window as any).deferredPwaPrompt = e;
-      setDeferredPrompt(e);
-      if (!isAlreadyInstalled()) {
-        setShowBanner(true);
-      }
-    };
+    const existingPrompt = (window as any).deferredPwaPrompt;
+    if (existingPrompt && !isAlreadyInstalled()) {
+      setDeferredPrompt(existingPrompt);
+      setShowBanner(true);
+    }
 
-    const handleAppInstalled = () => {
-      (window as any).deferredPwaPrompt = null;
-      setDeferredPrompt(null);
-      setShowBanner(false);
-      console.log('[QuickR PWA] App successfully installed');
+    const handlePromptChanged = () => {
+      const latestPrompt = (window as any).deferredPwaPrompt || null;
+      setDeferredPrompt(latestPrompt);
+      setShowBanner(Boolean(latestPrompt) && !isAlreadyInstalled());
     };
 
     const handleOnline = () => setIsOnline(true);
@@ -55,11 +50,10 @@ export const InstallPwaPrompt: React.FC = () => {
         return;
       }
 
-      const activePrompt = deferredPrompt || (window as any).deferredPwaPrompt;
+      const activePrompt = (window as any).deferredPwaPrompt;
 
       if (activePrompt) {
         try {
-          // Trigger native browser install prompt
           activePrompt.prompt();
           const choiceResult = await activePrompt.userChoice;
           console.log('[QuickR PWA] User choice outcome:', choiceResult.outcome);
@@ -69,44 +63,44 @@ export const InstallPwaPrompt: React.FC = () => {
         } catch (err) {
           console.error('[QuickR PWA] Install prompt error:', err);
         } finally {
-          // Clear consumed one-shot event prompt globally and locally
           (window as any).deferredPwaPrompt = null;
           setDeferredPrompt(null);
+          window.dispatchEvent(new CustomEvent('quickr-pwa-prompt-changed'));
         }
       } else {
-        // Native prompt unavailable or iOS Safari -> Show friendly instructions modal
         setModalMessage(isIosSafari() ? "ios_instructions" : "general_instructions");
         setShowInstallModal(true);
       }
     };
 
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
+    window.addEventListener('quickr-pwa-prompt-changed', handlePromptChanged);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('trigger-pwa-install', handleTriggerInstall);
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('quickr-pwa-prompt-changed', handlePromptChanged);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('trigger-pwa-install', handleTriggerInstall);
     };
-  }, [deferredPrompt]);
+  }, []);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
+    const activePrompt = deferredPrompt || (window as any).deferredPwaPrompt;
+    if (!activePrompt) return;
     try {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
+      activePrompt.prompt();
+      const { outcome } = await activePrompt.userChoice;
       if (outcome === 'accepted') {
         setShowBanner(false);
       }
     } catch (err) {
       console.error('[QuickR PWA] Banner install click error:', err);
     } finally {
+      (window as any).deferredPwaPrompt = null;
       setDeferredPrompt(null);
+      window.dispatchEvent(new CustomEvent('quickr-pwa-prompt-changed'));
     }
   };
 

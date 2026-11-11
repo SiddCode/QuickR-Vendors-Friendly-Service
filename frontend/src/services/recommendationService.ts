@@ -1,4 +1,5 @@
 import type { Enquiry, Customer, Product } from '../types';
+import { getISTDateString, addDaysIST } from '../utils/date';
 
 export interface Recommendation {
   customerId: string;
@@ -27,7 +28,7 @@ export const recommendationService = {
       }
 
       // Recommend follow-up today (since it is Didn't Purchase and they were interested)
-      const today = new Date().toISOString().split('T')[0];
+      const today = getISTDateString();
 
       return {
         customerId: customer.id,
@@ -41,9 +42,7 @@ export const recommendationService = {
     
     // If pending enquiry, remind after 1 day
     if (enquiry.purchaseStatus === 'Pending') {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowStr = tomorrow.toISOString().split('T')[0];
+      const tomorrowStr = addDaysIST(1);
       
       return {
         customerId: customer.id,

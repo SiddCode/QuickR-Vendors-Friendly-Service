@@ -5,6 +5,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { PhoneCall, Mail, IndianRupee, Sparkles, ChevronRight, Receipt, RefreshCw, AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { api } from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
+import { getISTDayBounds } from '../utils/date';
 
 interface DashboardProps {
   setCurrentPage: (page: string) => void;
@@ -17,6 +18,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
   const { t } = useLanguage();
   // Live Backend Stats State
   const [backendStats, setBackendStats] = useState<any>(null);
+  const [loadingStats, setLoadingStats] = useState<boolean>(true);
   const [reengagementCount, setReengagementCount] = useState<number>(0);
 
   // AI Shop Sales Insights State
@@ -52,27 +54,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
     };
   } | null>(null);
 
-  // Load Authoritative Backend Stats
+  // Load Authoritative Backend Stats (skip owner-only reengagement fetch for staff)
   useEffect(() => {
     let isMounted = true;
-    api.getDashboardStats().then(data => {
-      if (isMounted) setBackendStats(data);
-    }).catch(err => console.error('Failed to load dashboard stats:', err));
+    api.getDashboardStats()
+      .then(data => {
+        if (isMounted) setBackendStats(data);
+      })
+      .catch(err => console.error('Failed to load dashboard stats:', err))
+      .finally(() => {
+        if (isMounted) setLoadingStats(false);
+      });
 
-    api.getReengagementSummary('60').then(data => {
-      if (isMounted && data.success) {
-        setReengagementCount(data.recommendedCount || data.whatsappEligible || 0);
-      }
-    }).catch(err => console.error('Failed to load re-engagement summary:', err));
+    if (!isStaff) {
+      api.getReengagementSummary('60').then(data => {
+        if (isMounted && data.success) {
+          setReengagementCount(data.recommendedCount || data.whatsappEligible || 0);
+        }
+      }).catch(err => console.error('Failed to load re-engagement summary:', err));
+    }
 
     return () => { isMounted = false; };
-  }, [sales, followUps, enquiries]);
+  }, [sales.length, followUps.length, enquiries.length, isStaff]);
 
-  // Pre-calculated stats fallback
+  // Pre-calculated stats fallback aligned to IST day bounds
   const followupCount = backendStats?.activeFollowUps ?? followUps.filter(f => f.status === 'ready' || f.status === 'sent' || f.status === 'scheduled').length;
   const enquiriesCount = backendStats?.totalEnquiries ?? enquiries.length;
-  
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+
+  const { startOfToday: todayStart } = getISTDayBounds();
   const todaySales = sales.filter(s => new Date(s.createdAt) >= todayStart);
   const todayRevenue = backendStats?.todayRevenue ?? todaySales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
   const todayBillCount = backendStats?.todaySalesCount ?? todaySales.length;
@@ -114,16 +123,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
   return (
     <div className="flex-grow p-4 md:p-8 space-y-6 md:space-y-8 max-w-7xl mx-auto w-full font-sans">
       {/* 1. Stat Cards Grid */}
-      <div className={`grid ${isStaff ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 md:grid-cols-4'} gap-4`}>
-        {!isStaff && (
-          <>
-            <StatCard label={t('dashboard.todayRevenue')} value={`₹${todayRevenue.toLocaleString('en-IN')}`} icon={IndianRupee} theme="green" />
-            <StatCard label={t('dashboard.todaySales')} value={todayBillCount} icon={Receipt} theme="blue" />
-          </>
-        )}
-        <StatCard label={t('dashboard.activeFollowups')} value={followupCount} icon={PhoneCall} theme="yellow" />
-        <StatCard label={t('dashboard.totalEnquiries')} value={enquiriesCount} icon={Mail} theme="blue" />
-      </div>
+      {loadingStats && !backendStats && sales.length === 0 && enquiries.length === 0 ? (
+        <div className={`grid ${isStaff ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 md:grid-cols-4'} gap-4`}>
+          {Array.from({ length: isStaff ? 2 : 4 }).map((_, idx) => (
+            <div key={idx} className="h-28 bg-white rounded-2xl border border-slate-100 p-5 animate-pulse flex flex-col justify-between">
+              <div className="h-3 w-24 bg-slate-200 rounded" />
+              <div className="h-7 w-16 bg-slate-200 rounded" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className={`grid ${isStaff ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 md:grid-cols-4'} gap-4`}>
+          {!isStaff && (
+            <>
+              <StatCard label={t('dashboard.todayRevenue')} value={`₹${todayRevenue.toLocaleString('en-IN')}`} icon={IndianRupee} theme="green" />
+              <StatCard label={t('dashboard.todaySales')} value={todayBillCount} icon={Receipt} theme="blue" />
+            </>
+          )}
+          <StatCard label={t('dashboard.activeFollowups')} value={followupCount} icon={PhoneCall} theme="yellow" />
+          <StatCard label={t('dashboard.totalEnquiries')} value={enquiriesCount} icon={Mail} theme="blue" />
+        </div>
+      )}
 
       {/* 2. Today's Actions + Recent Follow-ups Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -174,15 +194,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ setCurrentPage, setSelecte
                 </div>
               )}
 
-              <div className="flex items-center justify-between p-4 rounded-xl bg-indigo-50/60 border border-indigo-100 hover:bg-indigo-100/60 cursor-pointer transition-colors duration-150 group" onClick={() => setCurrentPage('reengagement')}>
-                <div className="flex items-center gap-4">
-                  <div className="w-3.5 h-3.5 rounded-full bg-indigo-600 shrink-0" />
-                  <p className="text-sm font-semibold text-slate-700">
-                    <span className="text-indigo-600 text-lg mr-1.5 font-bold">{reengagementCount}</span> customers worth reconnecting
-                  </p>
+              {!isStaff && (
+                <div className="flex items-center justify-between p-4 rounded-xl bg-indigo-50/60 border border-indigo-100 hover:bg-indigo-100/60 cursor-pointer transition-colors duration-150 group" onClick={() => setCurrentPage('reengagement')}>
+                  <div className="flex items-center gap-4">
+                    <div className="w-3.5 h-3.5 rounded-full bg-indigo-600 shrink-0" />
+                    <p className="text-sm font-semibold text-slate-700">
+                      <span className="text-indigo-600 text-lg mr-1.5 font-bold">{reengagementCount}</span> customers worth reconnecting
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-indigo-500 group-hover:translate-x-0.5 transition-transform shrink-0" />
                 </div>
-                <ChevronRight className="w-4 h-4 text-indigo-500 group-hover:translate-x-0.5 transition-transform shrink-0" />
-              </div>
+              )}
             </div>
           </div>
           <div className="flex gap-3 mt-6">

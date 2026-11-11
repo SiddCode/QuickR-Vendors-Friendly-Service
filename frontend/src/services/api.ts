@@ -1,6 +1,12 @@
 import type { Customer, Product, Enquiry, FollowUp, Sale, Activity, Message } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:53211/api';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:53211/api').replace(/\/+$/, '');
+
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setApiUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
 
 export interface UserSession {
   id: string;
@@ -11,18 +17,65 @@ export interface UserSession {
   shopName: string;
 }
 
+function getTimeoutForUrl(url: string): number {
+  if (url.includes('/ai/') || url.includes('/products/import')) return 60000;
+  if (url.includes('/health')) return 10000;
+  return 30000;
+}
+
+async function apiFetch(url: string, init: RequestInit = {}, timeoutMs?: number): Promise<Response> {
+  const effectiveTimeout = timeoutMs ?? getTimeoutForUrl(url);
+  const controller = new AbortController();
+  const externalSignal = init.signal;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
+
+  const timer = setTimeout(() => controller.abort(), effectiveTimeout);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError' && !externalSignal?.aborted) {
+      const timeoutErr = new Error('Request timed out. Please check your connection and try again.');
+      (timeoutErr as any).status = 504;
+      (timeoutErr as any).isTransient = true;
+      throw timeoutErr;
+    }
+    if (err && typeof err === 'object' && (err as any).status === undefined) {
+      (err as any).isTransient = true;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+async function buildApiError(response: Response, fallbackMsg?: string): Promise<Error> {
+  if (response.status === 401 && unauthorizedHandler) {
+    const url = response.url || '';
+    if (!url.includes('/auth/me') && !url.includes('/auth/login') && !url.includes('/auth/register')) {
+      unauthorizedHandler();
+    }
+  }
+  const errorData = await response.json().catch(() => ({}));
+  const error = new Error(errorData.message || errorData.error || fallbackMsg || `HTTP error ${response.status}`);
+  (error as any).status = response.status;
+  (error as any).isTransient = [408, 429, 500, 502, 503, 504].includes(response.status);
+  (error as any).error = errorData.error;
+  (error as any).errorCode = errorData.error;
+  (error as any).userMessage = errorData.message || errorData.error;
+  (error as any).retryAfterSeconds = errorData.retryAfterSeconds;
+  (error as any).retryAt = errorData.retryAt;
+  (error as any).errorBody = errorData;
+  return error;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const error = new Error(errorData.message || errorData.error || `HTTP error ${response.status}`);
-    (error as any).status = response.status;
-    (error as any).error = errorData.error;
-    (error as any).errorCode = errorData.error;
-    (error as any).userMessage = errorData.message || errorData.error;
-    (error as any).retryAfterSeconds = errorData.retryAfterSeconds;
-    (error as any).retryAt = errorData.retryAt;
-    (error as any).errorBody = errorData;
-    throw error;
+    throw await buildApiError(response);
   }
   return response.json();
 }
@@ -32,7 +85,7 @@ export const api = {
   async healthCheck(): Promise<{ status: string; timestamp: string; database: string }> {
     const startTime = Date.now();
     try {
-      const res = await fetch(`${API_BASE_URL}/health`, { method: 'GET' });
+      const res = await apiFetch(`${API_BASE_URL}/health`, { method: 'GET' });
       const duration = Date.now() - startTime;
       console.log(`[PERF] GET /api/health: ${duration}ms`);
       return handleResponse<{ status: string; timestamp: string; database: string }>(res);
@@ -46,7 +99,7 @@ export const api = {
   // Auth
 
   async register(data: { ownerName: string; shopName: string; email: string; password: string }): Promise<{ user: UserSession; token?: string }> {
-    const res = await fetch(`${API_BASE_URL}/auth/register`, {
+    const res = await apiFetch(`${API_BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -56,7 +109,7 @@ export const api = {
   },
 
   async login(data: { email: string; password: string }): Promise<{ user: UserSession; token?: string }> {
-    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+    const res = await apiFetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -66,7 +119,7 @@ export const api = {
   },
 
   async getMe(): Promise<{ user: UserSession }> {
-    const res = await fetch(`${API_BASE_URL}/auth/me`, {
+    const res = await apiFetch(`${API_BASE_URL}/auth/me`, {
       method: 'GET',
       credentials: 'include',
     });
@@ -88,25 +141,12 @@ export const api = {
       convertedCount: number;
     };
   }> {
-    const res = await fetch(`${API_BASE_URL}/work/today`, { credentials: 'include' });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    console.log('========== GET TODAY WORK ==========');
-    console.log('FULL RESPONSE keys:', Object.keys(data));
-    console.log('dueToday length:', data?.dueToday?.length);
-    console.log('overdue length:', data?.overdue?.length);
-    console.log('dueToday IDs:', data?.dueToday?.map((t: any) => t.id + ' ' + (t.customer?.name || t.customerId)));
-    console.log('overdue IDs:', data?.overdue?.map((t: any) => t.id + ' ' + (t.customer?.name || t.customerId)));
-    console.log('summary:', data?.summary);
-    console.log('====================================');
-    return data;
+    const res = await apiFetch(`${API_BASE_URL}/work/today`, { credentials: 'include' });
+    return handleResponse(res);
   },
 
   async logout(): Promise<{ success: boolean }> {
-    const res = await fetch(`${API_BASE_URL}/auth/logout`, {
+    const res = await apiFetch(`${API_BASE_URL}/auth/logout`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -115,17 +155,17 @@ export const api = {
 
   // Customers
   async getCustomers(): Promise<Customer[]> {
-    const res = await fetch(`${API_BASE_URL}/customers`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/customers`, { credentials: 'include' });
     return handleResponse<Customer[]>(res);
   },
 
   async getCustomerById(id: string): Promise<Customer> {
-    const res = await fetch(`${API_BASE_URL}/customers/${id}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/customers/${id}`, { credentials: 'include' });
     return handleResponse<Customer>(res);
   },
 
   async createCustomer(data: Omit<Customer, 'id' | 'createdAt'>): Promise<Customer> {
-    const res = await fetch(`${API_BASE_URL}/customers`, {
+    const res = await apiFetch(`${API_BASE_URL}/customers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -135,7 +175,7 @@ export const api = {
   },
 
   async deleteCustomer(id: string): Promise<{ success: boolean; message?: string }> {
-    const res = await fetch(`${API_BASE_URL}/customers/${id}`, {
+    const res = await apiFetch(`${API_BASE_URL}/customers/${id}`, {
       method: 'DELETE',
       credentials: 'include',
     });
@@ -144,17 +184,17 @@ export const api = {
 
   // Products
   async getProducts(): Promise<Product[]> {
-    const res = await fetch(`${API_BASE_URL}/products`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/products`, { credentials: 'include' });
     return handleResponse<Product[]>(res);
   },
 
   async getProductByBarcode(barcode: string): Promise<Product> {
-    const res = await fetch(`${API_BASE_URL}/products/barcode/${encodeURIComponent(barcode)}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/products/barcode/${encodeURIComponent(barcode)}`, { credentials: 'include' });
     return handleResponse<Product>(res);
   },
 
   async generateProductBarcode(productId: string): Promise<Product> {
-    const res = await fetch(`${API_BASE_URL}/products/${productId}/generate-barcode`, {
+    const res = await apiFetch(`${API_BASE_URL}/products/${productId}/generate-barcode`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -163,7 +203,7 @@ export const api = {
 
   async createProduct(data: Omit<Product, 'id' | 'createdAt'>): Promise<Product> {
 
-    const res = await fetch(`${API_BASE_URL}/products`, {
+    const res = await apiFetch(`${API_BASE_URL}/products`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -173,7 +213,7 @@ export const api = {
   },
 
   async updateProduct(id: string, data: Partial<Product>): Promise<Product> {
-    const res = await fetch(`${API_BASE_URL}/products/${id}`, {
+    const res = await apiFetch(`${API_BASE_URL}/products/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -183,7 +223,7 @@ export const api = {
   },
 
   async deleteProduct(id: string): Promise<{ success: boolean }> {
-    const res = await fetch(`${API_BASE_URL}/products/${id}`, {
+    const res = await apiFetch(`${API_BASE_URL}/products/${id}`, {
       method: 'DELETE',
       credentials: 'include',
     });
@@ -192,12 +232,12 @@ export const api = {
 
   // Enquiries
   async getEnquiries(): Promise<Enquiry[]> {
-    const res = await fetch(`${API_BASE_URL}/enquiries`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/enquiries`, { credentials: 'include' });
     return handleResponse<Enquiry[]>(res);
   },
 
   async createEnquiry(data: Omit<Enquiry, 'id' | 'createdAt'>): Promise<{ enquiry: Enquiry; followUp: FollowUp | null }> {
-    const res = await fetch(`${API_BASE_URL}/enquiries`, {
+    const res = await apiFetch(`${API_BASE_URL}/enquiries`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -207,7 +247,7 @@ export const api = {
   },
 
   async deleteEnquiry(id: string): Promise<{ success: boolean; deletedEnquiryId?: string }> {
-    const res = await fetch(`${API_BASE_URL}/enquiries/${id}`, {
+    const res = await apiFetch(`${API_BASE_URL}/enquiries/${id}`, {
       method: 'DELETE',
       credentials: 'include',
     });
@@ -216,7 +256,7 @@ export const api = {
 
   // Bulk Delete APIs
   async bulkDeleteProducts(ids: string[]): Promise<{ success: boolean; deletedCount: number; archivedCount?: number; totalProcessed?: number; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/products/bulk-delete`, {
+    const res = await apiFetch(`${API_BASE_URL}/products/bulk-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -243,7 +283,7 @@ export const api = {
       suggestedFix: string;
     }>;
   }> {
-    const res = await fetch(`${API_BASE_URL}/products/import`, {
+    const res = await apiFetch(`${API_BASE_URL}/products/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -253,7 +293,7 @@ export const api = {
   },
 
   async bulkDeleteCustomers(ids: string[]): Promise<{ success: boolean; deletedCount: number; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/customers/bulk-delete`, {
+    const res = await apiFetch(`${API_BASE_URL}/customers/bulk-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -263,7 +303,7 @@ export const api = {
   },
 
   async bulkDeleteEnquiries(ids: string[]): Promise<{ success: boolean; deletedCount: number; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/enquiries/bulk-delete`, {
+    const res = await apiFetch(`${API_BASE_URL}/enquiries/bulk-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -274,17 +314,17 @@ export const api = {
 
   // Follow-ups
   async getFollowUps(): Promise<FollowUp[]> {
-    const res = await fetch(`${API_BASE_URL}/followups`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/followups`, { credentials: 'include' });
     return handleResponse<FollowUp[]>(res);
   },
 
   async getTodayFollowUps(): Promise<FollowUp[]> {
-    const res = await fetch(`${API_BASE_URL}/followups/today`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/followups/today`, { credentials: 'include' });
     return handleResponse<FollowUp[]>(res);
   },
 
   async sendFollowUpMessage(id: string, content: string): Promise<{ success: boolean; followUp: FollowUp; message: Message; provider?: string; status?: string }> {
-    const res = await fetch(`${API_BASE_URL}/followups/${id}/send`, {
+    const res = await apiFetch(`${API_BASE_URL}/followups/${id}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -299,7 +339,7 @@ export const api = {
     nextDateStr?: string, 
     scheduleNext?: boolean
   ): Promise<{ success: boolean; followUp: FollowUp }> {
-    const res = await fetch(`${API_BASE_URL}/followups/${id}/outcome`, {
+    const res = await apiFetch(`${API_BASE_URL}/followups/${id}/outcome`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -310,12 +350,12 @@ export const api = {
 
   // WhatsApp Cloud API Integration
   async getWhatsAppStatus(): Promise<{ configured: boolean; provider: string; mode: string; version: string }> {
-    const res = await fetch(`${API_BASE_URL}/whatsapp/status`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/whatsapp/status`, { credentials: 'include' });
     return handleResponse<{ configured: boolean; provider: string; mode: string; version: string }>(res);
   },
 
   async sendDirectWhatsAppMessage(customerId: string, message: string, followUpId?: string): Promise<{ success: boolean; status: string; provider: string; messageId: string; message: Message; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/whatsapp/send`, {
+    const res = await apiFetch(`${API_BASE_URL}/whatsapp/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -327,18 +367,25 @@ export const api = {
   // Messages
   async getMessages(customerId?: string): Promise<Message[]> {
     const url = customerId ? `${API_BASE_URL}/messages/${customerId}` : `${API_BASE_URL}/messages`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse<Message[]>(res);
   },
 
   // Sales
   async getSales(): Promise<Sale[]> {
-    const res = await fetch(`${API_BASE_URL}/sales`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/sales`, { credentials: 'include' });
     return handleResponse<Sale[]>(res);
   },
 
+  async getSaleByRequestId(requestId: string): Promise<{ found: boolean; sale: Sale | null }> {
+    const res = await apiFetch(`${API_BASE_URL}/sales/status/${encodeURIComponent(requestId)}`, {
+      credentials: 'include'
+    });
+    return handleResponse<{ found: boolean; sale: Sale | null }>(res);
+  },
+
   async createSale(data: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string }): Promise<Sale> {
-    const res = await fetch(`${API_BASE_URL}/sales`, {
+    const res = await apiFetch(`${API_BASE_URL}/sales`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -354,7 +401,7 @@ export const api = {
 
 
   async deleteSales(ids: string[]): Promise<{ success: boolean; deletedIds: string[] }> {
-    const res = await fetch(`${API_BASE_URL}/sales`, {
+    const res = await apiFetch(`${API_BASE_URL}/sales`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -365,7 +412,7 @@ export const api = {
 
   // Activities
   async getActivities(): Promise<Activity[]> {
-    const res = await fetch(`${API_BASE_URL}/activities`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/activities`, { credentials: 'include' });
     return handleResponse<Activity[]>(res);
   },
 
@@ -390,7 +437,7 @@ export const api = {
     conversionRate: number;
     responseRate: number;
   }> {
-    const res = await fetch(`${API_BASE_URL}/dashboard`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/dashboard`, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -399,17 +446,17 @@ export const api = {
   // ═══════════════════════════════════════════════════════════
 
   async adminGetStats(): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/stats`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/stats`, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async adminGetShops(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/admin/shops`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/shops`, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async sendOtp(phone: string, purpose = 'shop_creation'): Promise<{ success: boolean; message: string; expiresInSeconds?: number; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+    const res = await apiFetch(`${API_BASE_URL}/auth/send-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -419,7 +466,7 @@ export const api = {
   },
 
   async verifyOtp(phone: string, otp: string, purpose = 'shop_creation'): Promise<{ success: boolean; message: string; otpVerificationToken?: string; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
+    const res = await apiFetch(`${API_BASE_URL}/auth/verify-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -429,7 +476,7 @@ export const api = {
   },
 
   async adminCreateShop(data: { shopName: string; ownerName: string; ownerEmail: string; ownerPhone?: string; otpVerificationToken?: string; password: string; isGstRegistered?: boolean; gstin?: string }): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/shops`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/shops`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -439,12 +486,12 @@ export const api = {
   },
 
   async adminGetShop(shopId: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/shops/${shopId}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/shops/${shopId}`, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async adminUpdateShop(shopId: string, data: { name?: string; status?: string }): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/shops/${shopId}`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/shops/${shopId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -454,7 +501,7 @@ export const api = {
   },
 
   async adminUpdateShopStatus(shopId: string, status: 'active' | 'disabled'): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/shops/${shopId}/status`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/shops/${shopId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -464,7 +511,7 @@ export const api = {
   },
 
   async adminDeleteShop(shopId: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/shops/${shopId}`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/shops/${shopId}`, {
       method: 'DELETE',
       credentials: 'include',
     });
@@ -477,12 +524,12 @@ export const api = {
     if (shopId) params.set('shopId', shopId);
     if (role) params.set('role', role);
     if (params.toString()) url += `?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async adminCreateStaff(data: { name: string; email: string; password: string; shopId: string }): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/users/staff`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/users/staff`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -492,7 +539,7 @@ export const api = {
   },
 
   async adminUpdateUser(userId: string, data: { status?: string }): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/users/${userId}`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/users/${userId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -502,7 +549,7 @@ export const api = {
   },
 
   async adminResetPassword(userId: string, newPassword: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/reset-password`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/users/${userId}/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -513,7 +560,7 @@ export const api = {
 
   async adminGetDashboardStats(shopId?: string): Promise<any> {
     const url = shopId ? `${API_BASE_URL}/admin/dashboard?shopId=${encodeURIComponent(shopId)}` : `${API_BASE_URL}/admin/dashboard`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -533,7 +580,7 @@ export const api = {
     };
   }> {
     const url = shopId ? `${API_BASE_URL}/admin/dashboard-stats?shopId=${encodeURIComponent(shopId)}` : `${API_BASE_URL}/admin/dashboard-stats`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -543,12 +590,12 @@ export const api = {
     if (shopId) params.set('shopId', shopId);
     if (search) params.set('search', search);
     if (params.toString()) url += `?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async adminGetCustomerDetails(id: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/customers/${id}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/customers/${id}`, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -558,7 +605,7 @@ export const api = {
     if (shopId) params.set('shopId', shopId);
     if (category) params.set('category', category);
     if (params.toString()) url += `?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -573,7 +620,7 @@ export const api = {
       if (filters.endDate) params.set('endDate', filters.endDate);
       if (params.toString()) url += `?${params.toString()}`;
     }
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -583,7 +630,7 @@ export const api = {
     if (shopId) params.set('shopId', shopId);
     if (filter) params.set('filter', filter);
     if (params.toString()) url += `?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -594,13 +641,13 @@ export const api = {
     if (startDate) params.set('startDate', startDate);
     if (endDate) params.set('endDate', endDate);
     if (params.toString()) url += `?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async adminGetBilling(shopId?: string): Promise<any[]> {
     const url = shopId ? `${API_BASE_URL}/admin/billing?shopId=${encodeURIComponent(shopId)}` : `${API_BASE_URL}/admin/billing`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -614,12 +661,12 @@ export const api = {
       if (filters.endDate) params.set('endDate', filters.endDate);
       if (params.toString()) url += `?${params.toString()}`;
     }
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
     return handleResponse(res);
   },
 
   async adminGetActivities(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/admin/activities`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/activities`, { credentials: 'include' });
     return handleResponse(res);
   },
 
@@ -630,7 +677,7 @@ export const api = {
     purchaseStatus?: string;
     followUpReason?: string;
   }): Promise<{ success: boolean; message?: string; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/ai/followup-message`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/followup-message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -650,7 +697,7 @@ export const api = {
     };
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/ai/customer-intelligence`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/customer-intelligence`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -687,7 +734,7 @@ export const api = {
     };
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/ai/sales-opportunity`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/sales-opportunity`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -727,7 +774,7 @@ export const api = {
     };
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/ai/shop-insights`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/shop-insights`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -785,7 +832,7 @@ export const api = {
     };
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/ai/admin-insights`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/admin-insights`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -865,7 +912,7 @@ export const api = {
     };
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/ai/trends`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/trends`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -922,7 +969,7 @@ export const api = {
     }>;
     error?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/ai/followup-priorities`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/followup-priorities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -950,15 +997,10 @@ export const api = {
     if (options.endDate) params.set('endDate', options.endDate);
 
     const url = `${API_BASE_URL}/sales/export?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
 
     if (!res.ok) {
-      let errMsg = 'Unable to generate sales report.';
-      try {
-        const errJson = await res.json();
-        if (errJson && errJson.error) errMsg = errJson.error;
-      } catch (e) {}
-      throw new Error(errMsg);
+      throw await buildApiError(res, 'Unable to generate sales report.');
     }
 
     const blob = await res.blob();
@@ -992,15 +1034,10 @@ export const api = {
     if (options.endDate) params.set('endDate', options.endDate);
 
     const url = `${API_BASE_URL}/reports/export?${params.toString()}`;
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await apiFetch(url, { credentials: 'include' });
 
     if (!res.ok) {
-      let errMsg = 'Unable to generate business report.';
-      try {
-        const errJson = await res.json();
-        if (errJson && errJson.error) errMsg = errJson.error;
-      } catch (e) {}
-      throw new Error(errMsg);
+      throw await buildApiError(res, 'Unable to generate business report.');
     }
 
     const blob = await res.blob();
@@ -1033,7 +1070,7 @@ export const api = {
     requestedPlan?: string;
     message?: string;
   }): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/subscription-requests`, {
+    const res = await apiFetch(`${API_BASE_URL}/subscription-requests`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -1042,12 +1079,12 @@ export const api = {
   },
 
   async adminGetSubscriptionRequests(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/admin/subscription-requests`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/subscription-requests`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async adminApproveSubscriptionRequest(id: string, adminNotes?: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/subscription-requests/${id}/approve`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/subscription-requests/${id}/approve`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1057,7 +1094,7 @@ export const api = {
   },
 
   async adminRejectSubscriptionRequest(id: string, adminNotes?: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/admin/subscription-requests/${id}/reject`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/subscription-requests/${id}/reject`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1067,7 +1104,7 @@ export const api = {
   },
 
   async adminDeleteSubscriptionRequests(ids: string[]): Promise<{ success: boolean; message: string; deletedCount: number }> {
-    const res = await fetch(`${API_BASE_URL}/admin/subscription-requests`, {
+    const res = await apiFetch(`${API_BASE_URL}/admin/subscription-requests`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1078,12 +1115,12 @@ export const api = {
 
   // Shop GST Settings
   async getShopGst(): Promise<{ registered: boolean; gstin: string; legalName: string; address: string; state: string; stateCode: string; defaultRate: number }> {
-    const res = await fetch(`${API_BASE_URL}/shop/gst`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/shop/gst`, { credentials: 'include' });
     return handleResponse<{ registered: boolean; gstin: string; legalName: string; address: string; state: string; stateCode: string; defaultRate: number }>(res);
   },
 
   async updateShopGst(data: { registered: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number }): Promise<{ success: boolean; message: string; gst: any }> {
-    const res = await fetch(`${API_BASE_URL}/shop/gst`, {
+    const res = await apiFetch(`${API_BASE_URL}/shop/gst`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1094,12 +1131,12 @@ export const api = {
 
   // Shop Profile
   async getShopProfile(): Promise<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; lengthBasedBillingEnabled?: boolean; isGstRegistered?: boolean; gstin?: string; gst?: any }> {
-    const res = await fetch(`${API_BASE_URL}/shop/profile`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/shop/profile`, { credentials: 'include' });
     return handleResponse<{ customId: string; name: string; phone: string; address?: string; status: string; subscriptionStatus: string; lengthBasedBillingEnabled?: boolean; isGstRegistered?: boolean; gstin?: string; gst?: any }>(res);
   },
 
   async translateText(data: { text: string; direction?: 'en-to-ta' | 'ta-to-en' }): Promise<{ success: boolean; translatedText?: string; error?: string }> {
-    const res = await fetch(`${API_BASE_URL}/ai/translate`, {
+    const res = await apiFetch(`${API_BASE_URL}/ai/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1109,7 +1146,7 @@ export const api = {
   },
 
   async updateShopProfile(data: { name?: string; phone?: string; isGstRegistered?: boolean; gstin?: string; legalName?: string; address?: string; state?: string; stateCode?: string; defaultRate?: number; lengthBasedBillingEnabled?: boolean }): Promise<{ success: boolean; message: string; shop: any }> {
-    const res = await fetch(`${API_BASE_URL}/shop/profile`, {
+    const res = await apiFetch(`${API_BASE_URL}/shop/profile`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1120,17 +1157,17 @@ export const api = {
 
   // ─── Privacy & Data Layer APIs ───
   async getPrivacyNotice(): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/privacy/notice`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/notice`, { credentials: 'include' });
     return handleResponse<any>(res);
   },
 
   async getConsentHistory(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/privacy/consent`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/consent`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async withdrawConsent(purpose: string): Promise<{ success: boolean; consent: any }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/consent/withdraw`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/consent/withdraw`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1140,7 +1177,7 @@ export const api = {
   },
 
   async grantConsent(purpose: string): Promise<{ success: boolean; consent: any }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/consent/grant`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/consent/grant`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1150,18 +1187,18 @@ export const api = {
   },
 
   async getMyData(): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/privacy/my-data`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/my-data`, { credentials: 'include' });
     return handleResponse<any>(res);
   },
 
   async exportMyData(): Promise<Blob> {
-    const res = await fetch(`${API_BASE_URL}/privacy/export`, { credentials: 'include' });
-    if (!res.ok) throw new Error('Failed to export personal data.');
+    const res = await apiFetch(`${API_BASE_URL}/privacy/export`, { credentials: 'include' });
+    if (!res.ok) throw await buildApiError(res, 'Failed to export personal data.');
     return res.blob();
   },
 
   async deleteAccount(confirmationText: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/delete-account`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/delete-account`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1171,12 +1208,12 @@ export const api = {
   },
 
   async getPrivacyRequests(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/privacy/requests`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/requests`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async createPrivacyRequest(requestType: string, description: string): Promise<{ success: boolean; request: any }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/requests`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/requests`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1186,12 +1223,12 @@ export const api = {
   },
 
   async getAdminPrivacyRequests(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/privacy/admin/requests`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/admin/requests`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async updateAdminPrivacyRequest(id: string, data: { status?: string; adminNotes?: string }): Promise<{ success: boolean; request: any }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/admin/requests/${id}`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/admin/requests/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1201,17 +1238,17 @@ export const api = {
   },
 
   async getAdminPrivacyAuditLogs(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/privacy/admin/audit-logs`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/admin/audit-logs`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async getAdminSecurityIncidents(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/privacy/admin/incidents`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/admin/incidents`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async recordAdminSecurityIncident(data: { severity?: string; description: string; affectedSystem?: string; affectedDataCategories?: string[]; containmentAction?: string }): Promise<{ success: boolean; incident: any }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/admin/incidents`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/admin/incidents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1221,12 +1258,12 @@ export const api = {
   },
 
   async getShopActivitySecurity(): Promise<{ success: boolean; shopId: string; activities: any[] }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/activity-security`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/activity-security`, { credentials: 'include' });
     return handleResponse<{ success: boolean; shopId: string; activities: any[] }>(res);
   },
 
   async runRetentionCleanup(): Promise<{ success: boolean; deletedTechnicalLogsCount: number; note: string }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/cleanup-retention`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/cleanup-retention`, {
       method: 'POST',
       credentials: 'include'
     });
@@ -1234,24 +1271,24 @@ export const api = {
   },
 
   async getCampaigns(): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/campaigns`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
   async getCampaignById(id: string): Promise<any> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}`, { credentials: 'include' });
     return handleResponse<any>(res);
   },
 
   async getTargetingCustomers(filterType: string = 'all_eligible', productId?: string): Promise<{ success: boolean; eligibleCount: number; ineligibleCount: number; eligibleCustomers: any[]; ineligibleCustomers: any[] }> {
     const params = new URLSearchParams({ filterType });
     if (productId) params.append('productId', productId);
-    const res = await fetch(`${API_BASE_URL}/campaigns/targeting-customers?${params.toString()}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/targeting-customers?${params.toString()}`, { credentials: 'include' });
     return handleResponse<{ success: boolean; eligibleCount: number; ineligibleCount: number; eligibleCustomers: any[]; ineligibleCustomers: any[] }>(res);
   },
 
   async createCampaign(data: any): Promise<{ success: boolean; campaign: any }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns`, {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1260,31 +1297,128 @@ export const api = {
     return handleResponse<{ success: boolean; campaign: any }>(res);
   },
 
-  async getWhatsAppProviderStatus(): Promise<{ configured: boolean; status: string; provider: string; mode: string; version: string; phoneNumberId: string; templateName: string }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/provider-status`, { credentials: 'include' });
-    return handleResponse<{ configured: boolean; status: string; provider: string; mode: string; version: string; phoneNumberId: string; templateName: string }>(res);
+  async updateCampaign(id: string, data: any): Promise<{ success: boolean; campaign: any }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(data)
+    });
+    return handleResponse<{ success: boolean; campaign: any }>(res);
   },
 
-  async sendCampaign(id: string): Promise<{ success: boolean; campaignId: string; status: string; summary: { total: number; sent: number; failed: number; skipped: number } }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/send`, {
+  async getCampaignDashboardMetrics(): Promise<{
+    success: boolean;
+    metrics: {
+      totalCampaigns: number;
+      activeCampaigns: number;
+      completedCampaigns: number;
+      totalDeliveredMessages: number;
+      totalSentMessages: number;
+    }
+  }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/dashboard-metrics`, { credentials: 'include' });
+    return handleResponse<{
+      success: boolean;
+      metrics: {
+        totalCampaigns: number;
+        activeCampaigns: number;
+        completedCampaigns: number;
+        totalDeliveredMessages: number;
+        totalSentMessages: number;
+      }
+    }>(res);
+  },
+
+  async getCampaignTemplates(): Promise<{ success: boolean; templates: any[] }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/templates`, { credentials: 'include' });
+    return handleResponse<{ success: boolean; templates: any[] }>(res);
+  },
+
+  async getWhatsAppProviderStatus(): Promise<{
+    configured: boolean;
+    status: string;
+    provider: string;
+    mode?: string;
+    version?: string;
+    phoneNumberId?: string;
+    displayPhoneNumber?: string;
+    businessName?: string;
+    shopConnected?: boolean;
+    globalConfigured?: boolean;
+    templateName?: string;
+    templateLanguage?: string;
+  }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/provider-status`, { credentials: 'include' });
+    return handleResponse<{
+      configured: boolean;
+      status: string;
+      provider: string;
+      mode?: string;
+      version?: string;
+      phoneNumberId?: string;
+      displayPhoneNumber?: string;
+      businessName?: string;
+      shopConnected?: boolean;
+      globalConfigured?: boolean;
+      templateName?: string;
+      templateLanguage?: string;
+    }>(res);
+  },
+
+  async sendCampaign(id: string): Promise<{ success: boolean; campaignId: string; status: string; message?: string; summary?: { total: number; queued?: number; sent?: number; failed?: number; skipped: number } }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/send`, {
       method: 'POST',
       credentials: 'include'
     });
-    return handleResponse<{ success: boolean; campaignId: string; status: string; summary: { total: number; sent: number; failed: number; skipped: number } }>(res);
+    return handleResponse<{ success: boolean; campaignId: string; status: string; message?: string; summary?: { total: number; queued?: number; sent?: number; failed?: number; skipped: number } }>(res);
   },
 
-  async getCampaignRecipients(id: string): Promise<any[]> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/recipients`, { credentials: 'include' });
+  async cancelCampaign(id: string): Promise<{ success: boolean; message: string; campaign: any }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/cancel`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    return handleResponse<{ success: boolean; message: string; campaign: any }>(res);
+  },
+
+  async retryFailedCampaignRecipients(id: string): Promise<{ success: boolean; retriedCount?: number; message: string }> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/retry-failed`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+    return handleResponse<{ success: boolean; retriedCount?: number; message: string }>(res);
+  },
+
+  async getCampaignRecipients(id: string, status?: string, search?: string): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (status && status !== 'ALL') query.append('status', status);
+    if (search && search.trim()) query.append('search', search.trim());
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/recipients?${query.toString()}`, { credentials: 'include' });
     return handleResponse<any[]>(res);
   },
 
+  async exportCampaignReport(id: string): Promise<void> {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/export`, { credentials: 'include' });
+    if (!res.ok) throw await buildApiError(res, 'Failed to export campaign report');
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `campaign-${id}-report.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
+
   async getManualCampaignTargets(id: string): Promise<{ success: boolean; campaignId: string; totalTargets: number; targets: any[] }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/manual-targets`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/manual-targets`, { credentials: 'include' });
     return handleResponse<{ success: boolean; campaignId: string; totalTargets: number; targets: any[] }>(res);
   },
 
   async markManualRecipientSent(id: string, customerId: string): Promise<{ success: boolean; recipient: any }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/mark-manual-sent`, {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/mark-manual-sent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1294,7 +1428,7 @@ export const api = {
   },
 
   async skipManualRecipient(id: string, customerId: string): Promise<{ success: boolean; recipient: any }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/skip-recipient`, {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/skip-recipient`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1304,7 +1438,7 @@ export const api = {
   },
 
   async recordCampaignResponse(id: string, customerId: string, responseType: string, notes?: string, scheduledFollowUpDate?: string, followUpNotes?: string): Promise<{ success: boolean; campaignResponse: any; enquiryId: string; followUpId: string }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/record-response`, {
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/record-response`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1314,22 +1448,22 @@ export const api = {
   },
 
   async getCampaignResponses(id: string): Promise<{ success: boolean; totalResponses: number; summary: Record<string, number>; responses: any[] }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/responses`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/responses`, { credentials: 'include' });
     return handleResponse<{ success: boolean; totalResponses: number; summary: Record<string, number>; responses: any[] }>(res);
   },
 
   async getCustomerCampaignHistory(customerId: string): Promise<{ success: boolean; customerId: string; history: any[] }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/customer/${customerId}/history`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/customer/${customerId}/history`, { credentials: 'include' });
     return handleResponse<{ success: boolean; customerId: string; history: any[] }>(res);
   },
 
   async getCustomerOfferPermission(customerId: string): Promise<{ success: boolean; customerId: string; allowWhatsAppOffers: boolean; status: string }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/customers/${customerId}/permission`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/privacy/customers/${customerId}/permission`, { credentials: 'include' });
     return handleResponse<{ success: boolean; customerId: string; allowWhatsAppOffers: boolean; status: string }>(res);
   },
 
   async setCustomerOfferPermission(customerId: string, allowWhatsAppOffers: boolean): Promise<{ success: boolean; customerId: string; allowWhatsAppOffers: boolean; status: string }> {
-    const res = await fetch(`${API_BASE_URL}/privacy/customers/${customerId}/permission`, {
+    const res = await apiFetch(`${API_BASE_URL}/privacy/customers/${customerId}/permission`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1339,24 +1473,24 @@ export const api = {
   },
 
   async getReengagementSummary(days: string = '60'): Promise<{ success: boolean; potentialCustomers: number; withPhone: number; offerPermission: number; whatsappEligible: number; recommendedCount: number }> {
-    const res = await fetch(`${API_BASE_URL}/reengagement/summary?days=${days}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/reengagement/summary?days=${days}`, { credentials: 'include' });
     return handleResponse<{ success: boolean; potentialCustomers: number; withPhone: number; offerPermission: number; whatsappEligible: number; recommendedCount: number }>(res);
   },
 
   async getReengagementCustomers(days: string = '60', productId?: string, permission: string = 'ALL', phone: string = 'ALL'): Promise<{ success: boolean; totalPotential: number; whatsappEligibleCount: number; notEligibleCount: number; customers: any[] }> {
     const query = new URLSearchParams({ days, permission, phone });
     if (productId) query.append('productId', productId);
-    const res = await fetch(`${API_BASE_URL}/reengagement/customers?${query.toString()}`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/reengagement/customers?${query.toString()}`, { credentials: 'include' });
     return handleResponse<{ success: boolean; totalPotential: number; whatsappEligibleCount: number; notEligibleCount: number; customers: any[] }>(res);
   },
 
   async getCampaignAnalytics(id: string): Promise<{ success: boolean; analytics: any }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/${id}/analytics`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/${id}/analytics`, { credentials: 'include' });
     return handleResponse<{ success: boolean; analytics: any }>(res);
   },
 
   async getCampaignAnalyticsSummary(): Promise<{ success: boolean; summaries: any[] }> {
-    const res = await fetch(`${API_BASE_URL}/campaigns/analytics/summary`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/campaigns/analytics/summary`, { credentials: 'include' });
     return handleResponse<{ success: boolean; summaries: any[] }>(res);
   },
 
@@ -1373,7 +1507,7 @@ export const api = {
     metaAppId?: string;
     metaConfigId?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/whatsapp/status`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/whatsapp/status`, { credentials: 'include' });
     return handleResponse<{
       connected: boolean;
       status: string;
@@ -1398,7 +1532,7 @@ export const api = {
     metaConfigRequired?: boolean;
     details?: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/whatsapp/connect`, {
+    const res = await apiFetch(`${API_BASE_URL}/whatsapp/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include'
@@ -1422,7 +1556,7 @@ export const api = {
     businessName: string;
     displayPhoneNumber: string;
   }> {
-    const res = await fetch(`${API_BASE_URL}/whatsapp/verify-embedded-signup`, {
+    const res = await apiFetch(`${API_BASE_URL}/whatsapp/verify-embedded-signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -1438,7 +1572,7 @@ export const api = {
   },
 
   async disconnectWhatsApp(): Promise<{ success: boolean; connected: boolean; status: string }> {
-    const res = await fetch(`${API_BASE_URL}/whatsapp/disconnect`, {
+    const res = await apiFetch(`${API_BASE_URL}/whatsapp/disconnect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include'
@@ -1466,7 +1600,7 @@ export const api = {
       timestamp: string;
     } | null;
   }> {
-    const res = await fetch(`${API_BASE_URL}/storage/cleanup`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/storage/cleanup`, { credentials: 'include' });
     return handleResponse<{
       success: boolean;
       shopId: string;
@@ -1497,7 +1631,7 @@ export const api = {
     message: string;
     immediateExecution?: any;
   }> {
-    const res = await fetch(`${API_BASE_URL}/storage/cleanup/approve`, {
+    const res = await apiFetch(`${API_BASE_URL}/storage/cleanup/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include'
@@ -1557,7 +1691,7 @@ export const api = {
       withoutBarcode: number;
     };
   }> {
-    const res = await fetch(`${API_BASE_URL}/admin/database-storage`, { credentials: 'include' });
+    const res = await apiFetch(`${API_BASE_URL}/admin/database-storage`, { credentials: 'include' });
     return handleResponse<any>(res);
   }
 };

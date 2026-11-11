@@ -15,6 +15,10 @@ export const seedAdmin = async () => {
     const existingUser = await User.findOne({ email: adminEmail });
     
     if (existingUser) {
+      // Never overwrite an existing production admin's credentials on restart
+      if (process.env.NODE_ENV === 'production' && existingUser.role === 'admin') {
+        return;
+      }
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(targetPassword, salt);
       existingUser.role = 'admin';

@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Customer, Product, Enquiry, FollowUp, Sale, Activity, Note, Message } from '../types';
-import { api, type UserSession } from '../services/api';
+import { api, setApiUnauthorizedHandler, type UserSession } from '../services/api';
 
 interface AppContextType {
   currentUser: UserSession | null;
@@ -70,7 +70,11 @@ interface AppContextType {
   updateEnquiry: (id: string, updates: Partial<Enquiry>) => Promise<void>;
   updateFollowUpStatus: (id: string, status: FollowUp['status'], outcome?: FollowUp['outcome']) => Promise<void>;
   sendWhatsAppMock: (followUpId: string, customMessage: string) => Promise<boolean>;
-  createSale: (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string }) => Promise<Sale | null>;
+  createSale: (
+    saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string },
+    options?: { rethrow?: boolean }
+  ) => Promise<Sale | null>;
+  reconcileSale: (sale: Sale) => void;
   deleteSales: (ids: string[]) => Promise<boolean>;
 
 
@@ -100,43 +104,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const committedSaleIdsRef = useRef<Set<string>>(new Set());
   const [activities, setActivities] = useState<Activity[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [todayWork, setTodayWork] = useState<any>(null);
-  const [shopProfile, setShopProfile] = useState<{ name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string; lengthBasedBillingEnabled?: boolean } | null>(null);
+  const [shopProfile, setShopProfile] = useState<{ name?: string; phone?: string; isGstRegistered: boolean; gstin: string; stateCode?: string; gst?: { registered?: boolean; defaultRate?: number; stateCode?: string }; lengthBasedBillingEnabled?: boolean } | null>(null);
   
   const [salesSessionActive, setSalesSessionActive] = useState<boolean>(() => {
     return localStorage.getItem('quickr_sales_session_active') === 'true';
   });
 
-  const startSalesSession = () => {
+  const startSalesSession = useCallback(() => {
     setSalesSessionActive(true);
     localStorage.setItem('quickr_sales_session_active', 'true');
-  };
+  }, []);
 
-  const endSalesSession = () => {
+  const endSalesSession = useCallback(() => {
     setSalesSessionActive(false);
     localStorage.setItem('quickr_sales_session_active', 'false');
-  };
-  
+  }, []);
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error] = useState<string | null>(null);
   const [pwaInstallPrompt, setPwaInstallPrompt] = useState<any>(null);
 
-  // Application-level PWA beforeinstallprompt capture
+  // Single Application-level PWA beforeinstallprompt capture
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      console.log('[QuickR PWA] beforeinstallprompt captured at AppContext level');
       (window as any).deferredPwaPrompt = e;
       setPwaInstallPrompt(e);
+      window.dispatchEvent(new CustomEvent('quickr-pwa-prompt-changed'));
     };
 
     const handleAppInstalled = () => {
-      console.log('[QuickR PWA] appinstalled event received');
       (window as any).deferredPwaPrompt = null;
       setPwaInstallPrompt(null);
+      window.dispatchEvent(new CustomEvent('quickr-pwa-prompt-changed'));
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -148,24 +153,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  const triggerPwaInstall = async () => {
+  const triggerPwaInstall = useCallback(async () => {
     const activePrompt = pwaInstallPrompt || (window as any).deferredPwaPrompt;
     if (activePrompt) {
-      console.log('[QuickR PWA] native install prompt triggered from AppContext');
       try {
         activePrompt.prompt();
-        const choice = await activePrompt.userChoice;
-        console.log('[QuickR PWA] user choice:', choice?.outcome);
+        await activePrompt.userChoice;
       } catch (err) {
         console.error('[QuickR PWA] error prompting install:', err);
       } finally {
         (window as any).deferredPwaPrompt = null;
         setPwaInstallPrompt(null);
+        window.dispatchEvent(new CustomEvent('quickr-pwa-prompt-changed'));
       }
-    } else {
-      console.log('[QuickR PWA] native install prompt unavailable');
     }
-  };
+  }, [pwaInstallPrompt]);
 
   // Warm-up health check with exponential backoff (2s, 5s, 10s)
   const warmUpBackend = async (attempt = 1): Promise<boolean> => {
@@ -207,10 +209,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const clearSessionState = useCallback(() => {
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    setCustomers([]);
+    setProducts([]);
+    setEnquiries([]);
+    setFollowUps([]);
+    setSales([]);
+    committedSaleIdsRef.current.clear();
+    setActivities([]);
+    setNotes([]);
+    setMessages([]);
+    setTodayWork(null);
+    setShopProfile(null);
+    try {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key && key.startsWith('quickr_pending_sale_')) {
+          sessionStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // Ignore storage access restrictions
+    }
+  }, []);
+
   // Load user session on mount
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     setIsLoading(true);
-    // Trigger non-blocking backend warm-up simultaneously
     warmUpBackend();
     try {
       const res = await api.getMe();
@@ -218,21 +245,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser(res.user);
         setIsAuthenticated(true);
         setConnectionState('ready');
-        await loadBusinessData();
+        if (res.user.role !== 'admin') {
+          await loadBusinessData();
+        }
       } else {
-        setCurrentUser(null);
-        setIsAuthenticated(false);
+        clearSessionState();
       }
     } catch (err) {
-      setCurrentUser(null);
-      setIsAuthenticated(false);
+      clearSessionState();
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-
-  const loadBusinessData = async () => {
+  const loadBusinessData = useCallback(async () => {
     try {
       const [cList, pList, eList, fList, sList, aList, mList, workData, profileData] = await Promise.all([
         api.getCustomers().catch(() => []),
@@ -251,119 +277,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setEnquiries(eList);
       setFollowUps(fList);
       setSales(sList);
+      committedSaleIdsRef.current = new Set(sList.map(s => s.id));
       setActivities(aList);
       setMessages(mList);
       if (workData) {
-        console.log('APPCONTEXT setTodayWork:', 'dueToday=' + workData.dueToday?.length, 'overdue=' + workData.overdue?.length, 'summary:', workData.summary);
         setTodayWork(workData);
       }
       if (profileData) {
         setShopProfile({
           name: profileData.name || 'QuickR Shop',
+          phone: profileData.phone || '',
           isGstRegistered: !!profileData.isGstRegistered,
           gstin: profileData.gstin || '',
+          stateCode: profileData.gst?.stateCode || (profileData as any).stateCode || '33',
+          gst: profileData.gst,
           lengthBasedBillingEnabled: !!profileData.lengthBasedBillingEnabled
         });
       }
     } catch (err: any) {
       console.error('Failed to load business data:', err);
     }
-  };
-
-  useEffect(() => {
-    checkAuth();
   }, []);
 
+  useEffect(() => {
+    setApiUnauthorizedHandler(() => {
+      clearSessionState();
+    });
+    checkAuth();
+    return () => setApiUnauthorizedHandler(null);
+  }, [checkAuth, clearSessionState]);
+
   const login = async (email: string, pass: string): Promise<boolean> => {
-    try {
-      setIsLoading(true);
-      const res = await api.login({ email, password: pass });
-      if (res && res.user) {
-        setCurrentUser(res.user);
-        setIsAuthenticated(true);
+    const res = await api.login({ email, password: pass });
+    if (res && res.user) {
+      setCurrentUser(res.user);
+      setIsAuthenticated(true);
+      setConnectionState('ready');
+      if (res.user.role !== 'admin') {
         await loadBusinessData();
-        return true;
       }
-      return false;
-    } catch (err: any) {
-      console.error('Login error:', err);
-      throw err;
-    } finally {
-      setIsLoading(false);
+      return true;
     }
+    return false;
   };
 
   const register = async (ownerName: string, shopName: string, email: string, pass: string): Promise<boolean> => {
-    try {
-      setIsLoading(true);
-      const res = await api.register({ ownerName, shopName, email, password: pass });
-      if (res && res.user) {
-        setCurrentUser(res.user);
-        setIsAuthenticated(true);
+    const res = await api.register({ ownerName, shopName, email, password: pass });
+    if (res && res.user) {
+      setCurrentUser(res.user);
+      setIsAuthenticated(true);
+      if (res.user.role !== 'admin') {
         await loadBusinessData();
-        return true;
       }
-      return false;
-    } catch (err: any) {
-      console.error('Register error:', err);
-      throw err;
-    } finally {
-      setIsLoading(false);
+      return true;
     }
+    return false;
   };
 
-  const logout = async (): Promise<void> => {
+  const logout = useCallback(async (): Promise<void> => {
     try {
       await api.logout();
     } catch (err) {
       console.error('Logout request error:', err);
     } finally {
-      // Clear all state to prevent data bleed
-      setCurrentUser(null);
-      setIsAuthenticated(false);
-      setCustomers([]);
-      setProducts([]);
-      setEnquiries([]);
-      setFollowUps([]);
-      setSales([]);
-      setActivities([]);
-      setNotes([]);
-      setMessages([]);
-      setTodayWork(null);
+      clearSessionState();
     }
-  };
+  }, [clearSessionState]);
 
   const addProduct = async (productData: Omit<Product, 'id' | 'createdAt'>): Promise<Product | null> => {
     try {
-      setIsLoading(true);
       const created = await api.createProduct(productData);
       setProducts(prev => [created, ...prev]);
       return created;
     } catch (err: any) {
       alert(`Unable to save product: ${err.message || 'Server error'}`);
       return null;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const updateProduct = async (id: string, updates: Partial<Product>): Promise<Product | null> => {
     try {
-      setIsLoading(true);
       const updated = await api.updateProduct(id, updates);
       setProducts(prev => prev.map(p => p.id === id ? updated : p));
       return updated;
     } catch (err: any) {
       alert(`Unable to update product: ${err.message || 'Server error'}`);
       return null;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const deleteProduct = async (id: string): Promise<boolean> => {
     try {
-      setIsLoading(true);
       const res = await api.deleteProduct(id);
       if (res.success) {
         setProducts(prev => prev.filter(p => p.id !== id));
@@ -373,28 +377,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err: any) {
       alert(`Unable to delete product: ${err.message || 'Server error'}`);
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const addCustomer = async (customerData: Omit<Customer, 'id' | 'createdAt'>): Promise<Customer | null> => {
     try {
-      setIsLoading(true);
       const created = await api.createCustomer(customerData);
       setCustomers(prev => [created, ...prev]);
       return created;
     } catch (err: any) {
       alert(`Unable to save customer: ${err.message || 'Server error'}`);
       return null;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const deleteCustomer = async (id: string): Promise<boolean> => {
     try {
-      setIsLoading(true);
       const res = await api.deleteCustomer(id);
       if (res.success) {
         setCustomers(prev => prev.filter(c => c.id !== id));
@@ -409,12 +407,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err: any) {
       alert(`Unable to delete customer: ${err.message || 'Server error'}`);
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  const refreshTodayWork = async (): Promise<void> => {
+  const refreshTodayWork = useCallback(async (): Promise<void> => {
     try {
       const workData = await api.getTodayWork().catch(() => null);
       if (workData) {
@@ -423,11 +419,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.error('Failed to refresh Today Work queue:', err);
     }
-  };
+  }, []);
 
   const addEnquiry = async (enquiryData: Omit<Enquiry, 'id' | 'createdAt'>): Promise<Enquiry | null> => {
     try {
-      setIsLoading(true);
       const res = await api.createEnquiry(enquiryData);
       if (!res || !res.enquiry) {
         throw new Error('Backend did not return a created enquiry.');
@@ -438,21 +433,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setFollowUps(prev => [newFw, ...prev]);
       }
 
-      // Targeted lightweight refresh of Today Work queue so new enquiries/followups appear immediately
       refreshTodayWork().catch(e => console.error('Background refreshTodayWork error:', e));
 
       return res.enquiry;
     } catch (err: any) {
       alert(`Failed to create enquiry: ${err.message || 'Server error'}`);
       return null;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const deleteEnquiry = async (id: string): Promise<boolean> => {
     try {
-      setIsLoading(true);
       const res = await api.deleteEnquiry(id);
       if (res && res.success) {
         setEnquiries(prev => prev.filter(e => e.id !== id));
@@ -463,14 +454,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err: any) {
       alert(`Failed to delete enquiry: ${err.message || 'Server error'}`);
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const bulkDeleteProducts = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
     try {
-      setIsLoading(true);
       const res = await api.bulkDeleteProducts(ids);
       if (res && res.success) {
         await loadBusinessData();
@@ -481,14 +469,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err.message || 'Failed to delete products';
       alert(`Error: ${msg}`);
       return { success: false, message: msg };
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const importProducts = async (productsData: any[], gstSettings?: any) => {
     try {
-      setIsLoading(true);
       const res = await api.importProducts(productsData, gstSettings);
       if (res && res.success) {
         await loadBusinessData();
@@ -498,14 +483,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err.message || 'Import failed';
       alert(`Error: ${msg}`);
       throw err;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const bulkDeleteCustomers = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
     try {
-      setIsLoading(true);
       const res = await api.bulkDeleteCustomers(ids);
       if (res && res.success) {
         await loadBusinessData();
@@ -516,14 +498,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err.message || 'Failed to delete customers';
       alert(`Error: ${msg}`);
       return { success: false, message: msg };
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const bulkDeleteEnquiries = async (ids: string[]): Promise<{ success: boolean; message: string }> => {
     try {
-      setIsLoading(true);
       const res = await api.bulkDeleteEnquiries(ids);
       if (res && res.success) {
         await loadBusinessData();
@@ -534,8 +513,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = err.message || 'Failed to delete enquiries';
       alert(`Error: ${msg}`);
       return { success: false, message: msg };
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -557,7 +534,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const sendWhatsAppMock = async (followUpId: string, customMessage: string): Promise<boolean> => {
     try {
-      setIsLoading(true);
       const res = await api.sendFollowUpMessage(followUpId, customMessage);
       if (res.success) {
         setFollowUps(prev => prev.map(f => f.id === followUpId ? res.followUp : f));
@@ -568,76 +544,84 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err: any) {
       alert(`Failed to send message: ${err.message || 'Server error'}`);
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  const createSale = async (saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string }): Promise<Sale | null> => {
+  const reconcileSale = useCallback((committedSale: Sale, fallbackItems?: any[]) => {
+    if (!committedSale?.id || committedSaleIdsRef.current.has(committedSale.id)) {
+      return;
+    }
+    committedSaleIdsRef.current.add(committedSale.id);
+
+    setSales(prev => (prev.some(s => s.id === committedSale.id) ? prev : [committedSale, ...prev]));
+
+    const sourceItems = Array.isArray(committedSale.items) && committedSale.items.length > 0
+      ? committedSale.items
+      : fallbackItems;
+    if (Array.isArray(sourceItems)) {
+      const decByProd = new Map<string, number>();
+      for (const soldItem of sourceItems as any[]) {
+        if (!soldItem?.productId) continue;
+        const isLen = soldItem.measurementType === 'length';
+        const decQty = Number(soldItem.baseQuantity) || (isLen && soldItem.sellingUnit === 'cm' ? (Number(soldItem.quantity) || 0) / 100 : (Number(soldItem.quantity) || 1));
+        decByProd.set(soldItem.productId, (decByProd.get(soldItem.productId) || 0) + decQty);
+      }
+      if (decByProd.size > 0) {
+        setProducts(prevProducts =>
+          prevProducts.map(p => {
+            const dec = decByProd.get(p.id);
+            return dec ? { ...p, availability: Math.max(0, Math.round(((p.availability || 0) - dec) * 10000) / 10000) } : p;
+          })
+        );
+      }
+    }
+  }, []);
+
+  const createSale = async (
+    saleData: Omit<Sale, 'id' | 'createdAt' | 'shopId' | 'invoiceNumber'> & { requestId?: string },
+    options?: { rethrow?: boolean }
+  ): Promise<Sale | null> => {
     try {
-      setIsLoading(true);
       const newSale = await api.createSale(saleData);
       if (newSale) {
-        setSales(prev => {
-          if (prev.some(s => s.id === newSale.id)) return prev;
-          return [newSale, ...prev];
-        });
-        // Update stock availability locally
-        if (Array.isArray(saleData.items)) {
-          setProducts(prevProducts =>
-            prevProducts.map(p => {
-              const soldItem = saleData.items.find((i: any) => i.productId === p.id);
-              if (soldItem) {
-                return { ...p, availability: Math.max(0, (p.availability || 0) - (soldItem.quantity || 1)) };
-              }
-              return p;
-            })
-          );
-        }
+        reconcileSale(newSale, saleData.items as any[]);
       }
       return newSale;
     } catch (err: any) {
+      if (options?.rethrow) {
+        throw err;
+      }
       alert(`Unable to generate bill: ${err.message || 'Server error'}`);
       return null;
-    } finally {
-      setIsLoading(false);
     }
   };
 
-
   const deleteSales = async (ids: string[]): Promise<boolean> => {
     try {
-      setIsLoading(true);
       const res = await api.deleteSales(ids);
       if (res && res.success) {
+        ids.forEach(id => committedSaleIdsRef.current.delete(id));
         setSales(prev => prev.filter(s => !ids.includes(s.id)));
+        api.getProducts().then(setProducts).catch(() => {});
         return true;
       }
       return false;
     } catch (err: any) {
       alert(`Unable to delete sales: ${err.message || 'Server error'}`);
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
-
   const handleOutcomeStillInterested = async (followUpId: string, nextDateStr: string) => {
     try {
-      setIsLoading(true);
       await api.recordFollowUpOutcome(followUpId, 'Still Interested', nextDateStr);
-      // Optimistically update the followUps state to mark this follow-up as completed.
       setFollowUps(prev =>
         prev.map(f =>
           f.id === followUpId ? { ...f, status: 'completed' as any, outcome: 'Still Interested' as any } : f
         )
       );
-      // Do NOT reload the entire business data to avoid resetting the WorkMode queue.
     } catch (err: any) {
       alert(`Failed to record outcome: ${err.message || 'Server error'}`);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -689,8 +673,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         setShopProfile({
           name: res.shop.name || 'QuickR Shop',
+          phone: res.shop.phone || '',
           isGstRegistered: !!res.shop.isGstRegistered,
           gstin: res.shop.gstin || '',
+          stateCode: res.shop.gst?.stateCode || res.shop.stateCode || '33',
+          gst: res.shop.gst,
           lengthBasedBillingEnabled: !!res.shop.lengthBasedBillingEnabled
         });
         await loadBusinessData();
@@ -705,72 +692,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const generateProductBarcode = async (productId: string): Promise<Product | null> => {
     try {
-      setIsLoading(true);
       const updated = await api.generateProductBarcode(productId);
       setProducts(prev => prev.map(p => p.id === productId ? updated : p));
       return updated;
     } catch (err: any) {
       alert(`Unable to generate barcode: ${err.message || 'Server error'}`);
       return null;
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  return (
-    <AppContext.Provider value={{
-      currentUser,
-      isAuthenticated,
-      customers,
-      products,
-      enquiries,
-      followUps,
-      sales,
-      activities,
-      notes,
-      messages,
-      todayWork,
-      shopProfile,
-      shopName: shopProfile?.name || (currentUser?.shopId ? `Shop ${currentUser.shopId}` : 'QuickR Shop'),
-      salesSessionActive,
-      startSalesSession,
-      endSalesSession,
-      isLoading,
-      error,
-      login,
-      register,
-      logout,
-      addProduct,
-      generateProductBarcode,
-      updateProduct,
-      deleteProduct,
-      bulkDeleteProducts,
-      importProducts,
-      addCustomer,
-      deleteCustomer,
-      bulkDeleteCustomers,
-      addEnquiry,
-      deleteEnquiry,
-      bulkDeleteEnquiries,
-      updateEnquiry,
-      updateFollowUpStatus,
-      sendWhatsAppMock,
-      createSale,
-      deleteSales,
-      handleOutcomeStillInterested,
-      handleOutcomeNotInterested,
-      handleOutcomeNoResponse,
-      addNote,
-      updateShopProfile,
-      connectionState,
-      checkHealth,
-      refreshTodayWork,
-      refreshData: loadBusinessData,
-      resetData: loadBusinessData,
-      pwaInstallPrompt,
-      triggerPwaInstall
-    }}>
+  const contextValue = useMemo<AppContextType>(() => ({
+    currentUser,
+    isAuthenticated,
+    customers,
+    products,
+    enquiries,
+    followUps,
+    sales,
+    activities,
+    notes,
+    messages,
+    todayWork,
+    shopProfile,
+    shopName: shopProfile?.name || (currentUser?.shopId ? `Shop ${currentUser.shopId}` : 'QuickR Shop'),
+    salesSessionActive,
+    startSalesSession,
+    endSalesSession,
+    isLoading,
+    error,
+    login,
+    register,
+    logout,
+    addProduct,
+    generateProductBarcode,
+    updateProduct,
+    deleteProduct,
+    bulkDeleteProducts,
+    importProducts,
+    addCustomer,
+    deleteCustomer,
+    bulkDeleteCustomers,
+    addEnquiry,
+    deleteEnquiry,
+    bulkDeleteEnquiries,
+    updateEnquiry,
+    updateFollowUpStatus,
+    sendWhatsAppMock,
+    createSale,
+    reconcileSale,
+    deleteSales,
+    handleOutcomeStillInterested,
+    handleOutcomeNotInterested,
+    handleOutcomeNoResponse,
+    addNote,
+    updateShopProfile,
+    connectionState,
+    checkHealth,
+    refreshTodayWork,
+    refreshData: loadBusinessData,
+    resetData: loadBusinessData,
+    pwaInstallPrompt,
+    triggerPwaInstall
+  }), [
+    currentUser,
+    isAuthenticated,
+    customers,
+    products,
+    enquiries,
+    followUps,
+    sales,
+    activities,
+    notes,
+    messages,
+    todayWork,
+    shopProfile,
+    salesSessionActive,
+    startSalesSession,
+    endSalesSession,
+    isLoading,
+    error,
+    logout,
+    connectionState,
+    refreshTodayWork,
+    loadBusinessData,
+    pwaInstallPrompt,
+    triggerPwaInstall
+  ]);
 
+  return (
+    <AppContext.Provider value={contextValue}>
       {children}
     </AppContext.Provider>
   );

@@ -13,11 +13,11 @@ export async function generateUniqueBarcode(shopId) {
     const candidateBarcode = `QKR-${raw}`;
 
     // Check collision in this shop
-    const existing = await Product.findOne({ shopId, barcode: candidateBarcode }).lean();
+    const existing = await Product.findOne({ shopId, barcode: candidateBarcode }).select('_id').lean();
     if (!existing) {
       return candidateBarcode;
     }
   }
-  // Fallback timestamp if 10 retries somehow collide
-  return `QKR-${Date.now().toString(36).toUpperCase()}`;
+  // High-entropy fallback if 10 retries somehow collide
+  return `QKR-${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 }

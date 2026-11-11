@@ -34,9 +34,36 @@ const campaignSchema = new mongoose.Schema(
       enum: ['DRAFT', 'READY', 'SCHEDULED', 'SENDING', 'COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED', 'CANCELLED'], 
       default: 'DRAFT' 
     },
+    campaignType: {
+      type: String,
+      enum: ['discount_offer', 'new_arrival', 'clearance', 'festive_deal', 'general_announcement'],
+      default: 'discount_offer'
+    },
+    templateName: { type: String, default: 'quickr_offer_campaign' },
+    templateLanguage: { type: String, default: 'en' },
+    templateVariables: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({})
+    },
+    scheduledAt: { type: Date, default: null },
+    startedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    // Cached delivery metrics for real-time dashboard aggregation
+    totalRecipients: { type: Number, default: 0 },
+    eligibleRecipients: { type: Number, default: 0 },
+    sentCount: { type: Number, default: 0 },
+    deliveredCount: { type: Number, default: 0 },
+    readCount: { type: Number, default: 0 },
+    failedCount: { type: Number, default: 0 },
+    skippedCount: { type: Number, default: 0 },
+    queuedCount: { type: Number, default: 0 },
+    cancelledCount: { type: Number, default: 0 },
     createdBy: { type: String, required: true },
     campaignCost: { type: Number, default: 0, min: 0 },
-    shopId: { type: String, required: true, index: true }
+    shopId: { type: String, required: true, index: true },
+    // Distributed MongoDB-backed worker locking
+    workerLockId: { type: String, default: null },
+    workerLockedAt: { type: Date, default: null }
   },
   { timestamps: true }
 );

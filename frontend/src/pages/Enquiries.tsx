@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { StatusBadge } from '../components/StatusBadge';
-import { Plus, Trash2, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, AlertCircle, Search } from 'lucide-react';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface EnquiriesProps {
   setCurrentPage: (page: string) => void;
@@ -18,11 +19,44 @@ export const Enquiries: React.FC<EnquiriesProps> = ({ setCurrentPage, setSelecte
   const [isAllShopSelected, setIsAllShopSelected] = useState<boolean>(false);
   const [isBulkConfirmModalOpen, setIsBulkConfirmModalOpen] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearch = useDebounce(searchQuery, 200);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
-  const enquiriesList = enquiries || [];
-  const visibleIds = enquiriesList.map(e => e.id);
+  const custById = useMemo(() => new Map((customers || []).map(c => [c.id, c])), [customers]);
+  const prodById = useMemo(() => new Map((products || []).map(p => [p.id, p])), [products]);
+
+  const enquiriesList = useMemo(() => {
+    const base = enquiries || [];
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter(e => {
+      const cust = custById.get(e.customerId);
+      const prod = prodById.get(e.productId);
+      return (
+        (cust?.name || '').toLowerCase().includes(q) ||
+        (cust?.phone || '').includes(q) ||
+        (e.productName || prod?.name || '').toLowerCase().includes(q) ||
+        (e.purchaseStatus || '').toLowerCase().includes(q)
+      );
+    });
+  }, [enquiries, debouncedSearch, custById, prodById]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(enquiriesList.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginatedEnquiries = useMemo(
+    () => enquiriesList.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [enquiriesList, safePage]
+  );
+
+  const visibleIds = paginatedEnquiries.map(e => e.id);
   const isAllVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
   const isSomeVisibleSelected = visibleIds.some(id => selectedIds.includes(id));
 
@@ -109,7 +143,7 @@ export const Enquiries: React.FC<EnquiriesProps> = ({ setCurrentPage, setSelecte
         </div>
       )}
 
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-slate-800">All Enquiries</h2>
           <p className="text-xs text-slate-400">View and manage customer clothing requests and purchase statuses</p>
@@ -120,6 +154,20 @@ export const Enquiries: React.FC<EnquiriesProps> = ({ setCurrentPage, setSelecte
         >
           <Plus className="w-4 h-4" /> New Enquiry
         </button>
+      </div>
+
+      {/* Search Bar */}
+      <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-soft">
+        <div className="relative max-w-md">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          <input
+            type="text"
+            placeholder="Search by customer, phone, product or status..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-primary-400 bg-slate-50 focus:bg-white"
+          />
+        </div>
       </div>
 
       {/* Bulk Action Toolbar */}
@@ -192,9 +240,9 @@ export const Enquiries: React.FC<EnquiriesProps> = ({ setCurrentPage, setSelecte
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {enquiriesList.map((item) => {
-                  const customer = customers?.find((c) => c.id === item.customerId);
-                  const product = products?.find((p) => p.id === item.productId);
+                {paginatedEnquiries.map((item) => {
+                  const customer = custById.get(item.customerId);
+                  const product = prodById.get(item.productId);
                   const isChecked = selectedIds.includes(item.id);
 
                   return (
@@ -249,6 +297,32 @@ export const Enquiries: React.FC<EnquiriesProps> = ({ setCurrentPage, setSelecte
             </table>
           )}
         </div>
+        {totalPages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-4 mt-4 border-t border-slate-100 text-xs text-slate-600">
+            <span>
+              Showing {((safePage - 1) * pageSize) + 1}–{Math.min(safePage * pageSize, enquiriesList.length)} of {enquiriesList.length} enquiries
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span className="font-bold text-slate-800">Page {safePage} / {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage === totalPages}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bulk Delete Confirmation Modal */}

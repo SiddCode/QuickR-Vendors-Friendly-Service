@@ -26,7 +26,9 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+productSchema.index({ shopId: 1, isActive: 1, createdAt: -1 });
 productSchema.index({ shopId: 1, createdAt: -1, isActive: 1 });
+productSchema.index({ shopId: 1, name: 1 });
 productSchema.index({ shopId: 1, id: 1 });
 productSchema.index({ shopId: 1, barcode: 1 }, { unique: true, partialFilterExpression: { barcode: { $type: 'string' } } });
 

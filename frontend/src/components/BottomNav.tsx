@@ -29,7 +29,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
   return (
     <nav 
-      className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 px-2 py-1.5 flex items-center justify-around lg:hidden shadow-lg font-sans"
+      className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-200 px-1.5 py-1.5 flex items-center justify-around lg:hidden shadow-lg font-sans"
       style={{ paddingBottom: 'calc(0.375rem + env(safe-area-inset-bottom, 0px))' }}
     >
       {navItems.map((item) => {
@@ -39,24 +39,24 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           <button
             key={item.id}
             onClick={() => setCurrentPage(item.id)}
-            className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition-all duration-150 ${
+            className={`min-w-0 flex-1 flex flex-col items-center justify-center py-1 px-1 rounded-xl transition-all duration-150 ${
               isActive 
                 ? 'text-primary-600 font-bold bg-primary-50' 
                 : 'text-slate-500 font-medium hover:text-slate-800'
             }`}
           >
             <Icon className={`w-5 h-5 ${isActive ? 'scale-110' : ''} transition-transform`} />
-            <span className="text-[10px] mt-0.5 tracking-tight">{item.label}</span>
+            <span className="text-[10px] leading-tight mt-0.5 tracking-tight whitespace-nowrap truncate max-w-full">{item.label}</span>
           </button>
         );
       })}
 
       <button
         onClick={onOpenMobileMenu}
-        className="flex flex-col items-center justify-center py-1 px-3 rounded-xl text-slate-500 font-medium hover:text-slate-800 transition-all duration-150"
+        className="min-w-0 flex-1 flex flex-col items-center justify-center py-1 px-1 rounded-xl text-slate-500 font-medium hover:text-slate-800 transition-all duration-150"
       >
         <Menu className="w-5 h-5" />
-        <span className="text-[10px] mt-0.5 tracking-tight">{t('common.actions')}</span>
+        <span className="text-[10px] leading-tight mt-0.5 tracking-tight whitespace-nowrap truncate max-w-full">{t('common.actions')}</span>
       </button>
     </nav>
   );

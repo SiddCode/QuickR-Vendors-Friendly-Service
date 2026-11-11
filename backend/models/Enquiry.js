@@ -29,6 +29,8 @@ const enquirySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+enquirySchema.index({ shopId: 1, createdAt: -1 });
+enquirySchema.index({ shopId: 1, createdAt: -1, purchaseStatus: 1 });
 enquirySchema.index({ shopId: 1, customerId: 1, createdAt: -1 });
 enquirySchema.index({ shopId: 1, id: 1 }, { unique: true });
 

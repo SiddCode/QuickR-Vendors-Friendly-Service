@@ -12,12 +12,19 @@ export const connectDB = async () => {
   const targetUri = mongoUri?.trim() || 'mongodb://127.0.0.1:27017/quickr';
 
   try {
-    const conn = await mongoose.connect(targetUri);
+    const conn = await mongoose.connect(targetUri, {
+      maxPoolSize: 20,
+      minPoolSize: 2,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000
+    });
     console.log(`🚀 Connected to MongoDB: ${conn.connection.host}/${conn.connection.name}`);
+    return conn;
   } catch (error) {
     console.error(`❌ MongoDB connection error: ${error.message}`);
     if (isProduction) {
       process.exit(1);
     }
+    return null;
   }
 };

@@ -28,6 +28,11 @@ const followUpSchema = new mongoose.Schema(
 );
 
 followUpSchema.index({ shopId: 1, scheduledAt: 1, status: 1 });
+followUpSchema.index({ shopId: 1, status: 1, scheduledAt: 1 });
+followUpSchema.index({ shopId: 1, status: 1, createdAt: -1 });
+followUpSchema.index({ shopId: 1, createdAt: -1 });
+followUpSchema.index({ shopId: 1, id: 1 });
+followUpSchema.index({ shopId: 1, enquiryId: 1 });
 followUpSchema.index({ shopId: 1, status: 1 });
 followUpSchema.index({ shopId: 1, customerId: 1 });
 

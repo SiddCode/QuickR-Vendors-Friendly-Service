@@ -423,23 +423,6 @@ Has Tool Calls: ${Array.isArray(message?.tool_calls) && message.tool_calls.lengt
       signal: controller.signal
     });
 
-    clearTimeout(timeoutId);
-
-    if (!apiRes.ok) {
-      const errorText = await apiRes.text().catch(() => '');
-      console.error(`[QuickR Ollama AI Error] Status: ${apiRes.status}, Response:`, errorText);
-
-      const err = new Error(`Ollama API error: ${apiRes.status}`);
-      err.status = apiRes.status || 503;
-      err.errorBody = errorText;
-      if (apiRes.status === 404 || errorText.includes('not found')) {
-        err.userMessage = `Model '${modelName}' is not installed in Ollama. Please run 'ollama pull ${modelName}'.`;
-      } else {
-        err.userMessage = 'Local AI service returned an error. Please try again.';
-      }
-      throw err;
-    }
-
     const data = await apiRes.json().catch(() => null);
     const generatedText = data?.message?.content;
 
@@ -454,8 +437,6 @@ Has Tool Calls: ${Array.isArray(message?.tool_calls) && message.tool_calls.lengt
 
     return generatedText.trim();
   } catch (err) {
-    clearTimeout(timeoutId);
-
     if (err.name === 'AbortError') {
       console.error(`[QuickR Ollama AI Timeout] Timed out after ${timeoutMs}ms for model ${modelName}`);
       const timeoutErr = new Error('AI generation timed out');
@@ -477,11 +458,13 @@ Has Tool Calls: ${Array.isArray(message?.tool_calls) && message.tool_calls.lengt
     }
 
     throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
-// Diagnostic endpoint: POST /api/ai/test-ollama
-router.post('/test-ollama', async (req, res) => {
+// Diagnostic endpoint (Admin-only): POST /api/ai/test-ollama
+router.post('/test-ollama', requireAuth, requireAdmin, async (req, res) => {
   try {
     const prompt = 'Reply with exactly: QUICKR AI TEST OK';
     const message = await generateAI(prompt, {
@@ -494,23 +477,17 @@ router.post('/test-ollama', async (req, res) => {
       message
     });
   } catch (err) {
-    return res.status(err.status || 500).json({
-      success: false,
-      status: err.status || 500,
-      error: err.userMessage || err.message || 'Ollama diagnostic call failed',
-      ollamaModelConfigured: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
-      ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
-    });
+    return handleAiError(res, err, 'AI diagnostic call failed.');
   }
 });
 
-// Backward compatibility aliases for test suite
-router.post('/test-gemini', async (req, res) => {
+// Backward compatibility aliases for test suite (Admin-only)
+router.post('/test-gemini', requireAuth, requireAdmin, async (req, res) => {
   req.url = '/test-ollama';
   return router.handle(req, res);
 });
 
-router.post('/test-openrouter', async (req, res) => {
+router.post('/test-openrouter', requireAuth, requireAdmin, async (req, res) => {
   req.url = '/test-ollama';
   return router.handle(req, res);
 });
@@ -698,7 +675,7 @@ Rules:
 });
 
 // Protected endpoint: POST /api/ai/customer-intelligence
-router.post('/customer-intelligence', requireAuth, async (req, res) => {
+router.post('/customer-intelligence', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const { customerId } = req.body || {};
 
@@ -710,12 +687,8 @@ router.post('/customer-intelligence', requireAuth, async (req, res) => {
     }
 
     let shopId = req.user?.shopId;
-    // If user is admin without shopId, fallback to customer's shopId if found or req.body.shopId
-    if (!shopId && req.user?.role === 'admin') {
-      const targetCust = await Customer.findOne({ id: customerId });
-      if (targetCust) {
-        shopId = targetCust.shopId;
-      }
+    if (!shopId && req.user?.role === 'admin' && req.body?.shopId) {
+      shopId = String(req.body.shopId).trim();
     }
 
     if (!shopId) {
@@ -726,7 +699,7 @@ router.post('/customer-intelligence', requireAuth, async (req, res) => {
     }
 
     // 1-6. Strict shop isolation query
-    const customer = await Customer.findOne({ id: customerId, shopId });
+    const customer = await Customer.findOne({ id: customerId, shopId }).lean();
     if (!customer) {
       return res.status(404).json({
         success: false,
@@ -918,7 +891,7 @@ ${JSON.stringify(salesPayload, null, 2)}`;
 });
 
 // Protected endpoint: POST /api/ai/sales-opportunity
-router.post('/sales-opportunity', requireAuth, async (req, res) => {
+router.post('/sales-opportunity', requireAuth, requireNonStaff, async (req, res) => {
   try {
     const { customerId } = req.body || {};
 
@@ -930,11 +903,8 @@ router.post('/sales-opportunity', requireAuth, async (req, res) => {
     }
 
     let shopId = req.user?.shopId;
-    if (!shopId && req.user?.role === 'admin') {
-      const targetCust = await Customer.findOne({ id: customerId });
-      if (targetCust) {
-        shopId = targetCust.shopId;
-      }
+    if (!shopId && req.user?.role === 'admin' && req.body?.shopId) {
+      shopId = String(req.body.shopId).trim();
     }
 
     if (!shopId) {
@@ -945,7 +915,7 @@ router.post('/sales-opportunity', requireAuth, async (req, res) => {
     }
 
     // 1-8. Strict shop isolation query
-    const customer = await Customer.findOne({ id: customerId, shopId });
+    const customer = await Customer.findOne({ id: customerId, shopId }).lean();
     if (!customer) {
       return res.status(404).json({
         success: false,
@@ -1140,16 +1110,11 @@ ${JSON.stringify(salesPayload, null, 2)}`;
 });
 
 // Protected endpoint: POST /api/ai/followup-priorities
-router.post('/followup-priorities', requireAuth, async (req, res) => {
+router.post('/followup-priorities', requireAuth, requireNonStaff, async (req, res) => {
   try {
     let shopId = req.user?.shopId;
-    if (!shopId && req.user?.role === 'admin') {
-      if (req.body?.shopId) {
-        shopId = String(req.body.shopId).trim();
-      } else {
-        const firstShop = await Shop.findOne().lean();
-        if (firstShop) shopId = firstShop.customId;
-      }
+    if (!shopId && req.user?.role === 'admin' && req.body?.shopId) {
+      shopId = String(req.body.shopId).trim();
     }
 
     if (!shopId) {
@@ -1218,11 +1183,7 @@ ${JSON.stringify(queuePayload, null, 2)}`;
     try {
       generatedText = await generateAI(prompt, { maxTokens: 400, temperature: 0.2 });
     } catch (aiErr) {
-      console.error('[AI Follow-Up Priorities Error]:', aiErr.message);
-      return res.status(aiErr.status || 503).json({
-        success: false,
-        error: aiErr.userMessage || 'AI follow-up priority service is currently unavailable.'
-      });
+      return handleAiError(res, aiErr, 'AI follow-up priority service is currently unavailable.');
     }
 
     let rawText = generatedText.trim();
@@ -1313,24 +1274,25 @@ router.post('/shop-insights', requireAuth, requireNonStaff, async (req, res) => 
       });
     }
 
-    const [customersCount, enquiriesCount, followUpsCount, salesDocs] = await Promise.all([
+    const [customersCount, enquiriesCount, followUpsCount, salesAgg, purchasedEnquiriesCount, notPurchasedEnquiriesCount, pendingFollowUpsCount, recentEnquiries, recentFollowUps, recentSales] = await Promise.all([
       Customer.countDocuments({ shopId }),
       Enquiry.countDocuments({ shopId }),
       FollowUp.countDocuments({ shopId }),
-      Sale.find({ shopId }).lean()
-    ]);
-
-    const purchasedEnquiriesCount = await Enquiry.countDocuments({ shopId, purchaseStatus: 'Purchased' });
-    const notPurchasedEnquiriesCount = await Enquiry.countDocuments({ shopId, purchaseStatus: "Didn't Purchase" });
-    const pendingFollowUpsCount = await FollowUp.countDocuments({ shopId, status: { $in: ['ready', 'scheduled', 'waiting'] } });
-    const totalSalesAmount = salesDocs.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-    const conversionRate = enquiriesCount > 0 ? Number(((purchasedEnquiriesCount / enquiriesCount) * 100).toFixed(1)) : 0;
-
-    const [recentEnquiries, recentFollowUps, recentSales] = await Promise.all([
+      Sale.aggregate([
+        { $match: { shopId } },
+        { $group: { _id: null, count: { $sum: 1 }, total: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+      ]),
+      Enquiry.countDocuments({ shopId, purchaseStatus: 'Purchased' }),
+      Enquiry.countDocuments({ shopId, purchaseStatus: "Didn't Purchase" }),
+      FollowUp.countDocuments({ shopId, status: { $in: ['ready', 'scheduled', 'waiting'] } }),
       Enquiry.find({ shopId }).sort({ createdAt: -1 }).limit(10).lean(),
       FollowUp.find({ shopId }).sort({ createdAt: -1 }).limit(10).lean(),
       Sale.find({ shopId }).sort({ createdAt: -1 }).limit(10).lean()
     ]);
+
+    const salesCount = salesAgg[0]?.count || 0;
+    const totalSalesAmount = Math.round((salesAgg[0]?.total || 0) * 100) / 100;
+    const conversionRate = enquiriesCount > 0 ? Number(((purchasedEnquiriesCount / enquiriesCount) * 100).toFixed(1)) : 0;
 
     const statsPayload = {
       shopName: shop.name,
@@ -1340,7 +1302,7 @@ router.post('/shop-insights', requireAuth, requireNonStaff, async (req, res) => 
       notPurchasedEnquiriesCount,
       followUpsCount,
       pendingFollowUpsCount,
-      salesCount: salesDocs.length,
+      salesCount,
       totalSalesAmount,
       conversionRate
     };
@@ -1541,24 +1503,58 @@ ${JSON.stringify(recentSalesPayload, null, 2)}`;
 // Protected admin endpoint: POST /api/ai/admin-insights
 router.post('/admin-insights', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const [allShops, totalCustomers, totalEnquiries, totalPurchasedEnquiries, totalNotPurchasedEnquiries, totalFollowUps, pendingFollowUps, completedFollowUps, salesDocs] = await Promise.all([
+    const [allShops, customerByShop, enquiryByShop, followUpByShop, salesByShop] = await Promise.all([
       Shop.find().lean(),
-      Customer.countDocuments(),
-      Enquiry.countDocuments(),
-      Enquiry.countDocuments({ purchaseStatus: 'Purchased' }),
-      Enquiry.countDocuments({ purchaseStatus: "Didn't Purchase" }),
-      FollowUp.countDocuments(),
-      FollowUp.countDocuments({ status: { $in: ['ready', 'scheduled', 'waiting'] } }),
-      FollowUp.countDocuments({ status: 'completed' }),
-      Sale.find().lean()
+      Customer.aggregate([{ $group: { _id: '$shopId', count: { $sum: 1 } } }]),
+      Enquiry.aggregate([
+        {
+          $group: {
+            _id: '$shopId',
+            count: { $sum: 1 },
+            purchased: { $sum: { $cond: [{ $eq: ['$purchaseStatus', 'Purchased'] }, 1, 0] } },
+            notPurchased: { $sum: { $cond: [{ $eq: ['$purchaseStatus', "Didn't Purchase"] }, 1, 0] } }
+          }
+        }
+      ]),
+      FollowUp.aggregate([
+        {
+          $group: {
+            _id: '$shopId',
+            total: { $sum: 1 },
+            pending: { $sum: { $cond: [{ $in: ['$status', ['ready', 'scheduled', 'waiting']] }, 1, 0] } },
+            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } }
+          }
+        }
+      ]),
+      Sale.aggregate([
+        {
+          $group: {
+            _id: '$shopId',
+            count: { $sum: 1 },
+            totalAmount: { $sum: { $ifNull: ['$totalAmount', 0] } }
+          }
+        }
+      ])
     ]);
 
     const totalShops = allShops.length;
     const activeShops = allShops.filter(s => s.status !== 'disabled').length;
     const disabledShops = totalShops - activeShops;
 
-    const totalSales = salesDocs.length;
-    const totalSalesAmount = salesDocs.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
+    const custMap = new Map(customerByShop.map(x => [x._id, x.count]));
+    const enqMap = new Map(enquiryByShop.map(x => [x._id, x]));
+    const fwMap = new Map(followUpByShop.map(x => [x._id, x]));
+    const saleMap = new Map(salesByShop.map(x => [x._id, x]));
+
+    const totalCustomers = customerByShop.reduce((sum, x) => sum + x.count, 0);
+    const totalEnquiries = enquiryByShop.reduce((sum, x) => sum + x.count, 0);
+    const totalPurchasedEnquiries = enquiryByShop.reduce((sum, x) => sum + x.purchased, 0);
+    const totalNotPurchasedEnquiries = enquiryByShop.reduce((sum, x) => sum + x.notPurchased, 0);
+    const totalFollowUps = followUpByShop.reduce((sum, x) => sum + x.total, 0);
+    const pendingFollowUps = followUpByShop.reduce((sum, x) => sum + x.pending, 0);
+    const completedFollowUps = followUpByShop.reduce((sum, x) => sum + x.completed, 0);
+    const totalSales = salesByShop.reduce((sum, x) => sum + x.count, 0);
+    const totalSalesAmount = Math.round(salesByShop.reduce((sum, x) => sum + x.totalAmount, 0) * 100) / 100;
 
     const stats = {
       totalShops,
@@ -1575,32 +1571,28 @@ router.post('/admin-insights', requireAuth, requireAdmin, async (req, res) => {
       totalSalesAmount
     };
 
-    const shopPerformance = await Promise.all(
-      allShops.map(async (shop) => {
-        const sId = shop.customId;
-        const [custCount, enqCount, purCount, salesList, pendFwCount] = await Promise.all([
-          Customer.countDocuments({ shopId: sId }),
-          Enquiry.countDocuments({ shopId: sId }),
-          Enquiry.countDocuments({ shopId: sId, purchaseStatus: 'Purchased' }),
-          Sale.find({ shopId: sId }).lean(),
-          FollowUp.countDocuments({ shopId: sId, status: { $in: ['ready', 'scheduled', 'waiting'] } })
-        ]);
+    const shopPerformance = allShops.map((shop) => {
+      const sId = shop.customId;
+      const custCount = custMap.get(sId) || 0;
+      const enqStats = enqMap.get(sId);
+      const enqCount = enqStats?.count || 0;
+      const purCount = enqStats?.purchased || 0;
+      const fwStats = fwMap.get(sId);
+      const pendFwCount = fwStats?.pending || 0;
+      const salesAmt = Math.round((saleMap.get(sId)?.totalAmount || 0) * 100) / 100;
+      const conversionRate = enqCount > 0 ? Number(((purCount / enqCount) * 100).toFixed(1)) : 0;
 
-        const salesAmt = salesList.reduce((sum, s) => sum + (s.totalAmount || 0), 0);
-        const conversionRate = enqCount > 0 ? Number(((purCount / enqCount) * 100).toFixed(1)) : 0;
-
-        return {
-          shopId: sId,
-          shopName: shop.name || sId,
-          customers: custCount,
-          enquiries: enqCount,
-          purchases: purCount,
-          salesAmount: salesAmt,
-          pendingFollowUps: pendFwCount,
-          conversionRate
-        };
-      })
-    );
+      return {
+        shopId: sId,
+        shopName: shop.name || sId,
+        customers: custCount,
+        enquiries: enqCount,
+        purchases: purCount,
+        salesAmount: salesAmt,
+        pendingFollowUps: pendFwCount,
+        conversionRate
+      };
+    });
 
     const condensedShopPerformance = shopPerformance
       .sort((a, b) => (b.salesAmount + b.enquiries) - (a.salesAmount + a.enquiries))
@@ -1829,17 +1821,23 @@ router.post('/trends', requireAuth, requireNonStaff, async (req, res) => {
     };
 
     const [
-      currSalesDocs, prevSalesDocs,
+      currSalesAgg, prevSalesAgg,
       currEnquiries, prevEnquiries,
       currPurchased, prevPurchased,
       currNotPurchased, prevNotPurchased,
       currFollowUpsCreated, prevFollowUpsCreated,
       currFollowUpsCompleted, prevFollowUpsCompleted,
-      currFollowUpsPending, prevFollowUpsPending,
+      currFollowUpsPending,
       currNewCustomers, prevNewCustomers
     ] = await Promise.all([
-      Sale.find(queryFilter(currentStart, currentEnd)).lean(),
-      Sale.find(queryFilter(previousStart, previousEnd)).lean(),
+      Sale.aggregate([
+        { $match: queryFilter(currentStart, currentEnd) },
+        { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+      ]),
+      Sale.aggregate([
+        { $match: queryFilter(previousStart, previousEnd) },
+        { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+      ]),
       Enquiry.countDocuments(queryFilter(currentStart, currentEnd)),
       Enquiry.countDocuments(queryFilter(previousStart, previousEnd)),
       Enquiry.countDocuments({ ...queryFilter(currentStart, currentEnd), purchaseStatus: 'Purchased' }),
@@ -1851,16 +1849,16 @@ router.post('/trends', requireAuth, requireNonStaff, async (req, res) => {
       FollowUp.countDocuments({ ...queryFilter(currentStart, currentEnd), status: 'completed' }),
       FollowUp.countDocuments({ ...queryFilter(previousStart, previousEnd), status: 'completed' }),
       FollowUp.countDocuments(isAdmin ? { status: { $in: ['ready', 'scheduled', 'waiting'] } } : { shopId: targetShopId, status: { $in: ['ready', 'scheduled', 'waiting'] } }),
-      FollowUp.countDocuments(isAdmin ? { status: { $in: ['ready', 'scheduled', 'waiting'] } } : { shopId: targetShopId, status: { $in: ['ready', 'scheduled', 'waiting'] } }),
       Customer.countDocuments(queryFilter(currentStart, currentEnd)),
       Customer.countDocuments(queryFilter(previousStart, previousEnd))
     ]);
 
-    const currSalesCount = currSalesDocs.length;
-    const prevSalesCount = prevSalesDocs.length;
+    const prevFollowUpsPending = currFollowUpsPending;
+    const currSalesCount = currSalesAgg[0]?.count || 0;
+    const prevSalesCount = prevSalesAgg[0]?.count || 0;
 
-    const currSalesAmount = currSalesDocs.reduce((s, d) => s + (d.totalAmount || 0), 0);
-    const prevSalesAmount = prevSalesDocs.reduce((s, d) => s + (d.totalAmount || 0), 0);
+    const currSalesAmount = Math.round((currSalesAgg[0]?.amount || 0) * 100) / 100;
+    const prevSalesAmount = Math.round((prevSalesAgg[0]?.amount || 0) * 100) / 100;
 
     const currConversionRate = currEnquiries > 0 ? Number(((currPurchased / currEnquiries) * 100).toFixed(1)) : 0;
     const prevConversionRate = prevEnquiries > 0 ? Number(((prevPurchased / prevEnquiries) * 100).toFixed(1)) : 0;
@@ -1881,38 +1879,58 @@ router.post('/trends', requireAuth, requireNonStaff, async (req, res) => {
     let shopLeaders = null;
 
     if (isAdmin) {
-      const allShops = await Shop.find().lean();
+      const [allShops, cEnqByShop, pEnqByShop, cSalesByShop, pSalesByShop, pendingFwByShop] = await Promise.all([
+        Shop.find().lean(),
+        Enquiry.aggregate([
+          { $match: { createdAt: { $gte: currentStart, $lte: currentEnd } } },
+          { $group: { _id: '$shopId', total: { $sum: 1 }, pur: { $sum: { $cond: [{ $eq: ['$purchaseStatus', 'Purchased'] }, 1, 0] } } } }
+        ]),
+        Enquiry.aggregate([
+          { $match: { createdAt: { $gte: previousStart, $lte: previousEnd } } },
+          { $group: { _id: '$shopId', total: { $sum: 1 }, pur: { $sum: { $cond: [{ $eq: ['$purchaseStatus', 'Purchased'] }, 1, 0] } } } }
+        ]),
+        Sale.aggregate([
+          { $match: { createdAt: { $gte: currentStart, $lte: currentEnd } } },
+          { $group: { _id: '$shopId', amount: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+        ]),
+        Sale.aggregate([
+          { $match: { createdAt: { $gte: previousStart, $lte: previousEnd } } },
+          { $group: { _id: '$shopId', amount: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+        ]),
+        FollowUp.aggregate([
+          { $match: { status: { $in: ['ready', 'scheduled', 'waiting'] } } },
+          { $group: { _id: '$shopId', count: { $sum: 1 } } }
+        ])
+      ]);
 
-      shopTrends = await Promise.all(
-        allShops.map(async (shop) => {
-          const sId = shop.customId;
-          const [cEnq, pEnq, cPur, pPur, cSales, pSales, cFw, pFw] = await Promise.all([
-            Enquiry.countDocuments({ shopId: sId, createdAt: { $gte: currentStart, $lte: currentEnd } }),
-            Enquiry.countDocuments({ shopId: sId, createdAt: { $gte: previousStart, $lte: previousEnd } }),
-            Enquiry.countDocuments({ shopId: sId, purchaseStatus: 'Purchased', createdAt: { $gte: currentStart, $lte: currentEnd } }),
-            Enquiry.countDocuments({ shopId: sId, purchaseStatus: 'Purchased', createdAt: { $gte: previousStart, $lte: previousEnd } }),
-            Sale.find({ shopId: sId, createdAt: { $gte: currentStart, $lte: currentEnd } }).lean(),
-            Sale.find({ shopId: sId, createdAt: { $gte: previousStart, $lte: previousEnd } }).lean(),
-            FollowUp.countDocuments({ shopId: sId, status: { $in: ['ready', 'scheduled', 'waiting'] } }),
-            FollowUp.countDocuments({ shopId: sId, status: { $in: ['ready', 'scheduled', 'waiting'] } })
-          ]);
+      const cEnqMap = new Map(cEnqByShop.map(x => [x._id, x]));
+      const pEnqMap = new Map(pEnqByShop.map(x => [x._id, x]));
+      const cSalesMap = new Map(cSalesByShop.map(x => [x._id, x.amount]));
+      const pSalesMap = new Map(pSalesByShop.map(x => [x._id, x.amount]));
+      const fwPendingMap = new Map(pendingFwByShop.map(x => [x._id, x.count]));
 
-          const cAmt = cSales.reduce((s, d) => s + (d.totalAmount || 0), 0);
-          const pAmt = pSales.reduce((s, d) => s + (d.totalAmount || 0), 0);
+      shopTrends = allShops.map((shop) => {
+        const sId = shop.customId;
+        const cEnq = cEnqMap.get(sId)?.total || 0;
+        const cPur = cEnqMap.get(sId)?.pur || 0;
+        const pEnq = pEnqMap.get(sId)?.total || 0;
+        const pPur = pEnqMap.get(sId)?.pur || 0;
+        const cAmt = cSalesMap.get(sId) || 0;
+        const pAmt = pSalesMap.get(sId) || 0;
+        const cFw = fwPendingMap.get(sId) || 0;
 
-          const cConv = cEnq > 0 ? (cPur / cEnq) * 100 : 0;
-          const pConv = pEnq > 0 ? (pPur / pEnq) * 100 : 0;
+        const cConv = cEnq > 0 ? (cPur / cEnq) * 100 : 0;
+        const pConv = pEnq > 0 ? (pPur / pEnq) * 100 : 0;
 
-          return {
-            shopId: sId,
-            shopName: shop.name || sId,
-            salesChangePercent: calcChange(cAmt, pAmt),
-            enquiryChangePercent: calcChange(cEnq, pEnq),
-            conversionChangePercent: calcChange(cConv, pConv),
-            pendingFollowUps: cFw
-          };
-        })
-      );
+        return {
+          shopId: sId,
+          shopName: shop.name || sId,
+          salesChangePercent: calcChange(cAmt, pAmt),
+          enquiryChangePercent: calcChange(cEnq, pEnq),
+          conversionChangePercent: calcChange(cConv, pConv),
+          pendingFollowUps: cFw
+        };
+      });
 
       const fastestImproving = [...shopTrends]
         .filter(s => s.salesChangePercent !== null)

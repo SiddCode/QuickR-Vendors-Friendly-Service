@@ -50,24 +50,27 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter shop-isolated entities
-  const matchingCustomers = query ? customers.filter(c => 
+  const isStaff = currentUser?.role === 'staff';
+  const isAdmin = currentUser?.role === 'admin';
+
+  // Filter shop-isolated entities (respecting role visibility rules)
+  const matchingCustomers = (!isAdmin && query) ? customers.filter(c => 
     c.name.toLowerCase().includes(query) || (c.phone && c.phone.includes(query))
   ).slice(0, 3) : [];
 
-  const matchingProducts = query ? products.filter(p => 
+  const matchingProducts = (!isAdmin && query) ? products.filter(p => 
     p.name.toLowerCase().includes(query) || (p.category && p.category.toLowerCase().includes(query))
   ).slice(0, 3) : [];
 
   const custMap = new Map(customers.map(c => [c.id, c]));
 
-  const matchingEnquiries = query ? enquiries.filter(e => {
+  const matchingEnquiries = (!isAdmin && query) ? enquiries.filter(e => {
     const cust = custMap.get(e.customerId);
     const cName = cust ? cust.name.toLowerCase() : '';
     return (e.productName && e.productName.toLowerCase().includes(query)) || cName.includes(query);
   }).slice(0, 3) : [];
 
-  const matchingSales = query ? sales.filter(s => 
+  const matchingSales = (!isAdmin && !isStaff && query) ? sales.filter(s => 
     (s.invoiceNumber && s.invoiceNumber.toLowerCase().includes(query)) ||
     (s.customerName && s.customerName.toLowerCase().includes(query))
   ).slice(0, 3) : [];
@@ -106,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
       <div className="flex items-center gap-2 sm:gap-4 shrink-0">
 
         {/* Global Search Bar */}
-        <div ref={searchRef} className="relative w-36 sm:w-64">
+        <div ref={searchRef} className="relative w-28 min-[380px]:w-36 sm:w-64">
           <div className="relative">
             <input
               type="text"
@@ -135,7 +138,7 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
 
           {/* Global Search Dropdown Results */}
           {showDropdown && query && (
-            <div className="absolute top-full right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden font-sans animate-fadeIn">
+            <div className="fixed sm:absolute top-16 sm:top-full left-3 right-3 sm:left-auto sm:right-0 sm:mt-2 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 overflow-hidden font-sans animate-fadeIn">
               <div className="p-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider">
                 <span>{t('header.shopResults')} ({matchingCustomers.length + matchingProducts.length + matchingEnquiries.length + matchingSales.length})</span>
                 <span className="text-[10px] text-slate-400 font-medium">{t('header.clickToNavigate')}</span>
@@ -267,7 +270,7 @@ export const Header: React.FC<HeaderProps> = ({ title, onSearchChange, searchVal
         </button>
 
         {refreshError && (
-          <div className="fixed bottom-4 right-4 z-50 bg-rose-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg animate-fadeIn">
+          <div className="fixed bottom-20 lg:bottom-4 right-4 z-50 bg-rose-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg animate-fadeIn">
             {refreshError}
           </div>
         )}

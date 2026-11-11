@@ -15,14 +15,18 @@ export const requireAuth = async (req, res, next) => {
       return res.status(401).json({ error: 'Authentication required. Please log in.' });
     }
 
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ['HS256'] });
     
-    // Admin users have no shopId — find by id only
+    // Admin users have no shopId — find by id only (lean + projected for hot path performance)
     let user;
     if (decoded.shopId) {
-      user = await User.findOne({ id: decoded.id, shopId: decoded.shopId });
+      user = await User.findOne({ id: decoded.id, shopId: decoded.shopId })
+        .select('id name email shopId role status')
+        .lean();
     } else {
-      user = await User.findOne({ id: decoded.id, role: 'admin' });
+      user = await User.findOne({ id: decoded.id, role: 'admin' })
+        .select('id name email shopId role status')
+        .lean();
     }
 
     if (!user) {
@@ -36,8 +40,10 @@ export const requireAuth = async (req, res, next) => {
 
     // For non-admin users, verify their shop is active
     if (user.role !== 'admin' && user.shopId) {
-      const shop = await Shop.findOne({ customId: user.shopId });
-      if (shop && shop.status === 'disabled') {
+      const shop = await Shop.findOne({ customId: user.shopId })
+        .select('status subscriptionStatus')
+        .lean();
+      if (shop && (shop.status === 'disabled' || shop.subscriptionStatus === 'suspended')) {
         return res.status(403).json({ error: 'Your shop account is currently disabled. Please contact the QuickR administrator.' });
       }
     }

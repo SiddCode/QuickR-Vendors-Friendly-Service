@@ -1,9 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, lazy, Suspense, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle, Barcode, Printer, Sparkles, CheckCircle2, Upload } from 'lucide-react';
 import type { Product } from '../types';
-import { PrintableBarcodeModal } from '../components/PrintableBarcodeModal';
-import { ProductImportModal } from '../components/ProductImportModal';
+import { useDebounce } from '../hooks/useDebounce';
+
+const PrintableBarcodeModal = lazy(() => import('../components/PrintableBarcodeModal').then(m => ({ default: m.PrintableBarcodeModal })));
+const ProductImportModal = lazy(() => import('../components/ProductImportModal').then(m => ({ default: m.ProductImportModal })));
 
 export const CATEGORIES = {
   "MEN'S WEAR": ['Shirts', 'T-Shirts', 'Polos', 'Jeans', 'Trousers', 'Formal Pants', 'Casual Pants', 'Chinos', 'Cargo Pants', 'Track Pants', 'Lowers', 'Shorts', 'Blazers', 'Suits', 'Waistcoats', 'Jackets', 'Hoodies', 'Sweatshirts', 'Innerwear', 'Ethnic Wear', 'Kurtas', 'Pyjamas', 'Dhotis', 'Sherwanis'],
@@ -16,7 +18,10 @@ export const CATEGORIES = {
 export const Products = () => {
   const { products, addProduct, updateProduct, deleteProduct, bulkDeleteProducts, generateProductBarcode, shopName, shopProfile } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearch = useDebounce(searchTerm, 200);
   const [filterCategory, setFilterCategory] = useState('All');
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -57,14 +62,32 @@ export const Products = () => {
     isActive: true
   });
 
-  const allCategories = Array.from(new Set(products.map(p => p.category))).filter(Boolean);
+  const allCategories = useMemo(
+    () => Array.from(new Set(products.map(p => p.category))).filter(Boolean),
+    [products]
+  );
 
-  const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          (p.barcode && p.barcode.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesCat = filterCategory === 'All' || p.category === filterCategory;
-    return matchesSearch && matchesCat;
-  });
+  const filteredProducts = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    return products.filter(p => {
+      const matchesSearch = !q ||
+        p.name.toLowerCase().includes(q) ||
+        (p.barcode && p.barcode.toLowerCase().includes(q));
+      const matchesCat = filterCategory === 'All' || p.category === filterCategory;
+      return matchesSearch && matchesCat;
+    });
+  }, [products, debouncedSearch, filterCategory]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, filterCategory]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginatedProducts = useMemo(
+    () => filteredProducts.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredProducts, safePage]
+  );
 
   const visibleIds = filteredProducts.map(p => p.id);
   const isAllVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -172,8 +195,21 @@ export const Products = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.sellingPrice) {
-      alert('Product name and selling price are required.');
+    const parsedPrice = parseFloat(formData.sellingPrice);
+    const parsedAvail = parseFloat(formData.availability);
+    const parsedOrig = formData.originalPrice ? parseFloat(formData.originalPrice) : undefined;
+    const parsedGst = parseFloat(formData.gstRate) || 0;
+
+    if (!formData.name.trim() || !Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      alert('Valid product name and non-negative selling price are required.');
+      return;
+    }
+    if (!Number.isFinite(parsedAvail) || parsedAvail < 0) {
+      alert('Stock availability must be 0 or greater.');
+      return;
+    }
+    if (parsedOrig !== undefined && (!Number.isFinite(parsedOrig) || parsedOrig < 0)) {
+      alert('MRP / original price must be 0 or greater.');
       return;
     }
 
@@ -184,14 +220,14 @@ export const Products = () => {
     const payload = {
       name: formData.name.trim(),
       category: finalCategory,
-      sellingPrice: parseFloat(formData.sellingPrice) || 0,
-      originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : undefined,
+      sellingPrice: parsedPrice,
+      originalPrice: parsedOrig,
       sizes: formData.sizes ? formData.sizes.split(',').map(s => s.trim()).filter(Boolean) : [],
       colors: formData.colors ? formData.colors.split(',').map(c => c.trim()).filter(Boolean) : [],
-      availability: parseFloat(formData.availability) || 0,
+      availability: parsedAvail,
       measurementType: formData.measurementType,
       description: formData.description.trim(),
-      gstRate: parseFloat(formData.gstRate) || 0,
+      gstRate: Math.max(0, parsedGst),
       hsnCode: formData.hsnCode.trim(),
       priceIncludesGst: formData.priceIncludesGst,
       isActive: formData.isActive
@@ -344,7 +380,7 @@ export const Products = () => {
           <div>
             {/* Mobile Product Cards View */}
             <div className="md:hidden divide-y divide-slate-100">
-              {filteredProducts.map(prod => {
+              {paginatedProducts.map(prod => {
                 const isChecked = selectedIds.includes(prod.id);
                 return (
                   <div key={prod.id} className={`p-4 space-y-3 transition-colors ${isChecked ? 'bg-primary-50/30' : ''}`}>
@@ -457,7 +493,7 @@ export const Products = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredProducts.map(prod => {
+                  {paginatedProducts.map(prod => {
                     const isChecked = selectedIds.includes(prod.id);
                     return (
                       <tr key={prod.id} className={`hover:bg-slate-50/50 transition-colors ${isChecked ? 'bg-primary-50/30' : ''}`}>
@@ -553,6 +589,33 @@ export const Products = () => {
                 </tbody>
               </table>
             </div>
+
+            {totalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-slate-100 bg-slate-50/70 text-xs text-slate-600">
+                <span>
+                  Showing {((safePage - 1) * pageSize) + 1}–{Math.min(safePage * pageSize, filteredProducts.length)} of {filteredProducts.length} products
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={safePage === 1}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold disabled:opacity-40"
+                  >
+                    Prev
+                  </button>
+                  <span className="font-bold text-slate-800">Page {safePage} / {totalPages}</span>
+                  <button
+                    type="button"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safePage === totalPages}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -601,7 +664,7 @@ export const Products = () => {
       {/* Add / Edit Product Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto border border-slate-100 shadow-2xl">
+          <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90dvh] overflow-y-auto border border-slate-100 shadow-2xl">
             <div className="p-6 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
               <h2 className="text-lg font-bold text-slate-800">
                 {editingProduct ? 'Edit Product' : 'Add New Product'}
@@ -884,16 +947,20 @@ export const Products = () => {
 
       {/* Bulk Product Import Modal */}
       {isImportModalOpen && (
-        <ProductImportModal onClose={() => setIsImportModalOpen(false)} />
+        <Suspense fallback={null}>
+          <ProductImportModal onClose={() => setIsImportModalOpen(false)} />
+        </Suspense>
       )}
 
       {/* Printable Barcode Label Modal */}
       {printProduct && (
-        <PrintableBarcodeModal
-          product={printProduct}
-          shopName={shopName}
-          onClose={() => setPrintProduct(null)}
-        />
+        <Suspense fallback={null}>
+          <PrintableBarcodeModal
+            product={printProduct}
+            shopName={shopName}
+            onClose={() => setPrintProduct(null)}
+          />
+        </Suspense>
       )}
     </div>
   );

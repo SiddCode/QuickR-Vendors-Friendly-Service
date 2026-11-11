@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import enTranslations from '../locales/en.json';
 import taTranslations from '../locales/ta.json';
 
@@ -23,15 +23,15 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return (saved === 'ta' || saved === 'en') ? saved : 'en';
   });
 
-  const setLanguage = (lang: Language) => {
+  const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
     localStorage.setItem('quickr_language', lang);
-  };
+  }, []);
 
-  const t = (keyPath: string, fallback?: string): string => {
+  const t = useCallback((keyPath: string, fallback?: string): string => {
     const keys = keyPath.split('.');
     let current = translations[language] || translations.en;
-    
+
     for (const key of keys) {
       if (current && typeof current === 'object' && key in current) {
         current = current[key];
@@ -48,12 +48,14 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return typeof fallbackCurrent === 'string' ? fallbackCurrent : fallback || keyPath;
       }
     }
-    
+
     return typeof current === 'string' ? current : fallback || keyPath;
-  };
+  }, [language]);
+
+  const value = useMemo(() => ({ language, setLanguage, t }), [language, setLanguage, t]);
 
   return (
-    <LanguageContext.Provider value={{ language, setLanguage, t }}>
+    <LanguageContext.Provider value={value}>
       {children}
     </LanguageContext.Provider>
   );

@@ -8,7 +8,8 @@ export const calculatePriorityAndReason = (followUp, enquiry, customer, product)
   const reasons = [];
 
   const now = new Date();
-  const scheduledDate = followUp && followUp.scheduledAt ? new Date(followUp.scheduledAt) : now;
+  let scheduledDate = followUp && followUp.scheduledAt ? new Date(followUp.scheduledAt) : now;
+  if (isNaN(scheduledDate.getTime())) scheduledDate = now;
   const diffTime = now.getTime() - scheduledDate.getTime();
   const daysOverdue = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
@@ -34,18 +35,21 @@ export const calculatePriorityAndReason = (followUp, enquiry, customer, product)
   }
 
   // 4. Product availability
-  if (product?.availableQuantity > 0) {
+  const stockQty = product?.availability ?? product?.availableQuantity ?? 0;
+  if (stockQty > 0) {
     score += 15;
-    reasons.push(`Item (${product.name}) is in stock (${product.availableQuantity} left)`);
+    reasons.push(`Item (${product.name}) is in stock (${stockQty} left)`);
   }
 
   // 5. Recent enquiry recency
   if (enquiry?.createdAt) {
     const enquiryDate = new Date(enquiry.createdAt);
-    const enqAgeDays = Math.floor((now.getTime() - enquiryDate.getTime()) / (1000 * 60 * 60 * 24));
-    if (enqAgeDays <= 2) {
-      score += 15;
-      reasons.push('Enquiry received recently');
+    if (!isNaN(enquiryDate.getTime())) {
+      const enqAgeDays = Math.floor((now.getTime() - enquiryDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (enqAgeDays <= 2) {
+        score += 15;
+        reasons.push('Enquiry received recently');
+      }
     }
   }
 

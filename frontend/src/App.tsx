@@ -1,43 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { LanguageProvider } from './context/LanguageContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
-import { Dashboard } from './pages/Dashboard';
-import { Customers } from './pages/Customers';
-import { CustomerProfile } from './pages/CustomerProfile';
-import { NewEnquiry } from './pages/NewEnquiry';
-import { SmartFollowUp } from './pages/SmartFollowUp';
-import { WorkMode } from './pages/WorkMode';
-import { Products } from './pages/Products';
-import { Sales } from './pages/Sales';
-import { Automation } from './pages/Automation';
-import { Reports } from './pages/Reports';
-import { Settings } from './pages/Settings';
-import { Campaigns } from './pages/Campaigns';
-import { Enquiries } from './pages/Enquiries';
-import { Login } from './pages/Login';
-import { Register } from './pages/Register';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { AdminShops } from './pages/AdminShops';
-import { AdminShopDetails } from './pages/AdminShopDetails';
-import { AdminUsers } from './pages/AdminUsers';
-import { AdminActivity } from './pages/AdminActivity';
-import { AdminCustomers } from './pages/AdminCustomers';
-import { AdminProducts } from './pages/AdminProducts';
-import { AdminEnquiries } from './pages/AdminEnquiries';
-import { AdminFollowUps } from './pages/AdminFollowUps';
-import { AdminSales } from './pages/AdminSales';
-import { AdminBilling } from './pages/AdminBilling';
-import { AdminReports } from './pages/AdminReports';
-import { PrivacyNotice } from './pages/PrivacyNotice';
-import { PrivacyDashboard } from './pages/PrivacyDashboard';
-import { AdminPrivacy } from './pages/AdminPrivacy';
-import { AdminDatabaseStorage } from './pages/AdminDatabaseStorage';
-import { CustomerReengagement } from './pages/CustomerReengagement';
-import { SalesSession } from './pages/SalesSession';
 import { InstallPwaPrompt } from './components/InstallPwaPrompt';
 import { X, Loader2 } from 'lucide-react';
+
+// Lazy-load all route views for fast initial bundle load
+const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Customers = lazy(() => import('./pages/Customers').then(m => ({ default: m.Customers })));
+const CustomerProfile = lazy(() => import('./pages/CustomerProfile').then(m => ({ default: m.CustomerProfile })));
+const NewEnquiry = lazy(() => import('./pages/NewEnquiry').then(m => ({ default: m.NewEnquiry })));
+const SmartFollowUp = lazy(() => import('./pages/SmartFollowUp').then(m => ({ default: m.SmartFollowUp })));
+const WorkMode = lazy(() => import('./pages/WorkMode').then(m => ({ default: m.WorkMode })));
+const Products = lazy(() => import('./pages/Products').then(m => ({ default: m.Products })));
+const Sales = lazy(() => import('./pages/Sales').then(m => ({ default: m.Sales })));
+const Automation = lazy(() => import('./pages/Automation').then(m => ({ default: m.Automation })));
+const Reports = lazy(() => import('./pages/Reports').then(m => ({ default: m.Reports })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const Campaigns = lazy(() => import('./pages/Campaigns').then(m => ({ default: m.Campaigns })));
+const Enquiries = lazy(() => import('./pages/Enquiries').then(m => ({ default: m.Enquiries })));
+const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
+const Register = lazy(() => import('./pages/Register').then(m => ({ default: m.Register })));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
+const AdminShops = lazy(() => import('./pages/AdminShops').then(m => ({ default: m.AdminShops })));
+const AdminShopDetails = lazy(() => import('./pages/AdminShopDetails').then(m => ({ default: m.AdminShopDetails })));
+const AdminUsers = lazy(() => import('./pages/AdminUsers').then(m => ({ default: m.AdminUsers })));
+const AdminActivity = lazy(() => import('./pages/AdminActivity').then(m => ({ default: m.AdminActivity })));
+const AdminCustomers = lazy(() => import('./pages/AdminCustomers').then(m => ({ default: m.AdminCustomers })));
+const AdminProducts = lazy(() => import('./pages/AdminProducts').then(m => ({ default: m.AdminProducts })));
+const AdminEnquiries = lazy(() => import('./pages/AdminEnquiries').then(m => ({ default: m.AdminEnquiries })));
+const AdminFollowUps = lazy(() => import('./pages/AdminFollowUps').then(m => ({ default: m.AdminFollowUps })));
+const AdminSales = lazy(() => import('./pages/AdminSales').then(m => ({ default: m.AdminSales })));
+const AdminBilling = lazy(() => import('./pages/AdminBilling').then(m => ({ default: m.AdminBilling })));
+const AdminReports = lazy(() => import('./pages/AdminReports').then(m => ({ default: m.AdminReports })));
+const PrivacyNotice = lazy(() => import('./pages/PrivacyNotice').then(m => ({ default: m.PrivacyNotice })));
+const PrivacyDashboard = lazy(() => import('./pages/PrivacyDashboard').then(m => ({ default: m.PrivacyDashboard })));
+const AdminPrivacy = lazy(() => import('./pages/AdminPrivacy').then(m => ({ default: m.AdminPrivacy })));
+const AdminDatabaseStorage = lazy(() => import('./pages/AdminDatabaseStorage').then(m => ({ default: m.AdminDatabaseStorage })));
+const CustomerReengagement = lazy(() => import('./pages/CustomerReengagement').then(m => ({ default: m.CustomerReengagement })));
+const SalesSession = lazy(() => import('./pages/SalesSession').then(m => ({ default: m.SalesSession })));
+
+const PageFallback: React.FC = () => (
+  <div className="flex-1 flex flex-col items-center justify-center p-10 text-slate-500">
+    <Loader2 className="w-7 h-7 text-primary-500 animate-spin mb-2" />
+    <span className="text-xs font-semibold">Loading view...</span>
+  </div>
+);
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading, currentUser, login, shopName } = useApp();
@@ -49,11 +60,26 @@ const AppContent: React.FC = () => {
   const [adminSelectedShopId, setAdminSelectedShopId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Set the correct default page based on role after authentication
+  // Set the correct default page based on role after authentication, or resume pending uncertain bill after refresh
   useEffect(() => {
     if (isAuthenticated && currentUser) {
       if (currentUser.role === 'admin' && !currentPage.startsWith('admin-')) {
         setCurrentPage('admin-dashboard');
+        return;
+      }
+      if (currentUser.role !== 'admin') {
+        try {
+          const pendingKey = `quickr_pending_sale_${currentUser.shopId || 'shop'}_${currentUser.id}`;
+          const rawPending = sessionStorage.getItem(pendingKey);
+          if (rawPending) {
+            const parsed = JSON.parse(rawPending);
+            if (parsed?.requestId && parsed?.submissionUncertain && Array.isArray(parsed?.items) && parsed.items.length > 0) {
+              setCurrentPage('sales-session');
+            }
+          }
+        } catch {
+          // Ignore sessionStorage errors
+        }
       }
     }
   }, [isAuthenticated, currentUser]);
@@ -70,16 +96,20 @@ const AppContent: React.FC = () => {
   if (!isAuthenticated) {
     if (authMode === 'register') {
       return (
-        <Register
-          onSwitchToLogin={() => setAuthMode('login')}
-        />
+        <Suspense fallback={<PageFallback />}>
+          <Register
+            onSwitchToLogin={() => setAuthMode('login')}
+          />
+        </Suspense>
       );
     }
     return (
-      <Login
-        onLogin={login}
-        onSwitchToRegister={() => setAuthMode('register')}
-      />
+      <Suspense fallback={<PageFallback />}>
+        <Login
+          onLogin={login}
+          onSwitchToRegister={() => setAuthMode('register')}
+        />
+      </Suspense>
     );
   }
 
@@ -141,11 +171,23 @@ const AppContent: React.FC = () => {
       case 'work-mode':
         return <WorkMode setCurrentPage={setCurrentPage} setBillingInitialData={setBillingInitialData} />;
       case 'sales-session':
-        return <SalesSession setCurrentPage={setCurrentPage} billingInitialData={billingInitialData} />;
+        return (
+          <SalesSession
+            setCurrentPage={setCurrentPage}
+            billingInitialData={billingInitialData}
+            onClearBillingInitialData={() => setBillingInitialData(null)}
+          />
+        );
       case 'products':
         return <Products />;
       case 'billing':
-        return <SalesSession setCurrentPage={setCurrentPage} />;
+        return (
+          <SalesSession
+            setCurrentPage={setCurrentPage}
+            billingInitialData={billingInitialData}
+            onClearBillingInitialData={() => setBillingInitialData(null)}
+          />
+        );
       case 'enquiries':
         return <Enquiries setCurrentPage={setCurrentPage} setSelectedCustomerId={setSelectedCustomerId} />;
       case 'sales':
@@ -235,7 +277,7 @@ const AppContent: React.FC = () => {
       )}
 
       {/* Main Content Area */}
-      <div className="flex-grow flex flex-col min-w-0 min-h-screen">
+      <div className="flex-grow flex flex-col min-w-0 min-h-screen overflow-x-clip">
         {/* PWA Install & Offline Banner */}
         <InstallPwaPrompt />
 
@@ -248,8 +290,10 @@ const AppContent: React.FC = () => {
         />
 
         {/* Page Content */}
-        <main className="flex-1 flex flex-col w-full min-w-0 min-h-0 bg-slate-50 pb-mobile-nav pt-safe">
-          {renderPage()}
+        <main className={`flex-1 flex flex-col w-full min-w-0 min-h-0 bg-slate-50 pt-safe ${!currentUser?.role?.includes('admin') ? 'pb-mobile-nav' : 'pb-6'}`}>
+          <Suspense fallback={<PageFallback />}>
+            {renderPage()}
+          </Suspense>
         </main>
 
         {/* Mobile Bottom Navigation */}
@@ -265,15 +309,15 @@ const AppContent: React.FC = () => {
   );
 };
 
-import { LanguageProvider } from './context/LanguageContext';
-
 export function App() {
   return (
-    <LanguageProvider>
-      <AppProvider>
-        <AppContent />
-      </AppProvider>
-    </LanguageProvider>
+    <ErrorBoundary>
+      <LanguageProvider>
+        <AppProvider>
+          <AppContent />
+        </AppProvider>
+      </LanguageProvider>
+    </ErrorBoundary>
   );
 }
 

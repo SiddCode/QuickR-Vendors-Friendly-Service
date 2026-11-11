@@ -2,14 +2,12 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { TrendingUp, Users, ShoppingBag, IndianRupee, Receipt, CreditCard, Smartphone, Wallet, Download, FileSpreadsheet, RefreshCw, AlertCircle } from 'lucide-react';
 import { api } from '../services/api';
+import { getISTDayBounds } from '../utils/date';
 
 export const Reports: React.FC = () => {
   const { sales, customers, products } = useApp();
 
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = new Date(todayStart); weekStart.setDate(weekStart.getDate() - 7);
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const { startOfToday: todayStart, startOfWeek: weekStart, startOfMonth: monthStart } = getISTDayBounds();
 
   const todaySales = sales.filter(s => new Date(s.createdAt) >= todayStart);
   const weekSales = sales.filter(s => new Date(s.createdAt) >= weekStart);
@@ -55,7 +53,7 @@ export const Reports: React.FC = () => {
 
   return (
     <div className="flex-grow p-4 lg:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans animate-fadeIn">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Business Reports</h2>
           <p className="text-xs text-slate-400">Insights calculated from actual sale records</p>

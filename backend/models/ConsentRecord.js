@@ -25,5 +25,6 @@ const consentRecordSchema = new mongoose.Schema(
 );
 
 consentRecordSchema.index({ userId: 1, purpose: 1, noticeVersion: 1 });
+consentRecordSchema.index({ userId: 1, shopId: 1, purpose: 1 });
 
 export const ConsentRecord = mongoose.model('ConsentRecord', consentRecordSchema);

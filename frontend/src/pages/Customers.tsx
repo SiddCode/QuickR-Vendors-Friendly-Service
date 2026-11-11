@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { Plus, Search, UserPlus, SlidersHorizontal, MapPin, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface CustomersProps {
   setCurrentPage: (page: string) => void;
@@ -11,6 +12,7 @@ interface CustomersProps {
 export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelectedCustomerId }) => {
   const { customers, enquiries, sales, addCustomer, deleteCustomer, bulkDeleteCustomers } = useApp();
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 200);
   const [statusFilter, setStatusFilter] = useState('All');
   
   // Customer Deletion Modal State
@@ -48,17 +50,22 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !phone || isSubmitting) return;
-    
+    if (!name.trim() || !phone.trim() || isSubmitting) return;
+
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) {
+      setPhoneError('Enter a valid 10-digit mobile number.');
+      return;
+    }
+
     setPhoneError(null);
     setIsSubmitting(true);
     try {
-      await addCustomer({
-        shopId: 'SHOP-1',
-        name,
-        phone,
+      const created = await addCustomer({
+        name: name.trim(),
+        phone: phone.trim(),
         email: '', // NO email required
-        location: location || 'Chennai, Tamil Nadu',
+        location: location.trim() || 'Tamil Nadu',
         allowWhatsAppOffers,
         preferences: {
           interestedIn: prefCategory,
@@ -68,7 +75,12 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
         status: 'Active'
       });
 
-      // Reset Form
+      if (!created) {
+        setPhoneError('Could not save customer. Please verify the mobile number and try again.');
+        return;
+      }
+
+      // Reset Form only on success
       setName('');
       setPhone('');
       setLocation('');
@@ -83,16 +95,25 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
     }
   };
 
-  const filteredCustomers = customers.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase()) || 
-                          c.phone.includes(search) || 
-                          c.location.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'All' || c.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const filteredCustomers = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    return customers.filter(c => {
+      const matchesSearch = !q ||
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.phone || '').includes(debouncedSearch.trim()) ||
+        (c.location || '').toLowerCase().includes(q);
+      const matchesStatus = statusFilter === 'All' || c.status === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [customers, debouncedSearch, statusFilter]);
 
-  const totalPages = Math.ceil(filteredCustomers.length / pageSize) || 1;
-  const paginatedCustomers = filteredCustomers.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginatedCustomers = filteredCustomers.slice((safePage - 1) * pageSize, safePage * pageSize);
   const visibleIds = paginatedCustomers.map(c => c.id);
 
   const isAllVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.includes(id));
@@ -363,20 +384,20 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
 
       {/* Pagination Controls */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between bg-white px-6 py-3.5 rounded-2xl border border-slate-100 text-xs font-semibold text-slate-600">
-          <span>Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, filteredCustomers.length)} of {filteredCustomers.length} customers</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-4 sm:px-6 py-3.5 rounded-2xl border border-slate-100 text-xs font-semibold text-slate-600">
+          <span>Showing {((safePage - 1) * pageSize) + 1} to {Math.min(safePage * pageSize, filteredCustomers.length)} of {filteredCustomers.length} customers</span>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setPage(p => Math.max(1, p - 1))}
-              disabled={page === 1}
+              disabled={safePage === 1}
               className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Previous
             </button>
-            <span className="px-2 font-bold text-slate-800">Page {page} of {totalPages}</span>
+            <span className="px-2 font-bold text-slate-800">Page {safePage} of {totalPages}</span>
             <button
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
+              disabled={safePage === totalPages}
               className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Next
@@ -387,8 +408,8 @@ export const Customers: React.FC<CustomersProps> = ({ setCurrentPage, setSelecte
 
       {/* Add Customer Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fadeIn">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[90dvh] overflow-y-auto">
             <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-primary-500" /> Add New Customer
             </h3>

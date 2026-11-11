@@ -64,64 +64,75 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
     setShowCustDropdown(false);
   };
 
+  const [isCreatingCust, setIsCreatingCust] = useState(false);
+  const [isSubmittingEnquiry, setIsSubmittingEnquiry] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
   const handleAddNewCustomerSubmit = async (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!newCustName || !newCustPhone) return;
+    if (!newCustName.trim() || !newCustPhone.trim() || isCreatingCust) return;
 
-    const newCust = await addCustomer({
-      shopId: 'SHOP-1',
-      name: newCustName,
-      phone: newCustPhone,
-      email: `${newCustName.toLowerCase().replace(/\s+/g, '')}@gmail.com`,
-      location: newCustLoc,
-      preferences: {
-        interestedIn: 'Shirts',
-        preferredSize: 'XL',
-        preferredColors: ['Dark']
-      },
-      status: 'Active'
-    });
+    setFormError(null);
+    setIsCreatingCust(true);
+    try {
+      const newCust = await addCustomer({
+        name: newCustName.trim(),
+        phone: newCustPhone.trim(),
+        email: '',
+        location: newCustLoc.trim() || 'Tamil Nadu',
+        preferences: {
+          interestedIn: 'Shirts',
+          preferredSize: 'XL',
+          preferredColors: ['Dark']
+        },
+        status: 'Active'
+      });
 
-    if (newCust) {
-      setSelectedCustId(newCust.id);
-      setShowAddCustForm(false);
-      setNewCustName('');
-      setNewCustPhone('');
+      if (newCust) {
+        setSelectedCustId(newCust.id);
+        setShowAddCustForm(false);
+        setNewCustName('');
+        setNewCustPhone('');
+      } else {
+        setFormError('Could not save customer. Please check the 10-digit mobile number.');
+      }
+    } finally {
+      setIsCreatingCust(false);
     }
   };
 
   const handleCreateEnquiry = async () => {
-    if (!selectedCustId || !prodId) return;
+    if (!selectedCustId || !prodId || isSubmittingEnquiry) return;
 
-    const calculatedScheduledAt = recommendFollowUp 
+    const calculatedScheduledAt = recommendFollowUp
       ? calculateFollowUpDateIST(followUpDate)
       : undefined;
 
-    console.log('[NewEnquiry] Creating enquiry:', {
-      purchaseStatus,
-      interest,
-      recommendFollowUp,
-      followUpDate,
-      calculatedScheduledAt: calculatedScheduledAt?.toISOString()
-    });
+    setFormError(null);
+    setIsSubmittingEnquiry(true);
+    try {
+      const created = await addEnquiry({
+        customerId: selectedCustId,
+        productId: prodId,
+        size,
+        color,
+        quantity: Math.max(1, Number(qty) || 1),
+        interest,
+        purchaseStatus,
+        notes,
+        scheduledAt: calculatedScheduledAt ? calculatedScheduledAt.toISOString() : undefined,
+        followUpDate: recommendFollowUp ? followUpDate : undefined
+      });
 
-    await addEnquiry({
-      shopId: 'SHOP-1',
-      customerId: selectedCustId,
-      productId: prodId,
-      size,
-      color,
-      quantity: qty,
-      interest,
-      purchaseStatus,
-      notes,
-      scheduledAt: calculatedScheduledAt ? calculatedScheduledAt.toISOString() : undefined,
-      followUpDate: recommendFollowUp ? followUpDate : undefined
-    });
-
-    // Navigate to the Customer Profile or Dashboard
-    setSelectedCustomerId(selectedCustId);
-    setCurrentPage('customer-profile');
+      if (created) {
+        setSelectedCustomerId(selectedCustId);
+        setCurrentPage('customer-profile');
+      } else {
+        setFormError('Failed to save enquiry. Please try again.');
+      }
+    } finally {
+      setIsSubmittingEnquiry(false);
+    }
   };
 
   if (customers.length === 0) {
@@ -444,19 +455,28 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
             />
           </div>
 
+          {formError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl">
+              {formError}
+            </div>
+          )}
+
           {/* Stepper Footer actions */}
-          <div className="flex gap-4">
+          <div className="flex flex-wrap gap-4">
             <button 
+              type="button"
               onClick={() => setCurrentPage('dashboard')}
               className="px-6 py-2.5 border border-slate-100 rounded-xl text-slate-500 text-xs font-semibold hover:bg-slate-50 transition-colors"
             >
               Cancel
             </button>
             <button 
+              type="button"
+              disabled={isSubmittingEnquiry}
               onClick={handleCreateEnquiry}
-              className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+              className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
             >
-              Create Enquiry
+              {isSubmittingEnquiry ? 'Saving...' : 'Create Enquiry'}
             </button>
           </div>
 

@@ -16,9 +16,9 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
 import { api } from '../services/api';
 import { openWhatsApp } from '../utils/whatsapp';
+import { addDaysIST } from '../utils/date';
 import { useAiRateLimit } from '../hooks/useAiRateLimit';
 
 interface SmartFollowUpProps {
@@ -92,13 +92,17 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
 
   useEffect(() => {
     if (isQueueFinished && sessionCompleted > 0) {
-      confetti({
-        particleCount: 120,
-        spread: 80,
-        origin: { y: 0.6 }
-      });
+      import('canvas-confetti')
+        .then(({ default: confetti }) => {
+          confetti({
+            particleCount: 120,
+            spread: 80,
+            origin: { y: 0.6 }
+          });
+        })
+        .catch(() => {});
     }
-  }, [isQueueFinished]);
+  }, [isQueueFinished, sessionCompleted]);
 
   if (isQueueFinished) {
     return (
@@ -187,7 +191,7 @@ export const SmartFollowUp: React.FC<SmartFollowUpProps> = ({
       setIsPurchaseModalOpen(true);
     } else if (selectedOutcome === 'Still Interested') {
       const nextDays = rescheduleDate === 'Tomorrow' ? 1 : rescheduleDate === '3 days' ? 3 : 7;
-      const dateStr = new Date(Date.now() + nextDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const dateStr = addDaysIST(nextDays);
       handleOutcomeStillInterested(currentFollowUp.id, dateStr);
       advanceQueue();
     } else if (selectedOutcome === 'Not Interested') {

@@ -95,26 +95,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
 
   const customer = customers.find(c => c.id === customerId);
 
-  if (!customer) {
-    return (
-      <div className="p-8 text-center">
-        <p className="text-slate-400">Customer not found</p>
-        <button onClick={() => setCurrentPage('customers')} className="text-primary-500 font-bold mt-4 flex items-center gap-1 mx-auto">
-          <ArrowLeft className="w-4 h-4" /> Back to Customers
-        </button>
-      </div>
-    );
-  }
-
-  const customerEnquiries = enquiries.filter(e => e.customerId === customer.id);
-  const customerFollowUps = followUps.filter(f => f.customerId === customer.id);
-  const customerNotes = notes.filter(n => n.customerId === customer.id);
-  const customerActivities = activities.filter(a => a.customerId === customer.id);
-
-  // WhatsApp Offer Permission State
+  // WhatsApp Offer Permission State (declared before early return to satisfy Rules of Hooks)
   const [offerPermissionEnabled, setOfferPermissionEnabled] = useState(false);
   const [loadingPermission, setLoadingPermission] = useState(false);
   const [confirmPermissionModal, setConfirmPermissionModal] = useState<'enable' | 'disable' | null>(null);
+  const [customMsgText, setCustomMsgText] = useState('');
 
   React.useEffect(() => {
     if (customer?.id) {
@@ -136,6 +121,36 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     }
   }, [customer?.id]);
 
+  const customerFollowUpsAll = customer ? followUps.filter(f => f.customerId === customer.id) : [];
+  const pendingFollowUpForInit = customerFollowUpsAll.find(f => f.status === 'ready');
+  const defaultWhatsAppMessage = customer
+    ? (pendingFollowUpForInit?.message || messageGenerationService.generateFollowUpQuickMessage(
+        customer.name,
+        'Black Shirt',
+        customer.preferences?.preferredSize
+      ))
+    : '';
+
+  React.useEffect(() => {
+    setCustomMsgText(defaultWhatsAppMessage);
+  }, [customer?.id, defaultWhatsAppMessage]);
+
+  if (!customer) {
+    return (
+      <div className="p-8 text-center">
+        <p className="text-slate-400">Customer not found</p>
+        <button onClick={() => setCurrentPage('customers')} className="text-primary-500 font-bold mt-4 flex items-center gap-1 mx-auto">
+          <ArrowLeft className="w-4 h-4" /> Back to Customers
+        </button>
+      </div>
+    );
+  }
+
+  const customerEnquiries = enquiries.filter(e => e.customerId === customer.id);
+  const customerFollowUps = customerFollowUpsAll;
+  const customerNotes = notes.filter(n => n.customerId === customer.id);
+  const customerActivities = activities.filter(a => a.customerId === customer.id);
+
   const handleTogglePermission = async (enable: boolean) => {
     if (!customer?.id) return;
     setLoadingPermission(true);
@@ -153,14 +168,8 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   };
 
   // Quick WhatsApp Recommendation Content
-  const pendingFollowUp = customerFollowUps.find(f => f.status === 'ready');
-  const whatsAppMessage = pendingFollowUp?.message || messageGenerationService.generateFollowUpQuickMessage(
-    customer.name, 
-    'Black Shirt', 
-    customer.preferences.preferredSize
-  );
-
-  const [customMsgText, setCustomMsgText] = useState(whatsAppMessage);
+  const pendingFollowUp = pendingFollowUpForInit;
+  const whatsAppMessage = defaultWhatsAppMessage;
 
   const handleSendWhatsApp = () => {
     const textToSend = customMsgText || whatsAppMessage;

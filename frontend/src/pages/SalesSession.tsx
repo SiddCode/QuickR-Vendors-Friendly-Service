@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   Plus, 
@@ -19,9 +19,10 @@ import {
   Keyboard
 } from 'lucide-react';
 import { api } from '../services/api';
-import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
 import { printSaleInvoiceWindow } from '../utils/printInvoice';
+
+const BarcodeScannerModal = lazy(() => import('../components/BarcodeScannerModal').then(m => ({ default: m.BarcodeScannerModal })));
 
 interface SalesSessionProps {
   setCurrentPage: (page: string) => void;
@@ -32,6 +33,7 @@ interface SalesSessionProps {
     productId?: string;
     rate?: number;
   } | null;
+  onClearBillingInitialData?: () => void;
 }
 
 interface BillItem {
@@ -43,21 +45,27 @@ interface BillItem {
   sellingUnit?: 'piece' | 'm' | 'cm';
 }
 
-export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, billingInitialData: _billingInitialData }) => {
-  const { 
-    currentUser, 
-    customers, 
-    products, 
-    createSale, 
-    shopProfile, 
-    shopName, 
-    connectionState, 
+export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, billingInitialData, onClearBillingInitialData }) => {
+  const {
+    currentUser,
+    customers,
+    products,
+    createSale,
+    reconcileSale,
+    shopProfile,
+    shopName,
+    connectionState,
     checkHealth,
     salesSessionActive,
     startSalesSession,
     endSalesSession,
-    refreshData
+    refreshTodayWork
   } = useApp();
+
+  const [linkedEnquiryId, setLinkedEnquiryId] = useState<string>('');
+  const [linkedFollowUpId, setLinkedFollowUpId] = useState<string>('');
+  const handleCompleteSaleRef = useRef<() => void>(() => {});
+  const submittingLockRef = useRef<boolean>(false);
 
   const [connectingMsg, setConnectingMsg] = useState<string | null>(null);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState<boolean>(false);
@@ -139,6 +147,40 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
   const selectedCustomerObj = customers.find(c => c.id === selectedCustomerId);
 
+  // Hydrate initial customer/enquiry/followUp/product when navigated from WorkMode
+  useEffect(() => {
+    if (!billingInitialData) return;
+
+    if (!salesSessionActive) {
+      startSalesSession();
+    }
+    if (billingInitialData.customerId) {
+      setIsWalkIn(false);
+      setSelectedCustomerId(billingInitialData.customerId);
+    }
+    if (billingInitialData.enquiryId) {
+      setLinkedEnquiryId(billingInitialData.enquiryId);
+    }
+    if (billingInitialData.followUpId) {
+      setLinkedFollowUpId(billingInitialData.followUpId);
+    }
+    if (billingInitialData.productId) {
+      const prod = products.find(p => p.id === billingInitialData.productId);
+      if (prod && (prod.availability === undefined || prod.availability > 0)) {
+        const isLen = prod.measurementType === 'length';
+        setItems([{
+          id: `${Date.now()}-prefill`,
+          productId: prod.id,
+          quantity: 1,
+          rate: Number(billingInitialData.rate) || prod.sellingPrice,
+          measurementType: isLen ? 'length' : 'piece',
+          sellingUnit: isLen ? 'm' : 'piece'
+        }]);
+      }
+    }
+    onClearBillingInitialData?.();
+  }, [billingInitialData, products, salesSessionActive, startSalesSession, onClearBillingInitialData]);
+
   // 1. DEFAULT FOCUS: Automatically focus Customer Name/Search when session is active
   useEffect(() => {
     if (salesSessionActive) {
@@ -153,41 +195,44 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
     }
   }, [salesSessionActive, isWalkIn]);
 
-  // Helper: Add or increment product in cart by product object
+  // Helper: Add or increment product in cart by product object with stock limit check
   const addScannedProductToCart = (prod: any) => {
     if (!prod) return;
-    if (prod.availability !== undefined && prod.availability <= 0) {
+    const avail = prod.availability ?? Infinity;
+    if (avail <= 0) {
       setOutOfStockProduct(prod);
       return;
     }
 
-    setItems(prevItems => {
-      const existingIndex = prevItems.findIndex(i => i.productId === prod.id);
-      if (existingIndex >= 0) {
-        setSelectedCartItemId(prevItems[existingIndex].id);
-        return prevItems.map((item, idx) => {
-          if (idx === existingIndex) {
-            return { ...item, quantity: item.quantity + 1 };
-          }
-          return item;
-        });
-      } else {
-        const newItemId = Date.now().toString();
-        setSelectedCartItemId(newItemId);
-        const isLen = prod.measurementType === 'length';
-        return [
-          ...prevItems,
-          {
-            id: newItemId,
-            productId: prod.id,
-            quantity: 1,
-            rate: prod.sellingPrice,
-            measurementType: isLen ? 'length' : 'piece',
-            sellingUnit: isLen ? 'm' : 'piece'
-          }
-        ];
+    const existingIdx = items.findIndex(i => i.productId === prod.id);
+    if (existingIdx >= 0) {
+      const currentBaseTotal = items
+        .filter(i => i.productId === prod.id)
+        .reduce((sum, i) => sum + ((i.measurementType === 'length' && i.sellingUnit === 'cm') ? i.quantity / 100 : i.quantity), 0);
+      const existingItem = items[existingIdx];
+      const deltaBase = (existingItem.measurementType === 'length' && existingItem.sellingUnit === 'cm') ? 0.01 : 1;
+      if (currentBaseTotal + deltaBase > avail) {
+        setOutOfStockProduct(prod);
+        return;
       }
-    });
+      setSelectedCartItemId(existingItem.id);
+      setItems(prevItems => prevItems.map((item, idx) => idx === existingIdx ? { ...item, quantity: item.quantity + 1 } : item));
+    } else {
+      const newItemId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const isLen = prod.measurementType === 'length';
+      setSelectedCartItemId(newItemId);
+      setItems(prevItems => [
+        ...prevItems,
+        {
+          id: newItemId,
+          productId: prod.id,
+          quantity: 1,
+          rate: prod.sellingPrice,
+          measurementType: isLen ? 'length' : 'piece',
+          sellingUnit: isLen ? 'm' : 'piece'
+        }
+      ]);
+    }
   };
 
   // Helper: Process scanned barcode string
@@ -264,7 +309,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       // ─── GLOBAL FUNCTION KEYS & POS SHORTCUTS (Work even if focused inside inputs) ───
       if (e.key === 'F10') {
         e.preventDefault();
-        handleCompleteSale();
+        handleCompleteSaleRef.current();
         return;
       }
       if (e.key === 'F4') {
@@ -322,7 +367,22 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
         if (selectedCartItemId) {
           if (e.key === '+' || e.key === '=') {
             e.preventDefault();
-            setItems(prev => prev.map(item => item.id === selectedCartItemId ? { ...item, quantity: item.quantity + 1 } : item));
+            setItems(prev => {
+              const target = prev.find(i => i.id === selectedCartItemId);
+              if (!target) return prev;
+              const prod = products.find(p => p.id === target.productId);
+              if (prod && prod.availability !== undefined) {
+                const currentTotalBase = prev
+                  .filter(i => i.productId === prod.id)
+                  .reduce((sum, i) => sum + ((i.measurementType === 'length' && i.sellingUnit === 'cm') ? i.quantity / 100 : i.quantity), 0);
+                const stepBase = (target.measurementType === 'length' && target.sellingUnit === 'cm') ? 0.01 : 1;
+                if (currentTotalBase + stepBase > prod.availability) {
+                  setOutOfStockProduct(prod);
+                  return prev;
+                }
+              }
+              return prev.map(item => item.id === selectedCartItemId ? { ...item, quantity: item.quantity + 1 } : item);
+            });
             return;
           }
           if (e.key === '-') {
@@ -563,91 +623,411 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [allowWhatsAppOffers, setAllowWhatsAppOffers] = useState<boolean>(true);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [submittedBillSignature, setSubmittedBillSignature] = useState<string | null>(null);
+  const [submissionUncertain, setSubmissionUncertain] = useState<boolean>(false);
+  const [submissionWarning, setSubmissionWarning] = useState<string | null>(null);
+  const [previousUnresolved, setPreviousUnresolved] = useState<{
+    requestId: string;
+    totalAmount: number;
+    timestamp: number;
+  } | null>(null);
+  const [isVerifyingPrevious, setIsVerifyingPrevious] = useState<boolean>(false);
+  const hydratedPendingKeyRef = useRef<string | null>(null);
+
+  const pendingStorageKey = currentUser?.id
+    ? `quickr_pending_sale_${currentUser.shopId || 'shop'}_${currentUser.id}`
+    : null;
+
+  const billSignature = JSON.stringify({
+    isWalkIn,
+    selectedCustomerId,
+    customerName: customerName.trim(),
+    customerPhone: customerPhone.trim(),
+    customerState,
+    customerStateCode,
+    customerGstin: customerGstin.trim().toUpperCase(),
+    allowWhatsAppOffers,
+    linkedEnquiryId,
+    linkedFollowUpId,
+    discountType,
+    discountValue,
+    paymentMethod,
+    items: items.map(i => ({
+      productId: i.productId,
+      quantity: Number(i.quantity) || 0,
+      rate: Number(i.rate) || 0,
+      measurementType: i.measurementType || 'piece',
+      sellingUnit: i.sellingUnit || (i.measurementType === 'length' ? 'm' : 'piece')
+    }))
+  });
+
+  const persistPendingBill = (overrides: {
+    requestId?: string | null;
+    payloadSignature?: string | null;
+    submissionUncertain?: boolean;
+  } = {}) => {
+    if (!pendingStorageKey) return;
+    try {
+      sessionStorage.setItem(
+        pendingStorageKey,
+        JSON.stringify({
+          items,
+          isWalkIn,
+          selectedCustomerId,
+          customerName,
+          customerPhone,
+          customerState,
+          customerStateCode,
+          customerGstin,
+          allowWhatsAppOffers,
+          linkedEnquiryId,
+          linkedFollowUpId,
+          discountType,
+          discountValue,
+          paymentMethod,
+          requestId: overrides.requestId ?? null,
+          payloadSignature: overrides.payloadSignature ?? null,
+          submissionUncertain: Boolean(overrides.submissionUncertain),
+          updatedAt: Date.now()
+        })
+      );
+    } catch {
+      // Ignore storage quota / privacy mode restrictions
+    }
+  };
+
+  const clearPendingBillStorage = () => {
+    if (!pendingStorageKey) return;
+    try {
+      sessionStorage.removeItem(pendingStorageKey);
+    } catch {
+      // Ignore storage access errors
+    }
+  };
+
+  const finalizeCommittedSale = (sale: any, fallbackItems?: any[]) => {
+    const normalizedSale = (!sale?.items || sale.items.length === 0) && fallbackItems
+      ? { ...sale, items: fallbackItems }
+      : sale;
+    reconcileSale(normalizedSale);
+    clearPendingBillStorage();
+    setActiveRequestId(null);
+    setSubmittedBillSignature(null);
+    setSubmissionUncertain(false);
+    setSubmissionWarning(null);
+    setPreviousUnresolved(null);
+    setLinkedEnquiryId('');
+    setLinkedFollowUpId('');
+    setItems([]);
+    setDiscountValue(0);
+    setCustomerName('');
+    setCustomerPhone('');
+    setSelectedCustomerId('');
+    setIsWalkIn(true);
+    refreshTodayWork().catch(() => {});
+    setCurrentPage('sales');
+  };
+
+  // Recover unresolved pending sale across browser refreshes (no auth tokens persisted)
+  useEffect(() => {
+    if (!pendingStorageKey || hydratedPendingKeyRef.current === pendingStorageKey) return;
+    hydratedPendingKeyRef.current = pendingStorageKey;
+
+    try {
+      const raw = sessionStorage.getItem(pendingStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved || !Array.isArray(saved.items) || saved.items.length === 0) return;
+
+      const restoreSavedDraft = (uncertain: boolean, warningText: string | null) => {
+        if (!salesSessionActive) startSalesSession();
+        setItems(saved.items);
+        if (typeof saved.isWalkIn === 'boolean') setIsWalkIn(saved.isWalkIn);
+        if (typeof saved.selectedCustomerId === 'string') setSelectedCustomerId(saved.selectedCustomerId);
+        if (typeof saved.customerName === 'string') setCustomerName(saved.customerName);
+        if (typeof saved.customerPhone === 'string') setCustomerPhone(saved.customerPhone);
+        if (typeof saved.customerState === 'string') setCustomerState(saved.customerState);
+        if (typeof saved.customerStateCode === 'string') setCustomerStateCode(saved.customerStateCode);
+        if (typeof saved.customerGstin === 'string') setCustomerGstin(saved.customerGstin);
+        if (typeof saved.allowWhatsAppOffers === 'boolean') setAllowWhatsAppOffers(saved.allowWhatsAppOffers);
+        if (typeof saved.linkedEnquiryId === 'string') setLinkedEnquiryId(saved.linkedEnquiryId);
+        if (typeof saved.linkedFollowUpId === 'string') setLinkedFollowUpId(saved.linkedFollowUpId);
+        if (saved.discountType === 'amount' || saved.discountType === 'percentage') setDiscountType(saved.discountType);
+        if (typeof saved.discountValue === 'number') setDiscountValue(saved.discountValue);
+        if (typeof saved.paymentMethod === 'string') setPaymentMethod(saved.paymentMethod);
+        setActiveRequestId(uncertain && saved.requestId ? saved.requestId : null);
+        setSubmittedBillSignature(uncertain && saved.payloadSignature ? saved.payloadSignature : null);
+        setSubmissionUncertain(uncertain);
+        setSubmissionWarning(warningText);
+      };
+
+      if (saved.requestId && saved.submissionUncertain) {
+        api.getSaleByRequestId(saved.requestId)
+          .then((statusRes) => {
+            if (statusRes?.found && statusRes.sale) {
+              reconcileSale(statusRes.sale);
+              clearPendingBillStorage();
+              refreshTodayWork().catch(() => {});
+              setSubmissionWarning(
+                `Previous interrupted bill (${statusRes.sale.invoiceNumber}) was already saved safely on the server. Ready for next bill.`
+              );
+            } else {
+              restoreSavedDraft(
+                true,
+                'A previous bill submission was interrupted before confirmation. Click "Complete Sale" to check status and retry safely without duplicate billing.'
+              );
+            }
+          })
+          .catch(() => {
+            restoreSavedDraft(
+              true,
+              'A previous bill submission could not be confirmed due to connection loss. Your bill request ID is preserved for safe retry.'
+            );
+          });
+      }
+    } catch {
+      // Ignore corrupt storage JSON
+    }
+  }, [pendingStorageKey]);
+
+  // If the bill changes after an unresolved submission, never silently reuse the old incompatible requestId
+  useEffect(() => {
+    if (activeRequestId && submittedBillSignature && billSignature !== submittedBillSignature) {
+      if (submissionUncertain) {
+        setPreviousUnresolved({
+          requestId: activeRequestId,
+          totalAmount: grandTotalAmount,
+          timestamp: Date.now()
+        });
+        setSubmissionWarning(
+          'Bill items or customer changed after a timed-out submission. A fresh request ID will be generated for the modified bill. Verify the earlier attempt if needed.'
+        );
+      }
+      setActiveRequestId(null);
+      setSubmittedBillSignature(null);
+      setSubmissionUncertain(false);
+    }
+  }, [billSignature, activeRequestId, submittedBillSignature, submissionUncertain, grandTotalAmount]);
+
+  const handleVerifyPreviousUnresolved = async () => {
+    if (!previousUnresolved || isVerifyingPrevious) return;
+    setIsVerifyingPrevious(true);
+    try {
+      const res = await api.getSaleByRequestId(previousUnresolved.requestId);
+      if (res?.found && res.sale) {
+        reconcileSale(res.sale);
+        refreshTodayWork().catch(() => {});
+        setPreviousUnresolved(null);
+        setSubmissionWarning(`Confirmed: earlier bill was completed as Invoice ${res.sale.invoiceNumber} (₹${res.sale.totalAmount}).`);
+      } else {
+        setSubmissionWarning('Verified with server: the earlier timed-out submission was NOT created on the server.');
+        setPreviousUnresolved(null);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Unable to verify previous submission right now. Please try again.');
+    } finally {
+      setIsVerifyingPrevious(false);
+    }
+  };
+
+  const handleDiscardPendingBill = () => {
+    clearPendingBillStorage();
+    setActiveRequestId(null);
+    setSubmittedBillSignature(null);
+    setSubmissionUncertain(false);
+    setSubmissionWarning(null);
+    setPreviousUnresolved(null);
+    setItems([]);
+    setDiscountValue(0);
+    setLinkedEnquiryId('');
+    setLinkedFollowUpId('');
+    setCustomerName('');
+    setCustomerPhone('');
+    setSelectedCustomerId('');
+    setIsWalkIn(true);
+  };
 
   const handleCompleteSale = async () => {
     if (items.length === 0) return alert('Please add at least one product to the sale.');
-    if (isSubmitting) return;
-    
-    if (connectionState !== 'ready') {
-      setConnectingMsg('Connecting to server...');
-      const isAlive = await checkHealth();
-      setConnectingMsg(null);
-      if (!isAlive) {
-        alert('Server is currently offline or reconnecting. Please try again in a moment.');
-        return;
-      }
-    }
+    if (isSubmitting || submittingLockRef.current) return;
 
-    const requestIdToUse = activeRequestId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `REQ-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`);
-    if (!activeRequestId) {
-      setActiveRequestId(requestIdToUse);
-    }
-
-    let finalCustomerId = '';
-    let finalCustomerName = 'Walk-in Customer';
-    
-    if (!isWalkIn) {
-      if (!selectedCustomerId) return alert('Please select a customer');
-      const c = customers.find(x => x.id === selectedCustomerId);
-      if (c) {
-        finalCustomerId = c.id;
-        finalCustomerName = c.name;
-      }
-    } else if (customerName.trim()) {
-      finalCustomerName = customerName.trim();
-    }
-
-    const payload = {
-      customerId: finalCustomerId,
-      customerName: finalCustomerName,
-      customerPhone: isWalkIn && customerPhone.trim() ? customerPhone.trim() : undefined,
-      customerState: isGstRegistered ? customerState : undefined,
-      customerStateCode: isGstRegistered ? customerStateCode : undefined,
-      customerGstin: isGstRegistered && customerGstin.trim() ? customerGstin.trim().toUpperCase() : undefined,
-      allowWhatsAppOffers: isWalkIn && customerPhone.trim() ? allowWhatsAppOffers : undefined,
-      items: enrichedItems.map(i => ({
-        productId: i.productId,
-        productName: i.productName,
-        category: i.category,
-        measurementType: i.measurementType || 'piece',
-        sellingUnit: i.sellingUnit || (i.measurementType === 'length' ? 'm' : 'piece'),
-        baseQuantity: i.baseQuantity,
-        quantity: i.quantity,
-        rate: i.rate,
-        total: i.total,
-        gstRate: i.gstRate,
-        gstAmount: i.gstAmount
-      })),
-      subtotal,
-      discount: discountValue,
-      discountType,
-      totalGst,
-      totalAmount: grandTotalAmount,
-      paymentMethod,
-      source: 'direct',
-      requestId: requestIdToUse
-    };
-
+    submittingLockRef.current = true;
     setIsSubmitting(true);
+
     try {
-      const sale = await createSale(payload);
-      if (sale) {
-        setActiveRequestId(null);
-        setItems([]);
-        setDiscountValue(0);
-        setCustomerName('');
-        setCustomerPhone('');
-        setSelectedCustomerId('');
-        setIsWalkIn(true);
-        await refreshData();
-        setCurrentPage('sales');
+      // If retrying an uncertain submission for the exact same bill, check server status FIRST
+      const isMatchingUnresolved =
+        submissionUncertain &&
+        Boolean(activeRequestId) &&
+        submittedBillSignature === billSignature;
+
+      if (isMatchingUnresolved && activeRequestId) {
+        try {
+          const checkRes = await api.getSaleByRequestId(activeRequestId);
+          if (checkRes?.found && checkRes.sale) {
+            finalizeCommittedSale(checkRes.sale);
+            return;
+          }
+        } catch (probeErr: any) {
+          const isProbeTransient =
+            probeErr?.isTransient ||
+            !probeErr?.status ||
+            [408, 429, 500, 502, 503, 504].includes(probeErr?.status);
+          if (isProbeTransient) {
+            setSubmissionWarning(
+              'Still unable to reach server to verify your pending bill. Your request ID remains locked to prevent duplicate billing.'
+            );
+            return;
+          }
+        }
       }
-    } catch (err) {
-      console.error('Failed to complete sale:', err);
+
+      // Pre-validate positive quantities and available stock per product
+      const reqByProduct = new Map<string, number>();
+      for (const item of enrichedItems) {
+        if ((Number(item.quantity) || 0) <= 0) {
+          return alert(`Quantity must be greater than 0 for ${item.productName}.`);
+        }
+        if (item.productId) {
+          reqByProduct.set(item.productId, (reqByProduct.get(item.productId) || 0) + (item.baseQuantity || 0));
+        }
+      }
+      for (const [prodId, reqQty] of reqByProduct.entries()) {
+        const prod = products.find(p => p.id === prodId);
+        if (prod && prod.availability !== undefined && reqQty > prod.availability + 1e-6) {
+          return alert(`Insufficient stock for ${prod.name}. Available: ${prod.availability}, Requested: ${reqQty}`);
+        }
+      }
+
+      if (connectionState !== 'ready') {
+        setConnectingMsg('Connecting to server...');
+        const isAlive = await checkHealth();
+        setConnectingMsg(null);
+        if (!isAlive) {
+          setSubmissionWarning('Server is currently waking up or unreachable. Please wait a moment and click Complete Sale again.');
+          return;
+        }
+      }
+
+      let finalCustomerId = '';
+      let finalCustomerName = 'Walk-in Customer';
+
+      if (!isWalkIn) {
+        if (!selectedCustomerId) return alert('Please select a customer');
+        const c = customers.find(x => x.id === selectedCustomerId);
+        if (c) {
+          finalCustomerId = c.id;
+          finalCustomerName = c.name;
+        }
+      } else if (customerName.trim()) {
+        finalCustomerName = customerName.trim();
+      }
+
+      const canReuseRequestId = Boolean(activeRequestId && submittedBillSignature === billSignature);
+      const requestIdToUse = canReuseRequestId && activeRequestId
+        ? activeRequestId
+        : (typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `REQ-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`);
+
+      setActiveRequestId(requestIdToUse);
+      setSubmittedBillSignature(billSignature);
+      setSubmissionWarning(null);
+      persistPendingBill({
+        requestId: requestIdToUse,
+        payloadSignature: billSignature,
+        submissionUncertain: true
+      });
+
+      const payload = {
+        customerId: finalCustomerId,
+        customerName: finalCustomerName,
+        customerPhone: isWalkIn && customerPhone.trim() ? customerPhone.trim() : undefined,
+        customerState: isGstRegistered ? customerState : undefined,
+        customerStateCode: isGstRegistered ? customerStateCode : undefined,
+        customerGstin: isGstRegistered && customerGstin.trim() ? customerGstin.trim().toUpperCase() : undefined,
+        allowWhatsAppOffers: isWalkIn && customerPhone.trim() ? allowWhatsAppOffers : undefined,
+        enquiryId: linkedEnquiryId || undefined,
+        followUpId: linkedFollowUpId || undefined,
+        items: enrichedItems.map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          category: i.category,
+          measurementType: i.measurementType || 'piece',
+          sellingUnit: i.sellingUnit || (i.measurementType === 'length' ? 'm' : 'piece'),
+          baseQuantity: i.baseQuantity,
+          quantity: i.quantity,
+          rate: i.rate,
+          total: i.total,
+          gstRate: i.gstRate,
+          gstAmount: i.gstAmount
+        })),
+        subtotal,
+        discount: discountValue,
+        discountType,
+        totalGst,
+        totalAmount: grandTotalAmount,
+        paymentMethod,
+        source: linkedFollowUpId ? 'quickr_followup' : 'direct',
+        requestId: requestIdToUse
+      };
+
+      try {
+        const sale = await createSale(payload, { rethrow: true });
+        if (sale) {
+          finalizeCommittedSale(sale, payload.items);
+        } else {
+          // Unexpected null response without exception: treat as uncertain and preserve requestId
+          setSubmissionUncertain(true);
+          setSubmissionWarning(
+            'Sale confirmation response was incomplete. Click "Complete Sale" again to safely verify or retry without duplicating the invoice.'
+          );
+        }
+      } catch (err: any) {
+        const status = err?.status;
+        const isTransient = Boolean(
+          err?.isTransient ||
+          !status ||
+          [408, 429, 500, 502, 503, 504].includes(status)
+        );
+
+        if (isTransient) {
+          // Immediately probe whether server already committed the sale before timeout/disconnect
+          try {
+            const verifyRes = await api.getSaleByRequestId(requestIdToUse);
+            if (verifyRes?.found && verifyRes.sale) {
+              finalizeCommittedSale(verifyRes.sale, payload.items);
+              return;
+            }
+          } catch {
+            // Probe also failed transiently — preserve requestId & draft cleanly
+          }
+
+          setSubmissionUncertain(true);
+          persistPendingBill({
+            requestId: requestIdToUse,
+            payloadSignature: billSignature,
+            submissionUncertain: true
+          });
+          setSubmissionWarning(
+            `${err?.message || 'Connection interrupted during checkout.'} Your bill request ID (${requestIdToUse.slice(0, 8)}...) is preserved — click "Complete Sale" to check status and retry safely.`
+          );
+        } else {
+          // Definitive 4xx rejection from server: no sale created; clear uncertain lock so user can adjust & retry cleanly
+          clearPendingBillStorage();
+          setActiveRequestId(null);
+          setSubmittedBillSignature(null);
+          setSubmissionUncertain(false);
+          alert(`Unable to generate bill: ${err?.message || 'Validation error'}`);
+        }
+      }
     } finally {
+      submittingLockRef.current = false;
       setIsSubmitting(false);
     }
   };
+
+  handleCompleteSaleRef.current = handleCompleteSale;
 
   const [completedSale, setCompletedSale] = useState<any | null>(null);
 
@@ -746,9 +1126,51 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           /* ─── ACTIVE SESSION WORKSPACE ─── */
           <div className="space-y-6">
 
-
-
-
+            {(submissionWarning || previousUnresolved) && (
+              <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-amber-900">
+                      {submissionUncertain ? 'Submission Pending Confirmation' : 'Previous Submission Notice'}
+                    </p>
+                    <p className="text-xs text-amber-800">
+                      {submissionWarning || 'Your previous timed-out submission has not yet been confirmed on the server.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {previousUnresolved && (
+                    <button
+                      type="button"
+                      onClick={handleVerifyPreviousUnresolved}
+                      disabled={isVerifyingPrevious}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors disabled:opacity-50"
+                    >
+                      {isVerifyingPrevious ? 'Checking...' : 'Verify Previous Attempt'}
+                    </button>
+                  )}
+                  {submissionUncertain && (
+                    <button
+                      type="button"
+                      onClick={handleDiscardPendingBill}
+                      className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-colors"
+                    >
+                      Start New Bill
+                    </button>
+                  )}
+                  {!submissionUncertain && !previousUnresolved && (
+                    <button
+                      type="button"
+                      onClick={() => setSubmissionWarning(null)}
+                      className="px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 rounded-lg text-xs font-bold"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* MAIN BILLING FORM CARD */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1255,7 +1677,15 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-xl shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-50 cursor-pointer focus:outline-none focus:ring-4 focus:ring-emerald-300"
                 >
                   <Receipt className="w-5 h-5" />
-                  <span>{connectingMsg ? connectingMsg : (isSubmitting ? 'Completing Sale...' : 'Complete Sale')}</span>
+                  <span>
+                    {connectingMsg
+                      ? connectingMsg
+                      : isSubmitting
+                        ? 'Completing Sale...'
+                        : submissionUncertain
+                          ? 'Verify & Complete Sale'
+                          : 'Complete Sale'}
+                  </span>
                   <span className="bg-emerald-800/60 text-emerald-100 text-xs px-2 py-0.5 rounded font-mono font-bold">F10</span>
                 </button>
               </div>
@@ -1328,12 +1758,14 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
       {/* ─── CAMERA BARCODE SCANNER MODAL ─── */}
       {isCameraScannerOpen && (
-        <BarcodeScannerModal
-          onScanSuccess={(barcodeVal) => {
-            processScannedBarcode(barcodeVal);
-          }}
-          onClose={() => setIsCameraScannerOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <BarcodeScannerModal
+            onScanSuccess={(barcodeVal) => {
+              processScannedBarcode(barcodeVal);
+            }}
+            onClose={() => setIsCameraScannerOpen(false)}
+          />
+        </Suspense>
       )}
 
       {/* ─── BARCODE NOT FOUND MODAL ─── */}

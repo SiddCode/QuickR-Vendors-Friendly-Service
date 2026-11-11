@@ -1,7 +1,9 @@
 import express from 'express';
-import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import crypto from 'crypto';
+import { requireAuth, requireAdmin, requireNonStaff } from '../middleware/auth.js';
 import { User } from '../models/User.js';
 import { Shop } from '../models/Shop.js';
+import { Customer } from '../models/Customer.js';
 import { ConsentRecord } from '../models/ConsentRecord.js';
 import { PrivacyAuditLog } from '../models/PrivacyAuditLog.js';
 import { PrivacyRequest } from '../models/PrivacyRequest.js';
@@ -17,7 +19,7 @@ const logPrivacyAudit = async (req, action, resourceType = 'User', resourceId = 
     const ipAddress = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
     const userAgent = req.headers['user-agent'] || 'QuickR-Client';
     await PrivacyAuditLog.create({
-      id: `PAL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `PAL-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       userId: req.user.id,
       shopId: req.user.shopId || 'SYSTEM',
       action,
@@ -35,10 +37,13 @@ const logPrivacyAudit = async (req, action, resourceType = 'User', resourceId = 
 // ----------------------------------------------------------------------
 // 0. GET /api/privacy/activity-security — Shop Owner Activity & Security Log
 // ----------------------------------------------------------------------
-privacyRouter.get('/activity-security', requireAuth, async (req, res) => {
+privacyRouter.get('/activity-security', requireAuth, requireNonStaff, async (req, res) => {
   try {
     if (req.user.role === 'admin') {
       return res.status(400).json({ error: 'Admin activity is separate and handled via admin routes.' });
+    }
+    if (!req.user.shopId) {
+      return res.status(403).json({ error: 'Shop context required' });
     }
 
     // STRICT SHOP ISOLATION: enforce req.user.shopId and explicitly filter OUT any admin system activity
@@ -81,9 +86,10 @@ privacyRouter.get('/activity-security', requireAuth, async (req, res) => {
 // ----------------------------------------------------------------------
 // 0B. POST /api/privacy/cleanup-retention — Safe Configurable Storage Retention Cleanup
 // ----------------------------------------------------------------------
-privacyRouter.post('/cleanup-retention', requireAuth, async (req, res) => {
+privacyRouter.post('/cleanup-retention', requireAuth, requireNonStaff, async (req, res) => {
   try {
-    const retentionDays = parseInt(process.env.DATA_RETENTION_DAYS || '180', 10);
+    const parsedDays = parseInt(process.env.DATA_RETENTION_DAYS || '180', 10);
+    const retentionDays = Number.isFinite(parsedDays) && parsedDays >= 30 ? parsedDays : 180;
     const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
     let deletedAuditLogsCount = 0;
@@ -153,18 +159,18 @@ privacyRouter.get('/consent', requireAuth, async (req, res) => {
     // Check if defaults exist, if not seed initial active service & marketing records
     if (history.length === 0) {
       const initialService = await ConsentRecord.create({
-        id: `CNS-${Date.now()}-1`,
+        id: `CNS-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         userId: req.user.id,
-        shopId: req.user.shopId,
+        shopId: req.user.shopId || 'SYSTEM',
         purpose: 'service',
         status: 'active',
         noticeVersion: CURRENT_NOTICE_VERSION,
         language: 'en'
       });
       const initialMarketing = await ConsentRecord.create({
-        id: `CNS-${Date.now()}-2`,
+        id: `CNS-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
         userId: req.user.id,
-        shopId: req.user.shopId,
+        shopId: req.user.shopId || 'SYSTEM',
         purpose: 'marketing',
         status: 'active',
         noticeVersion: CURRENT_NOTICE_VERSION,
@@ -184,14 +190,22 @@ privacyRouter.get('/consent', requireAuth, async (req, res) => {
 // ----------------------------------------------------------------------
 privacyRouter.post('/consent/withdraw', requireAuth, async (req, res) => {
   try {
-    const { purpose } = req.body;
+    const { purpose } = req.body || {};
     if (!purpose || !['marketing', 'analytics'].includes(purpose)) {
       return res.status(400).json({ error: 'Only optional consent (marketing, analytics) can be withdrawn. Essential service consent is required to maintain an active account.' });
     }
 
     const updated = await ConsentRecord.findOneAndUpdate(
       { userId: req.user.id, purpose },
-      { status: 'withdrawn', withdrawnAt: new Date(), noticeVersion: CURRENT_NOTICE_VERSION },
+      {
+        $set: { status: 'withdrawn', withdrawnAt: new Date(), noticeVersion: CURRENT_NOTICE_VERSION },
+        $setOnInsert: {
+          id: `CNS-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+          userId: req.user.id,
+          shopId: req.user.shopId || 'SYSTEM',
+          purpose
+        }
+      },
       { new: true, upsert: true }
     );
 
@@ -208,14 +222,22 @@ privacyRouter.post('/consent/withdraw', requireAuth, async (req, res) => {
 // ----------------------------------------------------------------------
 privacyRouter.post('/consent/grant', requireAuth, async (req, res) => {
   try {
-    const { purpose } = req.body;
+    const { purpose } = req.body || {};
     if (!purpose || !['marketing', 'analytics'].includes(purpose)) {
       return res.status(400).json({ error: 'Invalid purpose specified.' });
     }
 
     const updated = await ConsentRecord.findOneAndUpdate(
       { userId: req.user.id, purpose },
-      { status: 'active', consentedAt: new Date(), withdrawnAt: null, noticeVersion: CURRENT_NOTICE_VERSION },
+      {
+        $set: { status: 'active', consentedAt: new Date(), withdrawnAt: null, noticeVersion: CURRENT_NOTICE_VERSION },
+        $setOnInsert: {
+          id: `CNS-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+          userId: req.user.id,
+          shopId: req.user.shopId || 'SYSTEM',
+          purpose
+        }
+      },
       { new: true, upsert: true }
     );
 
@@ -229,13 +251,13 @@ privacyRouter.post('/consent/grant', requireAuth, async (req, res) => {
 privacyRouter.get('/customers/:customerId/permission', requireAuth, async (req, res) => {
   try {
     const shopId = req.user.shopId;
+    if (!shopId) return res.status(403).json({ error: 'Shop context required' });
     const { customerId } = req.params;
 
-    const CustomerModel = (await import('../models/Customer.js')).Customer;
-    const customer = await CustomerModel.findOne({ id: customerId, shopId });
+    const customer = await Customer.findOne({ id: customerId, shopId }).lean();
     if (!customer) return res.status(404).json({ error: 'Customer not found for your shop.' });
 
-    const consentDoc = await ConsentRecord.findOne({ userId: customerId, shopId, purpose: 'marketing' });
+    const consentDoc = await ConsentRecord.findOne({ userId: customerId, shopId, purpose: 'marketing' }).lean();
     const enabled = Boolean(consentDoc && consentDoc.status === 'active');
 
     res.json({
@@ -253,27 +275,31 @@ privacyRouter.get('/customers/:customerId/permission', requireAuth, async (req, 
 privacyRouter.post('/customers/:customerId/permission', requireAuth, async (req, res) => {
   try {
     const shopId = req.user.shopId;
+    if (!shopId) return res.status(403).json({ error: 'Shop context required' });
     const { customerId } = req.params;
-    const { allowWhatsAppOffers } = req.body;
+    const { allowWhatsAppOffers } = req.body || {};
 
-    const CustomerModel = (await import('../models/Customer.js')).Customer;
-    const customer = await CustomerModel.findOne({ id: customerId, shopId });
+    const customer = await Customer.findOne({ id: customerId, shopId }).lean();
     if (!customer) return res.status(404).json({ error: 'Customer not found for your shop.' });
 
-    const enable = Boolean(allowWhatsAppOffers);
+    const enable = allowWhatsAppOffers === true || allowWhatsAppOffers === 'true';
     const newStatus = enable ? 'active' : 'withdrawn';
 
     const consentDoc = await ConsentRecord.findOneAndUpdate(
       { userId: customerId, shopId, purpose: 'marketing' },
       {
-        id: `CNS-${Date.now()}`,
-        userId: customerId,
-        shopId,
-        purpose: 'marketing',
-        status: newStatus,
-        consentedAt: enable ? new Date() : null,
-        withdrawnAt: enable ? null : new Date(),
-        noticeVersion: CURRENT_NOTICE_VERSION
+        $set: {
+          status: newStatus,
+          consentedAt: enable ? new Date() : null,
+          withdrawnAt: enable ? null : new Date(),
+          noticeVersion: CURRENT_NOTICE_VERSION
+        },
+        $setOnInsert: {
+          id: `CNS-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+          userId: customerId,
+          shopId,
+          purpose: 'marketing'
+        }
       },
       { upsert: true, new: true }
     );
@@ -301,6 +327,9 @@ privacyRouter.post('/customers/:customerId/permission', requireAuth, async (req,
 privacyRouter.get('/my-data', requireAuth, async (req, res) => {
   try {
     const userDoc = await User.findOne({ id: req.user.id }).lean();
+    if (!userDoc) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
     let shopDoc = null;
     if (req.user.shopId) {
       shopDoc = await Shop.findOne({ customId: req.user.shopId }).lean();
@@ -344,6 +373,9 @@ privacyRouter.get('/my-data', requireAuth, async (req, res) => {
 privacyRouter.get('/export', requireAuth, async (req, res) => {
   try {
     const userDoc = await User.findOne({ id: req.user.id }).lean();
+    if (!userDoc) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
     let shopDoc = null;
     if (req.user.shopId) {
       shopDoc = await Shop.findOne({ customId: req.user.shopId }).lean();
@@ -389,8 +421,8 @@ privacyRouter.get('/export', requireAuth, async (req, res) => {
 // ----------------------------------------------------------------------
 privacyRouter.post('/delete-account', requireAuth, async (req, res) => {
   try {
-    const { confirmationText } = req.body;
-    if (!confirmationText || confirmationText.trim().toUpperCase() !== 'DELETE') {
+    const { confirmationText } = req.body || {};
+    if (typeof confirmationText !== 'string' || confirmationText.trim().toUpperCase() !== 'DELETE') {
       return res.status(400).json({ error: 'Confirmation text must equal "DELETE" to proceed.' });
     }
 
@@ -412,8 +444,13 @@ privacyRouter.post('/delete-account', requireAuth, async (req, res) => {
     // Log deletion event
     await logPrivacyAudit(req, 'ACCOUNT_DELETED', 'User', req.user.id);
 
-    // Clear auth cookie
-    res.clearCookie('token');
+    // Clear auth cookie using matching cross-site attributes so browsers drop the HttpOnly cookie
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+    res.clearCookie('token', {
+      httpOnly: true,
+      sameSite: isProduction ? 'none' : 'lax',
+      secure: isProduction
+    });
     res.json({ success: true, message: 'Account successfully deactivated and personal data anonymized.' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to process account deletion.' });
@@ -425,7 +462,7 @@ privacyRouter.post('/delete-account', requireAuth, async (req, res) => {
 // ----------------------------------------------------------------------
 privacyRouter.get('/requests', requireAuth, async (req, res) => {
   try {
-    const list = await PrivacyRequest.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    const list = await PrivacyRequest.find({ userId: req.user.id }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch privacy requests.' });
@@ -434,8 +471,8 @@ privacyRouter.get('/requests', requireAuth, async (req, res) => {
 
 privacyRouter.post('/requests', requireAuth, async (req, res) => {
   try {
-    const { requestType, description } = req.body;
-    if (!requestType || !description || !description.trim()) {
+    const { requestType, description } = req.body || {};
+    if (typeof requestType !== 'string' || typeof description !== 'string' || !description.trim()) {
       return res.status(400).json({ error: 'requestType and description are required.' });
     }
 
@@ -445,7 +482,7 @@ privacyRouter.post('/requests', requireAuth, async (req, res) => {
     }
 
     const reqDoc = await PrivacyRequest.create({
-      id: `PRQ-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      id: `PRQ-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
       userId: req.user.id,
       shopId: req.user.shopId || 'SYSTEM',
       requestType,
@@ -466,7 +503,7 @@ privacyRouter.post('/requests', requireAuth, async (req, res) => {
 // ----------------------------------------------------------------------
 privacyRouter.get('/admin/requests', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const list = await PrivacyRequest.find().sort({ createdAt: -1 });
+    const list = await PrivacyRequest.find().sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch admin privacy requests.' });
@@ -475,17 +512,21 @@ privacyRouter.get('/admin/requests', requireAuth, requireAdmin, async (req, res)
 
 privacyRouter.patch('/admin/requests/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { status, adminNotes } = req.body;
+    const { status, adminNotes } = req.body || {};
+    const validStatuses = ['pending', 'in_progress', 'completed', 'rejected'];
+    if (status !== undefined && !validStatuses.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+    }
     const reqDoc = await PrivacyRequest.findOne({ id: req.params.id });
     if (!reqDoc) return res.status(404).json({ error: 'Privacy request not found.' });
 
     if (status) reqDoc.status = status;
-    if (adminNotes !== undefined) reqDoc.adminNotes = adminNotes;
+    if (adminNotes !== undefined) reqDoc.adminNotes = typeof adminNotes === 'string' ? adminNotes : String(adminNotes);
     if (status === 'completed' || status === 'rejected') reqDoc.resolvedAt = new Date();
 
     await reqDoc.save();
 
-    await logPrivacyAudit(req, 'PRIVACY_REQUEST_UPDATED', 'PrivacyRequest', reqDoc.id, { status });
+    await logPrivacyAudit(req, 'PRIVACY_REQUEST_UPDATED', 'PrivacyRequest', reqDoc.id, { status: reqDoc.status });
 
     res.json({ success: true, request: reqDoc });
   } catch (err) {
@@ -495,7 +536,7 @@ privacyRouter.patch('/admin/requests/:id', requireAuth, requireAdmin, async (req
 
 privacyRouter.get('/admin/audit-logs', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const logs = await PrivacyAuditLog.find().sort({ createdAt: -1 }).limit(200);
+    const logs = await PrivacyAuditLog.find().sort({ createdAt: -1 }).limit(200).lean();
     res.json(logs);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch privacy audit logs.' });
@@ -504,7 +545,7 @@ privacyRouter.get('/admin/audit-logs', requireAuth, requireAdmin, async (req, re
 
 privacyRouter.get('/admin/incidents', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const incidents = await SecurityIncident.find().sort({ createdAt: -1 });
+    const incidents = await SecurityIncident.find().sort({ createdAt: -1 }).lean();
     res.json(incidents);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch security incidents.' });
@@ -513,19 +554,23 @@ privacyRouter.get('/admin/incidents', requireAuth, requireAdmin, async (req, res
 
 privacyRouter.post('/admin/incidents', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { severity, description, affectedSystem, affectedDataCategories, containmentAction } = req.body;
-    if (!description || !description.trim()) {
+    const { severity, description, affectedSystem, affectedDataCategories, containmentAction } = req.body || {};
+    if (typeof description !== 'string' || !description.trim()) {
       return res.status(400).json({ error: 'Incident description is required.' });
     }
+    const validSeverities = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+    const cleanSeverity = validSeverities.includes(String(severity || 'MEDIUM').toUpperCase())
+      ? String(severity || 'MEDIUM').toUpperCase()
+      : 'MEDIUM';
 
     const incident = await SecurityIncident.create({
-      id: `INC-${Date.now()}`,
-      severity: severity || 'MEDIUM',
+      id: `INC-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+      severity: cleanSeverity,
       status: 'open',
       description: description.trim(),
-      affectedSystem: affectedSystem || 'QuickR Core Application',
-      affectedDataCategories: affectedDataCategories || ['User Metadata'],
-      containmentAction: containmentAction || ''
+      affectedSystem: typeof affectedSystem === 'string' && affectedSystem.trim() ? affectedSystem.trim() : 'QuickR Core Application',
+      affectedDataCategories: Array.isArray(affectedDataCategories) ? affectedDataCategories : ['User Metadata'],
+      containmentAction: typeof containmentAction === 'string' ? containmentAction : ''
     });
 
     res.json({ success: true, incident });

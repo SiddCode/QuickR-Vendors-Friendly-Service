@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const activitySchema = new mongoose.Schema(
   {
     id: { type: String, required: true }, // e.g. ACT-101
-    customerId: { type: String, required: true },
+    customerId: { type: String, default: 'system' },
     type: { type: String, required: true },
     description: { type: String, required: true },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -12,6 +12,7 @@ const activitySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+activitySchema.index({ shopId: 1, createdAt: -1 });
 activitySchema.index({ shopId: 1, customerId: 1, createdAt: -1 });
 
 export const Activity = mongoose.model('Activity', activitySchema);

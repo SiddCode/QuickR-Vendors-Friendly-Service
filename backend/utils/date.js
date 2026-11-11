@@ -37,7 +37,8 @@ export const calculateScheduledDateIST = (followUpOptionOrDate, baseDate = new D
   if (!followUpOptionOrDate) return now;
   if (followUpOptionOrDate instanceof Date) return followUpOptionOrDate;
 
-  const str = String(followUpOptionOrDate).trim().toLowerCase();
+  const rawStr = String(followUpOptionOrDate).trim();
+  const str = rawStr.toLowerCase();
 
   if (str === 'today') {
     return now;
@@ -52,7 +53,21 @@ export const calculateScheduledDateIST = (followUpOptionOrDate, baseDate = new D
     return new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   }
 
-  const parsed = new Date(followUpOptionOrDate);
+  // Parse explicit YYYY-MM-DD as 10:00 AM IST on that calendar date (avoiding UTC midnight server drift)
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rawStr);
+  if (dateOnlyMatch) {
+    const [, y, m, d] = dateOnlyMatch;
+    return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), 10, 0, 0, 0) - IST_OFFSET_MS);
+  }
+
+  // Parse timezone-less YYYY-MM-DDTHH:mm(:ss)? as IST
+  const localIsoMatch = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(rawStr);
+  if (localIsoMatch) {
+    const [, y, m, d, hh, mm, ss = '0'] = localIsoMatch;
+    return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss), 0) - IST_OFFSET_MS);
+  }
+
+  const parsed = new Date(rawStr);
   if (!isNaN(parsed.getTime())) {
     return parsed;
   }

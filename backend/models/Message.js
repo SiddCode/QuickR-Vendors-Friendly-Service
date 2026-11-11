@@ -23,7 +23,7 @@ const messageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+messageSchema.index({ shopId: 1, createdAt: -1 });
 messageSchema.index({ shopId: 1, customerId: 1, createdAt: -1 });
-messageSchema.index({ providerMessageId: 1 });
 
 export const Message = mongoose.model('Message', messageSchema);

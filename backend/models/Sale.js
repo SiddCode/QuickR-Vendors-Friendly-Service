@@ -67,9 +67,21 @@ const saleSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+saleSchema.pre('validate', function (next) {
+  if (!this.requestId || String(this.requestId).trim() === '') {
+    this.requestId = undefined;
+  }
+  next();
+});
+
+saleSchema.index({ shopId: 1, createdAt: -1 });
 saleSchema.index({ shopId: 1, createdAt: -1, source: 1 });
+saleSchema.index({ shopId: 1, source: 1 });
 saleSchema.index({ shopId: 1, customerId: 1 });
 saleSchema.index({ shopId: 1, 'createdBy.userId': 1, createdAt: -1 });
+saleSchema.index({ shopId: 1, 'items.productId': 1 });
+saleSchema.index({ shopId: 1, id: 1 });
+saleSchema.index({ shopId: 1, invoiceNumber: 1 }, { unique: true });
 saleSchema.index({ shopId: 1, requestId: 1 }, { unique: true, sparse: true });
 
 export const Sale = mongoose.model('Sale', saleSchema);

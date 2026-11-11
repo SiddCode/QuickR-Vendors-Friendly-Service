@@ -4,6 +4,10 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body {
+  overflow-x: clip;
+}
+
 body {
   font-family: 'Inter', sans-serif;
   background-color: #f8fafc;

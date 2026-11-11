@@ -15,5 +15,6 @@ const otpVerificationSchema = new mongoose.Schema(
 );
 
 otpVerificationSchema.index({ phone: 1, purpose: 1 });
+otpVerificationSchema.index({ phone: 1, createdAt: -1 });
 
 export const OtpVerification = mongoose.model('OtpVerification', otpVerificationSchema);

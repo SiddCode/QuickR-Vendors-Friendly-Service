@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   TrendingUp, 
@@ -21,6 +21,8 @@ import {
 import { api } from '../services/api';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
 import { printSaleInvoiceWindow } from '../utils/printInvoice';
+import { getISTDayBounds, formatDateTimeIST } from '../utils/date';
+import { useDebounce } from '../hooks/useDebounce';
 
 interface SalesProps {
   setCurrentPage: (page: string) => void;
@@ -31,8 +33,11 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
   const isStaff = currentUser?.role === 'staff';
 
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 200);
   const [filterPayment, setFilterPayment] = useState('All');
   const [expandedSale, setExpandedSale] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   // Selection & Deletion State (Owner/Admin)
   const [selectedSaleIds, setSelectedSaleIds] = useState<string[]>([]);
@@ -47,20 +52,8 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
 
-  // Exact Date + Time formatting helper (e.g. 22 Sep 2026, 10:42 AM)
-  const formatDateTime = (dateVal: string | Date) => {
-    if (!dateVal) return 'N/A';
-    const d = new Date(dateVal);
-    if (isNaN(d.getTime())) return 'N/A';
-    return d.toLocaleString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
+  // Exact Date + Time formatting helper in IST (e.g. 22 Sep 2026, 10:42 AM)
+  const formatDateTime = (dateVal: string | Date) => formatDateTimeIST(dateVal);
 
   // Format "Billed by" string for Owner/Admin view
   const getBilledByLabel = (sale: any) => {
@@ -73,18 +66,17 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
   };
 
   // Staff sees ONLY sales created by this staff user (backend filters, frontend safety guard)
-  const accessibleSales = sales.filter(s => {
+  const accessibleSales = useMemo(() => sales.filter(s => {
     if (isStaff) {
       if (s.createdBy?.userId) {
         return s.createdBy.userId === currentUser?.id;
       }
-      // If legacy sale has no createdBy, do not show to staff
       return false;
     }
     return true;
-  });
+  }), [sales, isStaff, currentUser?.id]);
 
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const { startOfToday: todayStart } = getISTDayBounds();
   const todaySales = accessibleSales.filter(s => new Date(s.createdAt) >= todayStart);
   const todayRevenue = todaySales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
   const totalRevenue = accessibleSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
@@ -92,13 +84,27 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
     .filter(s => s.source === 'quickr_followup')
     .reduce((acc, s) => acc + (s.totalAmount || 0), 0);
 
-  const filteredSales = accessibleSales.filter(s => {
-    const matchSearch = !search ||
-      (s.invoiceNumber || '').toLowerCase().includes(search.toLowerCase()) ||
-      (s.customerName || '').toLowerCase().includes(search.toLowerCase());
-    const matchPayment = filterPayment === 'All' || s.paymentMethod === filterPayment;
-    return matchSearch && matchPayment;
-  });
+  const filteredSales = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    return accessibleSales.filter(s => {
+      const matchSearch = !q ||
+        (s.invoiceNumber || '').toLowerCase().includes(q) ||
+        (s.customerName || '').toLowerCase().includes(q);
+      const matchPayment = filterPayment === 'All' || s.paymentMethod === filterPayment;
+      return matchSearch && matchPayment;
+    });
+  }, [accessibleSales, debouncedSearch, filterPayment]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, filterPayment]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSales.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginatedSales = useMemo(
+    () => filteredSales.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filteredSales, safePage]
+  );
 
   const handleTriggerPrint = (sale: any, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -431,7 +437,7 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {filteredSales.map(sale => {
+            {paginatedSales.map(sale => {
               const isExpanded = expandedSale === sale.id;
 
               return (
@@ -573,6 +579,32 @@ export const Sales: React.FC<SalesProps> = ({ setCurrentPage }) => {
                 </div>
               );
             })}
+          </div>
+        )}
+        {totalPages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 text-xs text-slate-600">
+            <span>
+              Showing {((safePage - 1) * pageSize) + 1}–{Math.min(safePage * pageSize, filteredSales.length)} of {filteredSales.length} bills
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold disabled:opacity-40"
+              >
+                Prev
+              </button>
+              <span className="font-bold text-slate-800">Page {safePage} / {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage === totalPages}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>
