@@ -36,6 +36,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   });
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
   const [notFoundBarcode, setNotFoundBarcode] = useState<string | null>(null);
+  const [inactiveBarcodeInfo, setInactiveBarcodeInfo] = useState<{ barcode: string; productName?: string } | null>(null);
   const [outOfStockProduct, setOutOfStockProduct] = useState<any | null>(null);
 
   const [isWalkIn, setIsWalkIn] = useState(!billingInitialData?.customerId);
@@ -84,6 +85,10 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   // Helper: Add or increment product in cart by scanned product
   const addScannedProductToCart = (prod: any) => {
     if (!prod) return;
+    if (!prod.isActive) {
+      setInactiveBarcodeInfo({ barcode: prod.barcode || '', productName: prod.name });
+      return;
+    }
     if (prod.availability !== undefined && prod.availability <= 0) {
       setOutOfStockProduct(prod);
       return;
@@ -119,22 +124,40 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     const cleanCode = scannedCode.trim().toUpperCase();
     if (!cleanCode) return;
 
+    setNotFoundBarcode(null);
+    setInactiveBarcodeInfo(null);
+
     try {
-      // First check local products list for fast instant lookup
-      const localMatch = products.find(p => p.barcode && p.barcode.toUpperCase() === cleanCode);
+      // First check local products list for fast instant exact barcode lookup
+      const localMatch = products.find(p => p.barcode && p.barcode.trim().toUpperCase() === cleanCode);
       if (localMatch) {
+        if (!localMatch.isActive) {
+          setInactiveBarcodeInfo({ barcode: cleanCode, productName: localMatch.name });
+          return;
+        }
         addScannedProductToCart(localMatch);
         return;
       }
 
-      // Backend fast indexed lookup
+      // Backend fast indexed lookup strictly scoped to authenticated shop
       const foundProduct = await api.getProductByBarcode(cleanCode);
       if (foundProduct && foundProduct.id) {
+        if (!foundProduct.isActive) {
+          setInactiveBarcodeInfo({ barcode: cleanCode, productName: foundProduct.name });
+          return;
+        }
         addScannedProductToCart(foundProduct);
       } else {
         setNotFoundBarcode(cleanCode);
       }
     } catch (err: any) {
+      if (err?.status === 400 && (err?.inactive || err?.message?.includes('inactive') || err?.errorBody?.inactive)) {
+        setInactiveBarcodeInfo({
+          barcode: cleanCode,
+          productName: err?.errorBody?.productName || err?.productName
+        });
+        return;
+      }
       console.error('Barcode lookup error:', err);
       setNotFoundBarcode(cleanCode);
     }
@@ -358,6 +381,14 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   const handleGenerateBill = async () => {
     if (items.length === 0) return alert('Please add at least one item');
     if (isSubmitting) return;
+
+    // Pre-validate that no inactive product is in the bill
+    for (const item of items) {
+      const prod = products.find(p => p.id === item.productId);
+      if (prod && !prod.isActive) {
+        return alert(`Cannot bill "${prod.name}" because it is inactive. Please activate it before billing.`);
+      }
+    }
     
     // Safety check: Ensure backend connection is alive before posting critical sale data
     if (connectionState !== 'ready') {
@@ -882,6 +913,40 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
         />
       )}
 
+      {/* Inactive Product Barcode Alert Modal */}
+      {inactiveBarcodeInfo && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center space-y-4 border border-slate-100 animate-fadeIn">
+            <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Inactive Product</h3>
+              <p className="text-xs text-amber-700 font-bold mt-1">
+                This product is inactive. Activate it before billing.
+              </p>
+              {inactiveBarcodeInfo.productName && (
+                <p className="text-xs text-slate-500 mt-1 font-semibold">
+                  {inactiveBarcodeInfo.productName}
+                </p>
+              )}
+            </div>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <span className="block text-[10px] text-slate-400 font-bold uppercase">Barcode Value</span>
+              <span className="font-mono text-sm font-extrabold text-slate-800">{inactiveBarcodeInfo.barcode}</span>
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={() => setInactiveBarcodeInfo(null)}
+                className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-colors shadow-xs"
+              >
+                OK, Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Product Not Found Modal */}
       {notFoundBarcode && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex justify-center items-center p-4">
@@ -891,7 +956,7 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
             </div>
             <div>
               <h3 className="text-lg font-bold text-slate-800">Product Not Found</h3>
-              <p className="text-xs text-slate-500 mt-1">This barcode is not linked to any product in your shop.</p>
+              <p className="text-xs text-slate-500 mt-1">Product not found for this barcode.</p>
             </div>
             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
               <span className="block text-[10px] text-slate-400 font-bold uppercase">Barcode Value</span>

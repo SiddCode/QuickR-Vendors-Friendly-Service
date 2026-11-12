@@ -3,6 +3,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import {
+  APPROVED_STAGING_TARGET,
+  sanitizeMongoErrorText,
+  parseMongoUriInfo,
+  parseHostAllowlist,
+  extractActualConnectionMetadata,
+  isProductionLikeHostname
+} from '../utils/mongoSafety.js';
 import { connectDB } from '../config/database.js';
 import { Shop } from '../models/Shop.js';
 import { Sale } from '../models/Sale.js';
@@ -12,6 +20,8 @@ import {
   detectDuplicateInvoiceNumbers,
   ensureInvoiceCounterInitialized
 } from '../services/invoiceCounterService.js';
+
+export { sanitizeMongoErrorText as sanitizeSensitiveText, parseHostAllowlist };
 
 function isExactShopInvoiceIndex(idx) {
   if (!idx || !idx.key || typeof idx.key !== 'object') return false;
@@ -37,19 +47,6 @@ async function readSaleIndexesSafe(collection) {
   }
 }
 
-/**
- * Scrubs MongoDB connection strings and embedded credentials from log/error strings.
- */
-export function sanitizeSensitiveText(input, knownSecretUri = '') {
-  let out = typeof input === 'string' ? input : String(input || '');
-  if (knownSecretUri && knownSecretUri.trim()) {
-    out = out.split(knownSecretUri.trim()).join('[REDACTED_URI]');
-  }
-  return out
-    .replace(/mongodb(?:\+srv)?:\/\/[^\s"'`]+/gi, 'mongodb***://[REDACTED_URI]')
-    .replace(/([?&](?:password|pwd|authSource|replicaSet|tlsCAFile)=)[^&\s]+/gi, '$1[REDACTED]');
-}
-
 function readFlagValue(argv, index, raw, flagName) {
   const prefix = `--${flagName}=`;
   if (raw.startsWith(prefix)) {
@@ -67,18 +64,10 @@ function readFlagValue(argv, index, raw, flagName) {
   return null;
 }
 
-export function parseHostAllowlist(rawList) {
-  if (typeof rawList !== 'string' || !rawList.trim()) return new Set();
-  return new Set(
-    rawList
-      .split(',')
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
 /**
- * Parses CLI flags cleanly (supports both --flag=value and --flag value forms).
+ * Strictly parses CLI flags (--flag=value and --flag value forms).
+ * Rejects every unknown, duplicate, or malformed flag (such as --dryrun or --dry-run=false)
+ * so typos can never silently turn DRY-RUN into APPLY mode.
  */
 export function parseMigrationArgs(argv = []) {
   const args = {
@@ -88,28 +77,46 @@ export function parseMigrationArgs(argv = []) {
     environment: null,
     envFile: null,
     confirmDb: null,
-    confirmHost: null
+    confirmHost: null,
+    confirmPort: null
   };
+
+  const booleanFlags = new Set(['--dry-run', '--init-counters-only', '--confirm-production']);
+  const seenFlags = new Set();
 
   for (let i = 0; i < argv.length; i++) {
     const raw = String(argv[i] || '').trim();
     if (!raw) continue;
 
     if (raw === '--dry-run') {
+      if (seenFlags.has('--dry-run')) throw new Error('Duplicate flag: "--dry-run".');
+      seenFlags.add('--dry-run');
       args.isDryRun = true;
       continue;
     }
     if (raw === '--init-counters-only') {
+      if (seenFlags.has('--init-counters-only')) throw new Error('Duplicate flag: "--init-counters-only".');
+      seenFlags.add('--init-counters-only');
       args.initCountersOnly = true;
       continue;
     }
     if (raw === '--confirm-production') {
+      if (seenFlags.has('--confirm-production')) throw new Error('Duplicate flag: "--confirm-production".');
+      seenFlags.add('--confirm-production');
       args.confirmProduction = true;
       continue;
     }
 
+    for (const boolName of booleanFlags) {
+      if (raw.startsWith(`${boolName}=`)) {
+        throw new Error(`Malformed CLI flag "${raw}": "${boolName}" is a boolean flag and does not accept a value.`);
+      }
+    }
+
     const envFlag = readFlagValue(argv, i, raw, 'environment');
     if (envFlag) {
+      if (seenFlags.has('--environment')) throw new Error('Duplicate flag: "--environment".');
+      seenFlags.add('--environment');
       args.environment = envFlag.value;
       i = envFlag.nextIndex;
       continue;
@@ -117,6 +124,8 @@ export function parseMigrationArgs(argv = []) {
 
     const envFileFlag = readFlagValue(argv, i, raw, 'env-file');
     if (envFileFlag) {
+      if (seenFlags.has('--env-file')) throw new Error('Duplicate flag: "--env-file".');
+      seenFlags.add('--env-file');
       args.envFile = envFileFlag.value;
       i = envFileFlag.nextIndex;
       continue;
@@ -124,6 +133,8 @@ export function parseMigrationArgs(argv = []) {
 
     const dbFlag = readFlagValue(argv, i, raw, 'confirm-db');
     if (dbFlag) {
+      if (seenFlags.has('--confirm-db')) throw new Error('Duplicate flag: "--confirm-db".');
+      seenFlags.add('--confirm-db');
       args.confirmDb = dbFlag.value;
       i = dbFlag.nextIndex;
       continue;
@@ -131,42 +142,45 @@ export function parseMigrationArgs(argv = []) {
 
     const hostFlag = readFlagValue(argv, i, raw, 'confirm-host');
     if (hostFlag) {
+      if (seenFlags.has('--confirm-host')) throw new Error('Duplicate flag: "--confirm-host".');
+      seenFlags.add('--confirm-host');
       args.confirmHost = hostFlag.value;
       i = hostFlag.nextIndex;
       continue;
     }
+
+    const portFlag = readFlagValue(argv, i, raw, 'confirm-port');
+    if (portFlag) {
+      if (seenFlags.has('--confirm-port')) throw new Error('Duplicate flag: "--confirm-port".');
+      seenFlags.add('--confirm-port');
+      if (!/^\d+$/.test(portFlag.value)) {
+        throw new Error(`Invalid --confirm-port="${portFlag.value}". Expected an integer port between 1 and 65535.`);
+      }
+      const parsedPort = Number.parseInt(portFlag.value, 10);
+      if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+        throw new Error(`Invalid --confirm-port="${portFlag.value}". Port must be between 1 and 65535.`);
+      }
+      args.confirmPort = parsedPort;
+      i = portFlag.nextIndex;
+      continue;
+    }
+
+    if (/^--?dry[-_]?run/i.test(raw) || raw === '-dryrun' || raw === '--dry') {
+      throw new Error(`Malformed CLI flag "${raw}". Use exact "--dry-run" flag.`);
+    }
+
+    throw new Error(`Unknown or unsupported CLI argument: "${raw}".`);
   }
 
   return args;
 }
 
 /**
- * Extracts exact hostname strings exposed by the connected Mongoose/MongoDB client
- * (supports both standard single/replica-set hosts and resolved Atlas mongodb+srv hosts)
+ * Extracts exact hostname and port sets exposed by the connected Mongoose/MongoDB client
  * without ever using substring matching.
  */
 export function extractActualHosts(conn) {
-  const hostSet = new Set();
-  const primaryHost = typeof conn?.connection?.host === 'string' ? conn.connection.host.trim() : '';
-  if (primaryHost) hostSet.add(primaryHost.toLowerCase());
-
-  const clientOpts = conn?.connection?.client?.s?.options;
-  const srvHost = typeof clientOpts?.srvHost === 'string' ? clientOpts.srvHost.trim() : '';
-  if (srvHost) hostSet.add(srvHost.toLowerCase());
-
-  if (Array.isArray(clientOpts?.hosts)) {
-    for (const h of clientOpts.hosts) {
-      if (typeof h?.host === 'string' && h.host.trim()) {
-        hostSet.add(h.host.trim().toLowerCase());
-      }
-    }
-  }
-
-  return {
-    primaryHost: primaryHost || srvHost || '',
-    srvHost,
-    allHosts: hostSet
-  };
+  return extractActualConnectionMetadata(conn);
 }
 
 /**
@@ -342,23 +356,35 @@ export async function runInvoiceCounterMigration({
   return { exitCode: 0, summary };
 }
 
-function defaultLoadEnvFile(envFilePath) {
+function defaultLoadEnvFile(envFilePath, targetEnv = process.env) {
   const resolved = path.resolve(envFilePath);
   if (!fs.existsSync(resolved)) {
     throw new Error(`Explicit --env-file path does not exist: ${envFilePath}`);
   }
-  const res = dotenv.config({ path: resolved, override: false });
-  if (res.error) {
-    throw new Error(`Failed to load --env-file (${envFilePath}): ${res.error.message}`);
+  let parsed;
+  try {
+    parsed = dotenv.parse(fs.readFileSync(resolved));
+  } catch (err) {
+    throw new Error(`Failed to load --env-file (${envFilePath}): ${err.message}`);
   }
+
+  const addedKeys = [];
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!Object.prototype.hasOwnProperty.call(targetEnv, key)) {
+      targetEnv[key] = value;
+      addedKeys.push(key);
+    }
+  }
+  return addedKeys;
 }
 
 /**
  * Full CLI/environment orchestrator enforcing dedicated QUICKR_MIGRATION_MONGODB_URI,
  * explicit --env-file (never implicit backend/.env), --environment=staging|production,
- * --confirm-db, --confirm-host, QUICKR_PRODUCTION_MONGO_HOSTS allowlist checks,
- * --confirm-production (for --environment=production apply), pre-operation banner,
- * credential-safe logging, and guaranteed connection cleanup before returning exit code.
+ * --confirm-db, --confirm-host, --confirm-port, mandatory non-empty
+ * QUICKR_PRODUCTION_MONGO_HOSTS allowlist for production, locked staging endpoint
+ * (127.0.0.1:27018/quickr_staging, non-SRV), --confirm-production (for production apply),
+ * pre-operation banner, credential-safe logging, and guaranteed cleanup on all exit paths.
  */
 export async function executeMigrationCli({
   argv = [],
@@ -375,6 +401,7 @@ export async function executeMigrationCli({
 } = {}) {
   const hadOriginalMongoUri = Object.prototype.hasOwnProperty.call(env, 'MONGODB_URI');
   const originalMongoUri = env.MONGODB_URI;
+  const addedEnvKeys = [];
   let rawMigrationUri = '';
   let conn = null;
 
@@ -382,7 +409,10 @@ export async function executeMigrationCli({
     const args = parseMigrationArgs(argv);
 
     if (args.envFile) {
-      loadEnvFn(args.envFile);
+      const loadedKeys = loadEnvFn(args.envFile, env);
+      if (Array.isArray(loadedKeys)) {
+        addedEnvKeys.push(...loadedKeys);
+      }
     }
 
     rawMigrationUri = typeof env.QUICKR_MIGRATION_MONGODB_URI === 'string'
@@ -396,10 +426,9 @@ export async function executeMigrationCli({
       return { exitCode: 1 };
     }
 
-    if (!/^mongodb(\+srv)?:\/\/\S+/i.test(rawMigrationUri)) {
-      logger.error(
-        '[ABORTED] QUICKR_MIGRATION_MONGODB_URI must be a valid mongodb:// or mongodb+srv:// connection string.'
-      );
+    const uriInfo = parseMongoUriInfo(rawMigrationUri);
+    if (!uriInfo.valid) {
+      logger.error(`[ABORTED] Invalid QUICKR_MIGRATION_MONGODB_URI: ${uriInfo.reason}`);
       return { exitCode: 1 };
     }
 
@@ -423,34 +452,95 @@ export async function executeMigrationCli({
       return { exitCode: 1 };
     }
 
+    if (/[:/@\s]/.test(args.confirmHost)) {
+      logger.error(
+        `[ABORTED] Invalid --confirm-host="${args.confirmHost}". Specify hostname only (use --confirm-port for TCP port).`
+      );
+      return { exitCode: 1 };
+    }
+
+    if (args.confirmPort === null) {
+      logger.error('[ABORTED] Missing required target confirmation flag: --confirm-port=<expectedMongoPort>.');
+      return { exitCode: 1 };
+    }
+
     const nodeEnv = typeof env.NODE_ENV === 'string' && env.NODE_ENV.trim() ? env.NODE_ENV.trim() : 'unset';
     const isTargetProduction = args.environment === 'production';
+    const expectedHostLower = args.confirmHost.toLowerCase();
+    const expectedPort = args.confirmPort;
 
     if (nodeEnv === 'production' && !isTargetProduction) {
       logger.error('[ABORTED] NODE_ENV=production conflicts with --environment=staging.');
       return { exitCode: 1 };
     }
 
-    if (isTargetProduction && !args.isDryRun && !args.confirmProduction) {
-      logger.error(
-        '[ABORTED] Production apply mode (--environment=production without --dry-run) requires --confirm-production.'
-      );
-      return { exitCode: 1 };
-    }
-
     const prodHostAllowlist = parseHostAllowlist(env.QUICKR_PRODUCTION_MONGO_HOSTS);
-    const expectedHostLower = args.confirmHost.toLowerCase();
 
-    if (prodHostAllowlist.size > 0) {
-      if (!isTargetProduction && prodHostAllowlist.has(expectedHostLower)) {
+    if (!isTargetProduction) {
+      if (uriInfo.isSrv) {
+        logger.error('[ABORTED] Staging migration strictly rejects MongoDB Atlas SRV (mongodb+srv://) connections.');
+        return { exitCode: 1 };
+      }
+
+      if ([...uriInfo.hostnames].some((h) => isProductionLikeHostname(h, prodHostAllowlist))) {
+        logger.error('[ABORTED] Staging migration rejects Atlas/production host in QUICKR_MIGRATION_MONGODB_URI.');
+        return { exitCode: 1 };
+      }
+
+      if (
+        uriInfo.hosts.length !== 1 ||
+        uriInfo.hosts[0].host !== APPROVED_STAGING_TARGET.host ||
+        uriInfo.hosts[0].port !== APPROVED_STAGING_TARGET.port ||
+        uriInfo.dbName !== APPROVED_STAGING_TARGET.database
+      ) {
         logger.error(
-          `[ABORTED] Host "${args.confirmHost}" is listed in QUICKR_PRODUCTION_MONGO_HOSTS and cannot be targeted with --environment=staging.`
+          `[ABORTED] Staging migration URI must target only ${APPROVED_STAGING_TARGET.host}:${APPROVED_STAGING_TARGET.port}/${APPROVED_STAGING_TARGET.database}.`
         );
         return { exitCode: 1 };
       }
-      if (isTargetProduction && !prodHostAllowlist.has(expectedHostLower)) {
+
+      if (
+        expectedHostLower !== APPROVED_STAGING_TARGET.host ||
+        expectedPort !== APPROVED_STAGING_TARGET.port ||
+        args.confirmDb !== APPROVED_STAGING_TARGET.database
+      ) {
+        logger.error(
+          `[ABORTED] Staging migration rejects unapproved target parameters. Required: --confirm-host=${APPROVED_STAGING_TARGET.host} --confirm-port=${APPROVED_STAGING_TARGET.port} --confirm-db=${APPROVED_STAGING_TARGET.database}.`
+        );
+        return { exitCode: 1 };
+      }
+    } else {
+      if (prodHostAllowlist.size === 0) {
+        logger.error(
+          '[ABORTED] Production target (--environment=production) requires non-empty QUICKR_PRODUCTION_MONGO_HOSTS allowlist (fail closed).'
+        );
+        return { exitCode: 1 };
+      }
+
+      if (!prodHostAllowlist.has(expectedHostLower)) {
         logger.error(
           `[ABORTED] Host "${args.confirmHost}" is NOT in configured QUICKR_PRODUCTION_MONGO_HOSTS allowlist for --environment=production.`
+        );
+        return { exitCode: 1 };
+      }
+
+      if (![...uriInfo.hostnames].every((h) => prodHostAllowlist.has(h))) {
+        logger.error(
+          '[ABORTED] QUICKR_MIGRATION_MONGODB_URI contains hostname not listed in QUICKR_PRODUCTION_MONGO_HOSTS allowlist.'
+        );
+        return { exitCode: 1 };
+      }
+
+      if (uriInfo.dbName && uriInfo.dbName !== args.confirmDb) {
+        logger.error(
+          `[ABORTED] QUICKR_MIGRATION_MONGODB_URI database "${uriInfo.dbName}" does not match --confirm-db="${args.confirmDb}".`
+        );
+        return { exitCode: 1 };
+      }
+
+      if (!args.isDryRun && !args.confirmProduction) {
+        logger.error(
+          '[ABORTED] Production apply mode (--environment=production without --dry-run) requires --confirm-production.'
         );
         return { exitCode: 1 };
       }
@@ -469,8 +559,8 @@ export async function executeMigrationCli({
       return { exitCode: 1 };
     }
 
-    const actualDb = typeof conn.connection.name === 'string' ? conn.connection.name.trim() : '';
     const hostInfo = extractActualHosts(conn);
+    const actualDb = hostInfo.dbName;
 
     if (!actualDb || actualDb !== args.confirmDb) {
       logger.error(
@@ -489,15 +579,47 @@ export async function executeMigrationCli({
       return { exitCode: 1 };
     }
 
-    if (prodHostAllowlist.size > 0) {
-      const matchesProdAllowlist = [...hostInfo.allHosts].some((h) => prodHostAllowlist.has(h));
-      if (!isTargetProduction && matchesProdAllowlist) {
+    if (hostInfo.allPorts.size === 0 || !hostInfo.allPorts.has(expectedPort)) {
+      const portDisplay = hostInfo.allPorts.size > 0 ? [...hostInfo.allPorts].join(',') : 'unknown';
+      logger.error(
+        `[ABORTED] Port confirmation mismatch: expected "--confirm-port=${expectedPort}", connected port "${portDisplay}".`
+      );
+      return { exitCode: 1 };
+    }
+
+    if (!isTargetProduction) {
+      if (hostInfo.srvHost) {
+        logger.error('[ABORTED] Connected cluster uses SRV host, which is forbidden in staging.');
+        return { exitCode: 1 };
+      }
+
+      if (
+        actualDb !== APPROVED_STAGING_TARGET.database ||
+        hostInfo.allHosts.size !== 1 ||
+        !hostInfo.allHosts.has(APPROVED_STAGING_TARGET.host) ||
+        hostInfo.allPorts.size !== 1 ||
+        !hostInfo.allPorts.has(APPROVED_STAGING_TARGET.port)
+      ) {
         logger.error(
-          '[ABORTED] Connected cluster/host matches QUICKR_PRODUCTION_MONGO_HOSTS and cannot be run with --environment=staging.'
+          `[ABORTED] Connected staging endpoint mismatch: expected ${APPROVED_STAGING_TARGET.host}:${APPROVED_STAGING_TARGET.port}/${APPROVED_STAGING_TARGET.database}.`
         );
         return { exitCode: 1 };
       }
-      if (isTargetProduction && !matchesProdAllowlist) {
+
+      if ([...hostInfo.allHosts].some((h) => isProductionLikeHostname(h, prodHostAllowlist))) {
+        logger.error(
+          '[ABORTED] Connected cluster/host matches Atlas or QUICKR_PRODUCTION_MONGO_HOSTS and cannot be run with --environment=staging.'
+        );
+        return { exitCode: 1 };
+      }
+    } else {
+      const matchesProdAllowlist = [...hostInfo.allHosts].some((h) => prodHostAllowlist.has(h));
+      if (
+        prodHostAllowlist.size === 0 ||
+        !prodHostAllowlist.has(expectedHostLower) ||
+        !matchesProdAllowlist ||
+        (hostInfo.srvHost && !prodHostAllowlist.has(hostInfo.srvHost.toLowerCase()))
+      ) {
         logger.error(
           '[ABORTED] Connected cluster/host does not match configured QUICKR_PRODUCTION_MONGO_HOSTS allowlist.'
         );
@@ -509,7 +631,9 @@ export async function executeMigrationCli({
     const prodConfirmStatus = isTargetProduction
       ? (args.isDryRun ? 'NOT_REQUIRED_DRY_RUN' : 'CONFIRMED')
       : 'NOT_APPLICABLE_STAGING';
-    const allowlistStatus = prodHostAllowlist.size > 0 ? 'VERIFIED' : 'NOT_CONFIGURED';
+    const allowlistStatus = isTargetProduction
+      ? 'VERIFIED'
+      : (prodHostAllowlist.size > 0 ? 'VERIFIED_LOCAL_STAGING' : 'LOCAL_STAGING_LOCKED');
 
     const hostDisplay = hostInfo.srvHost && hostInfo.srvHost.toLowerCase() !== hostInfo.primaryHost.toLowerCase()
       ? `${hostInfo.primaryHost} (SRV: ${hostInfo.srvHost})`
@@ -517,11 +641,12 @@ export async function executeMigrationCli({
 
     logger.log('\n=== QuickR Migration Target Identification Banner ===');
     logger.log(`  Sanitized Host      : ${hostDisplay}`);
+    logger.log(`  Port                : ${expectedPort}`);
     logger.log(`  Database Name       : ${actualDb}`);
     logger.log(`  Target Environment  : ${args.environment}`);
     logger.log(`  NODE_ENV            : ${nodeEnv}`);
     logger.log(`  Migration Mode      : ${modeLabel}`);
-    logger.log(`  Confirmation Status : DB=MATCHED (${actualDb}), HOST=MATCHED, ENV=${args.environment}, PRODUCTION=${prodConfirmStatus}, ALLOWLIST=${allowlistStatus}`);
+    logger.log(`  Confirmation Status : DB=MATCHED (${actualDb}), HOST=MATCHED, PORT=${expectedPort}, ENV=${args.environment}, PRODUCTION=${prodConfirmStatus}, ALLOWLIST=${allowlistStatus}`);
     logger.log('====================================================\n');
 
     const result = await migrateFn({
@@ -531,14 +656,18 @@ export async function executeMigrationCli({
     });
     return result;
   } catch (err) {
-    const safeMsg = sanitizeSensitiveText(err?.message || String(err), rawMigrationUri);
-    logger.error(`Migration failed: ${safeMsg}`);
+    const safeMsg = sanitizeMongoErrorText(err?.message || String(err), rawMigrationUri);
+    logger.error(`[ABORTED] Migration failed: ${safeMsg}`);
     return { exitCode: 1 };
   } finally {
     if (hadOriginalMongoUri) {
       env.MONGODB_URI = originalMongoUri;
     } else {
       delete env.MONGODB_URI;
+    }
+
+    for (const key of addedEnvKeys) {
+      delete env[key];
     }
 
     if (conn) {

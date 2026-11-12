@@ -1,14 +1,35 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
-import { connectDB } from '../config/database.js';
+import {
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  sanitizeMongoErrorText
+} from '../utils/mongoSafety.js';
 import { Customer } from '../models/Customer.js';
 import { Product } from '../models/Product.js';
 import { Enquiry } from '../models/Enquiry.js';
 import { FollowUp } from '../models/FollowUp.js';
 import { getISTDayBounds, calculateScheduledDateIST } from '../utils/date.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const testWorkTodayReliability = async () => {
   console.log('🧪 Starting Today\'s Work Reliability & Performance Tests...');
-  await connectDB();
+  const safeTarget = assertSafeTestDatabaseConfig({
+    scriptName: 'testWorkTodayReliability.js',
+    argv: process.argv.slice(2),
+    suggestedTestDb: 'quickr_test',
+    backendEnvPath: path.resolve(__dirname, '../.env'),
+    disallowSharedDevDb: true,
+    allowStagingDbIfConfirmed: true
+  });
+
+  const conn = await mongoose.connect(safeTarget.uri, { serverSelectionTimeoutMS: 5000 });
+  assertSafeConnectedTestTarget(conn, safeTarget, { operation: 'work-today reliability test suite' });
+
+  try {
 
   const shopId = 'test-shop-work-today';
 
@@ -107,11 +128,14 @@ const testWorkTodayReliability = async () => {
   await Product.deleteMany({ shopId });
   await Enquiry.deleteMany({ shopId });
   await FollowUp.deleteMany({ shopId });
+  } finally {
+    await mongoose.disconnect().catch(() => {});
+  }
 
   process.exit(0);
 };
 
 testWorkTodayReliability().catch(err => {
-  console.error('Test exception:', err);
+  console.error('Test exception:', sanitizeMongoErrorText(err?.message || String(err)));
   process.exit(1);
 });

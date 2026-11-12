@@ -1,15 +1,31 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
+import {
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  sanitizeMongoErrorText
+} from '../utils/mongoSafety.js';
 import { Product } from '../models/Product.js';
 import { Shop } from '../models/Shop.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function runGstRegressionTests() {
   console.log('=== QUICKR GST PRICING REGRESSION SUITE ===');
 
-  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/quickr';
-  await mongoose.connect(uri);
+  const safeTarget = assertSafeTestDatabaseConfig({
+    scriptName: 'testGstPricingSuite.js',
+    argv: process.argv.slice(2),
+    suggestedTestDb: 'quickr_test',
+    backendEnvPath: path.resolve(__dirname, '../.env'),
+    disallowSharedDevDb: true,
+    allowStagingDbIfConfirmed: true
+  });
+
+  const conn = await mongoose.connect(safeTarget.uri, { serverSelectionTimeoutMS: 5000 });
+  assertSafeConnectedTestTarget(conn, safeTarget, { operation: 'GST regression test suite' });
 
   const testShopId = `TEST-SHOP-GST-${Date.now()}`;
 
@@ -142,10 +158,10 @@ async function runGstRegressionTests() {
     console.log('=========================================');
 
   } catch (err) {
-    console.error('GST REGRESSION TEST FAILED:', err);
+    console.error('GST REGRESSION TEST FAILED:', sanitizeMongoErrorText(err?.message || String(err)));
     process.exit(1);
   } finally {
-    await mongoose.disconnect();
+    await mongoose.disconnect().catch(() => {});
   }
 }
 

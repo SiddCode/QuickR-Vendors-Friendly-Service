@@ -70,6 +70,8 @@ async function buildApiError(response: Response, fallbackMsg?: string): Promise<
   (error as any).retryAfterSeconds = errorData.retryAfterSeconds;
   (error as any).retryAt = errorData.retryAt;
   (error as any).errorBody = errorData;
+  (error as any).inactive = Boolean(errorData.inactive);
+  (error as any).productName = errorData.productName;
   return error;
 }
 

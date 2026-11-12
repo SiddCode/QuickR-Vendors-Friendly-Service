@@ -16,7 +16,8 @@ export const CATEGORIES = {
 };
 
 export const Products = () => {
-  const { products, addProduct, updateProduct, deleteProduct, bulkDeleteProducts, generateProductBarcode, shopName, shopProfile } = useApp();
+  const { currentUser, products, addProduct, updateProduct, deleteProduct, bulkDeleteProducts, generateProductBarcode, shopName, shopProfile } = useApp();
+  const isStaff = currentUser?.role === 'staff';
   const [searchTerm, setSearchTerm] = useState('');
   const debouncedSearch = useDebounce(searchTerm, 200);
   const [filterCategory, setFilterCategory] = useState('All');
@@ -168,7 +169,7 @@ export const Products = () => {
         gstRate: String(product.gstRate ?? 0),
         hsnCode: product.hsnCode || '',
         priceIncludesGst: !!product.priceIncludesGst,
-        isActive: product.isActive
+        isActive: product.isActive !== undefined ? Boolean(product.isActive) : true
       });
     } else {
       setEditingProduct(null);
@@ -234,15 +235,17 @@ export const Products = () => {
     };
 
     if (editingProduct) {
-      await updateProduct(editingProduct.id, payload);
+      const updated = await updateProduct(editingProduct.id, payload);
+      if (updated) {
+        setIsModalOpen(false);
+      }
     } else {
       const createdProd = await addProduct(payload);
       if (createdProd) {
         setNewlyCreatedProduct(createdProd);
+        setIsModalOpen(false);
       }
     }
-
-    setIsModalOpen(false);
   };
 
   const handleDeactivate = async (id: string) => {
@@ -678,6 +681,59 @@ export const Products = () => {
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              {/* Product Status (Active / Inactive) */}
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700">Product Status</label>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {formData.isActive 
+                        ? 'Active — Available for billing and barcode scanning.' 
+                        : 'Inactive (Disabled) — Hidden from billing and blocked from cart.'}
+                    </p>
+                  </div>
+                  {isStaff ? (
+                    <span className={`self-start sm:self-auto px-3 py-1 rounded-lg text-xs font-bold ${formData.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                      {formData.isActive ? 'Active' : 'Inactive'} (Owner only)
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, isActive: true }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          formData.isActive
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Active
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, isActive: false }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          !formData.isActive
+                            ? 'bg-rose-600 text-white shadow-xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Inactive
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {editingProduct?.barcode && (
+                <div className="flex items-center justify-between px-3.5 py-2 bg-indigo-50/60 border border-indigo-100 rounded-xl text-xs">
+                  <span className="text-slate-600 font-semibold">Registered Barcode</span>
+                  <span className="font-mono font-bold text-indigo-900 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                    {editingProduct.barcode}
+                  </span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1">Product Name *</label>
                 <input 

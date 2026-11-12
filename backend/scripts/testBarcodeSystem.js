@@ -1,11 +1,30 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
+import {
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  sanitizeMongoErrorText
+} from '../utils/mongoSafety.js';
 import { Product } from '../models/Product.js';
 import { generateUniqueBarcode } from '../utils/barcode.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 async function testBarcodeSystem() {
-  const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/quickr';
-  console.log('Connecting to MongoDB...');
-  await mongoose.connect(MONGO_URI);
+  const safeTarget = assertSafeTestDatabaseConfig({
+    scriptName: 'testBarcodeSystem.js',
+    argv: process.argv.slice(2),
+    suggestedTestDb: 'quickr_test',
+    backendEnvPath: path.resolve(__dirname, '../.env'),
+    disallowSharedDevDb: true,
+    allowStagingDbIfConfirmed: true
+  });
+
+  console.log('Connecting to isolated test MongoDB...');
+  const conn = await mongoose.connect(safeTarget.uri, { serverSelectionTimeoutMS: 5000 });
+  assertSafeConnectedTestTarget(conn, safeTarget, { operation: 'Product.syncIndexes and barcode tests' });
   console.log('Connected!');
 
   const shopIdA = 'TEST-SHOP-A-' + Date.now();
@@ -87,6 +106,6 @@ async function testBarcodeSystem() {
 }
 
 testBarcodeSystem().catch(err => {
-  console.error('Test failed:', err);
+  console.error('Test failed:', sanitizeMongoErrorText(err?.message || String(err)));
   process.exit(1);
 });

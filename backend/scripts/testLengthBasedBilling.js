@@ -1,22 +1,32 @@
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.join(__dirname, '../.env') });
-
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  sanitizeMongoErrorText
+} from '../utils/mongoSafety.js';
 import { Shop } from '../models/Shop.js';
 import { Product } from '../models/Product.js';
 import { Sale } from '../models/Sale.js';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/quickr';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 async function runTests() {
   console.log('=== RUNNING LENGTH-BASED BILLING VERIFICATION TESTS ===');
-  await mongoose.connect(MONGODB_URI);
-  console.log('Connected to MongoDB');
+  const safeTarget = assertSafeTestDatabaseConfig({
+    scriptName: 'testLengthBasedBilling.js',
+    argv: process.argv.slice(2),
+    suggestedTestDb: 'quickr_test',
+    backendEnvPath: path.resolve(__dirname, '../.env'),
+    disallowSharedDevDb: true,
+    allowStagingDbIfConfirmed: true
+  });
+
+  const conn = await mongoose.connect(safeTarget.uri, { serverSelectionTimeoutMS: 5000 });
+  assertSafeConnectedTestTarget(conn, safeTarget, { operation: 'length-based billing test suite' });
+  console.log('Connected to isolated test MongoDB');
 
   const testShopId = `TEST-SHOP-${Date.now()}`;
 
@@ -138,10 +148,10 @@ async function runTests() {
     console.log('ALL LENGTH-BASED BILLING VERIFICATION TESTS PASSED!');
     console.log('======================================================\n');
   } catch (err) {
-    console.error('TEST FAILED:', err);
+    console.error('TEST FAILED:', sanitizeMongoErrorText(err?.message || String(err)));
     process.exit(1);
   } finally {
-    await mongoose.disconnect();
+    await mongoose.disconnect().catch(() => {});
   }
 }
 

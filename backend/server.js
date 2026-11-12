@@ -1350,11 +1350,42 @@ app.get('/api/products/:id', requireAuth, async (req, res) => {
 
 app.get('/api/products/barcode/:barcode', requireAuth, async (req, res) => {
   try {
+    const shopId = req.user?.shopId;
+    if (!shopId) return res.status(403).json({ error: 'Shop authorization required' });
+
     const rawBarcode = req.params.barcode ? String(req.params.barcode).trim() : '';
     if (!rawBarcode) return res.status(400).json({ error: 'Barcode parameter required' });
 
-    const prod = await Product.findOne({ shopId: req.user.shopId, barcode: rawBarcode, isActive: true }).lean();
-    if (!prod) return res.status(404).json({ error: 'Product not found for scanned barcode' });
+    // Exact barcode matching strictly scoped to the authenticated user's shopId
+    const targetBarcodes = [rawBarcode];
+    const upper = rawBarcode.toUpperCase();
+    if (upper !== rawBarcode) {
+      targetBarcodes.push(upper);
+    }
+
+    const prod = await Product.findOne({
+      shopId,
+      barcode: targetBarcodes.length === 1 ? targetBarcodes[0] : { $in: targetBarcodes }
+    }).lean();
+
+    if (!prod) {
+      return res.status(404).json({
+        error: 'Product not found for this barcode.',
+        barcode: rawBarcode,
+        found: false
+      });
+    }
+
+    if (!prod.isActive) {
+      return res.status(400).json({
+        error: 'This product is inactive. Activate it before billing.',
+        barcode: rawBarcode,
+        found: true,
+        inactive: true,
+        productId: prod.id,
+        productName: prod.name
+      });
+    }
 
     res.json(prod);
   } catch (err) {
@@ -1441,7 +1472,7 @@ app.put('/api/products/:id', requireAuth, async (req, res) => {
     const prod = await Product.findOne({ id: req.params.id, shopId: req.user.shopId });
     if (!prod) return res.status(404).json({ error: 'Product not found' });
     
-    if (name) prod.name = name;
+    if (name) prod.name = String(name).trim();
     if (category) prod.category = category;
     if (subcategory !== undefined) prod.subcategory = subcategory;
     if (sellingPrice !== undefined) prod.sellingPrice = sellingPrice;
@@ -1450,7 +1481,13 @@ app.put('/api/products/:id', requireAuth, async (req, res) => {
     if (colors) prod.colors = colors;
     if (availability !== undefined) prod.availability = availability;
     if (description !== undefined) prod.description = description;
-    if (isActive !== undefined) prod.isActive = isActive;
+    if (isActive !== undefined) {
+      const boolActive = (isActive === true || isActive === 'true');
+      if (req.user.role === 'staff' && boolActive !== prod.isActive) {
+        return res.status(403).json({ error: 'Staff accounts are not authorized to change product activation status.' });
+      }
+      prod.isActive = boolActive;
+    }
     if (measurementType !== undefined) {
       prod.measurementType = measurementType === 'length' ? 'length' : 'piece';
     }
@@ -3191,8 +3228,20 @@ app.post('/api/sales', requireAuth, async (req, res) => {
 
     for (const item of items) {
       const dbProd = item.productId ? productMap.get(String(item.productId)) : null;
-      if (item.productId && !dbProd) {
-        return res.status(404).json({ error: `Product ${item.productName || item.productId} not found` });
+      if (item.productId) {
+        if (!dbProd) {
+          return res.status(404).json({ error: `Product ${item.productName || item.productId} not found` });
+        }
+        if (dbProd.shopId !== shopId) {
+          return res.status(403).json({ error: `Product ${dbProd.name || item.productId} does not belong to this shop` });
+        }
+        if (!dbProd.isActive) {
+          return res.status(400).json({
+            error: `Cannot complete sale: "${dbProd.name}" is inactive. Activate it before billing.`,
+            inactive: true,
+            productId: dbProd.id
+          });
+        }
       }
 
       const rawQty = Number(item.quantity);

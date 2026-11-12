@@ -5,6 +5,9 @@
  * invoiceCounterService.js without connecting to or modifying any real MongoDB.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 process.env.QUICKR_TEST_IMPORT = 'true';
 
@@ -14,6 +17,14 @@ const {
   parseMigrationArgs,
   sanitizeSensitiveText
 } = await import('./migrateInvoiceCounters.js');
+const { connectDB } = await import('../config/database.js');
+const {
+  sanitizeMongoErrorText,
+  parseMongoUriInfo,
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  inspectEnvFileForProductionOverrides
+} = await import('../utils/mongoSafety.js');
 const { InvoiceCounter } = await import('../models/InvoiceCounter.js');
 const { Sale } = await import('../models/Sale.js');
 const {
@@ -477,16 +488,16 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // ENV GUARD, TARGET CONFIRMATION, REDACTION & CLEANUP TESTS (Section 6: 1-12)
+  // ENV GUARD, TARGET CONFIRMATION, REDACTION & CLEANUP TESTS
   // ---------------------------------------------------------------------------
-  console.log('\n  --- CLI Environment & Target Confirmation Guard Tests ---');
+  console.log('\n  --- CLI Environment, Port, Allowlist & Target Confirmation Guard Tests ---');
 
   await test('8. Rejects missing QUICKR_MIGRATION_MONGODB_URI even if MONGODB_URI exists and rejects implicit backend/.env', async () => {
     let connectCalled = 0;
     const logs = [];
     const env = { MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr', NODE_ENV: 'staging' };
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr', '--confirm-host=127.0.0.1'],
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
       env,
       logger: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
       connectFn: async () => { connectCalled++; return null; },
@@ -501,7 +512,7 @@ async function main() {
     let connectCalled = 0;
     const env = { QUICKR_MIGRATION_MONGODB_URI: '   \t  ', MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr' };
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr', '--confirm-host=127.0.0.1'],
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
       env,
       logger: { log() {}, error() {} },
       connectFn: async () => { connectCalled++; return null; },
@@ -515,7 +526,7 @@ async function main() {
   await test('10. Rejects missing explicit --env-file cleanly and never loads default .env automatically', async () => {
     let loadedPath = null;
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=staging_db', '--confirm-host=staging.host'],
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
       env: {}, // No QUICKR_MIGRATION_MONGODB_URI
       logger: { log() {}, error() {} },
       loadEnvFn: (p) => { loadedPath = p; },
@@ -525,21 +536,20 @@ async function main() {
     assert.equal(res.exitCode, 1);
     assert.equal(loadedPath, null);
 
-    // Explicit --env-file missing on disk rejects safely
     const resMissingFile = await executeMigrationCli({
-      argv: ['--env-file=/nonexistent/migration.env', '--environment=staging', '--dry-run', '--confirm-db=a', '--confirm-host=b'],
+      argv: ['--env-file=/nonexistent/migration.env', '--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
       env: {},
       logger: { log() {}, error() {} }
     });
     assert.equal(resMissingFile.exitCode, 1);
   });
 
-  await test('11. Missing --confirm-db rejects before any connection attempt (both dry-run and apply)', async () => {
+  await test('11. Missing --confirm-db rejects before any connection attempt', async () => {
     let connectCalled = 0;
     const logs = [];
-    const env = { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.test.mongodb.net/staging_db' };
+    const env = { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging' };
     const resDry = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-host=cluster0.test.mongodb.net'],
+      argv: ['--environment=staging', '--dry-run', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
       env,
       logger: { log() {}, error: (m) => logs.push(m) },
       connectFn: async () => { connectCalled++; return null; },
@@ -550,22 +560,24 @@ async function main() {
     assert.ok(logs.some((l) => l.includes('--confirm-db')));
   });
 
-  await test('12. Wrong --confirm-db aborts BEFORE migration queries, disconnects cleanly, and restores env.MONGODB_URI', async () => {
+  await test('12. Post-connect --confirm-db mismatch aborts BEFORE migration queries, disconnects cleanly, and restores env.MONGODB_URI', async () => {
     let migrated = false;
     let disconnected = false;
     const logs = [];
     const env = {
-      QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://adminuser:supersecret@cluster0.test.mongodb.net/prod_actual',
+      QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://adminuser:supersecret@cluster0.prod.mongodb.net/SGS',
+      QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net',
       MONGODB_URI: 'mongodb://old-app-uri/dev',
-      NODE_ENV: 'staging'
+      NODE_ENV: 'production'
     };
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=staging_expected', '--confirm-host=cluster0.test.mongodb.net'],
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
       env,
       logger: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
       setMongooseFlagsFn: () => {},
+      // Mock connection unexpectedly returns wrong database name despite matching URI
       connectFn: async () => ({
-        connection: { host: 'cluster0.test.mongodb.net', name: 'prod_actual' }
+        connection: { host: 'cluster0.prod.mongodb.net', port: 27017, name: 'other_actual_db' }
       }),
       disconnectFn: async () => { disconnected = true; },
       migrateFn: async () => { migrated = true; return { exitCode: 0 }; }
@@ -581,8 +593,8 @@ async function main() {
     let connectCalled = 0;
     const logs = [];
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=staging_db'],
-      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.test.mongodb.net/staging_db' },
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-port=27018'],
+      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging' },
       logger: { log() {}, error: (m) => logs.push(m) },
       connectFn: async () => { connectCalled++; return null; },
       disconnectFn: async () => {}
@@ -597,15 +609,19 @@ async function main() {
     let migrated = false;
     const logs = [];
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=staging_db', '--confirm-host=cluster0'], // Substring of cluster0.test.mongodb.net!
-      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.test.mongodb.net/staging_db', NODE_ENV: 'staging' },
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0', '--confirm-port=27017'], // Substring of cluster0.prod.mongodb.net
+      env: {
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS',
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net,cluster0'
+      },
       logger: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
       setMongooseFlagsFn: () => {},
       connectFn: async () => ({
         connection: {
-          host: 'ac-shard-00-00.test.mongodb.net',
-          name: 'staging_db',
-          client: { s: { options: { srvHost: 'cluster0.test.mongodb.net' } } }
+          host: 'ac-shard-00-00.prod.mongodb.net',
+          port: 27017,
+          name: 'SGS',
+          client: { s: { options: { srvHost: 'cluster0.prod.mongodb.net', hosts: [{ host: 'ac-shard-00-00.prod.mongodb.net', port: 27017 }] } } }
         }
       }),
       disconnectFn: async () => { disconnected++; },
@@ -615,15 +631,42 @@ async function main() {
     assert.equal(migrated, false);
     assert.equal(disconnected, 1);
     assert.ok(logs.some((l) => l.includes('Host confirmation mismatch')));
+
+    // Explicitly verify post-connect substring rejection directly
+    let postDisconnected = 0;
+    const logsPost = [];
+    const resPost = await executeMigrationCli({
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0', '--confirm-port=27017'],
+      env: {
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0/SGS',
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0'
+      },
+      logger: { log: (m) => logsPost.push(m), error: (m) => logsPost.push(m) },
+      setMongooseFlagsFn: () => {},
+      connectFn: async () => ({
+        connection: {
+          host: 'ac-shard-00-00.prod.mongodb.net',
+          port: 27017,
+          name: 'SGS',
+          client: { s: { options: { srvHost: 'cluster0.prod.mongodb.net' } } }
+        }
+      }),
+      disconnectFn: async () => { postDisconnected++; },
+      migrateFn: async () => ({ exitCode: 0 })
+    });
+    assert.equal(resPost.exitCode, 1);
+    assert.equal(postDisconnected, 1);
+    assert.ok(logsPost.some((l) => l.includes('Host confirmation mismatch')));
   });
 
-  await test('15. Production apply requires --confirm-production (even when NODE_ENV unset) and never infers env from DB name', async () => {
+  await test('15. Production APPLY requires --confirm-production (even when NODE_ENV unset) while production DRY-RUN works with allowlist', async () => {
     let connectCalled = 0;
     const logs = [];
     const resNoConfirm = await executeMigrationCli({
-      argv: ['--environment=production', '--confirm-db=staging_named_db', '--confirm-host=cluster0.prod.mongodb.net'],
+      argv: ['--environment=production', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
       env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/staging_named_db'
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS',
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net'
       },
       logger: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
       connectFn: async () => { connectCalled++; return null; },
@@ -633,17 +676,24 @@ async function main() {
     assert.equal(connectCalled, 0);
     assert.ok(logs.some((l) => l.includes('--confirm-production')));
 
-    // Conversely, --environment=production --dry-run succeeds cleanly without --confirm-production
     let dryMigrated = false;
     const resProdDry = await executeMigrationCli({
-      argv: ['--environment=production', '--dry-run', '--confirm-db=prod_db', '--confirm-host=cluster0.prod.mongodb.net'],
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
       env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/prod_db',
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS',
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net',
         NODE_ENV: 'production'
       },
       logger: { log() {}, error() {} },
       setMongooseFlagsFn: () => {},
-      connectFn: async () => ({ connection: { host: 'cluster0.prod.mongodb.net', name: 'prod_db' } }),
+      connectFn: async () => ({
+        connection: {
+          host: 'ac-shard-00-00.prod.mongodb.net',
+          port: 27017,
+          name: 'SGS',
+          client: { s: { options: { srvHost: 'cluster0.prod.mongodb.net', hosts: [{ host: 'ac-shard-00-00.prod.mongodb.net', port: 27017 }] } } }
+        }
+      }),
       disconnectFn: async () => {},
       migrateFn: async () => { dryMigrated = true; return { exitCode: 0 }; }
     });
@@ -651,20 +701,28 @@ async function main() {
     assert.equal(dryMigrated, true);
   });
 
-  await test('16. Correct target confirmation prints sanitized banner, enforces autoIndex=false/autoCreate=false, and runs apply', async () => {
+  await test('16. Correct production confirmation prints sanitized banner, enforces autoIndex=false/autoCreate=false, and runs apply', async () => {
     const logs = [];
     let flagsDisabled = false;
     let disconnected = false;
-    const parsedArgs = parseMigrationArgs(['--environment', 'production', '--confirm-db', 'quickr_prod', '--confirm-host', 'cluster0.prod.mongodb.net', '--confirm-production']);
+    const parsedArgs = parseMigrationArgs([
+      '--environment', 'production',
+      '--confirm-db', 'SGS',
+      '--confirm-host', 'cluster0.prod.mongodb.net',
+      '--confirm-port', '27017',
+      '--confirm-production'
+    ]);
     assert.equal(parsedArgs.environment, 'production');
-    assert.equal(parsedArgs.confirmDb, 'quickr_prod');
+    assert.equal(parsedArgs.confirmDb, 'SGS');
     assert.equal(parsedArgs.confirmHost, 'cluster0.prod.mongodb.net');
+    assert.equal(parsedArgs.confirmPort, 27017);
     assert.equal(parsedArgs.confirmProduction, true);
 
     const res = await executeMigrationCli({
-      argv: ['--environment=production', '--confirm-db=quickr_prod', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-production'],
+      argv: ['--environment=production', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017', '--confirm-production'],
       env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://dbadmin:SuperSecret99@cluster0.prod.mongodb.net/quickr_prod?retryWrites=true',
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://dbadmin:SuperSecret99@cluster0.prod.mongodb.net/SGS?retryWrites=true',
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net',
         NODE_ENV: 'production'
       },
       logger: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
@@ -672,8 +730,9 @@ async function main() {
       connectFn: async () => ({
         connection: {
           host: 'ac-abc-00-00.prod.mongodb.net',
-          name: 'quickr_prod',
-          client: { s: { options: { srvHost: 'cluster0.prod.mongodb.net' } } }
+          port: 27017,
+          name: 'SGS',
+          client: { s: { options: { srvHost: 'cluster0.prod.mongodb.net', hosts: [{ host: 'ac-abc-00-00.prod.mongodb.net', port: 27017 }] } } }
         }
       }),
       disconnectFn: async () => { disconnected = true; },
@@ -685,14 +744,15 @@ async function main() {
     assert.equal(disconnected, true);
     const joined = logs.join('\n');
     assert.ok(joined.includes('QuickR Migration Target Identification Banner'));
-    assert.ok(joined.includes('Database Name       : quickr_prod'));
+    assert.ok(joined.includes('Port                : 27017'));
+    assert.ok(joined.includes('Database Name       : SGS'));
     assert.ok(joined.includes('Target Environment  : production'));
-    assert.ok(joined.includes('NODE_ENV            : production'));
     assert.ok(joined.includes('Migration Mode      : APPLY'));
     assert.ok(joined.includes('PRODUCTION=CONFIRMED'));
+    assert.ok(joined.includes('ALLOWLIST=VERIFIED'));
   });
 
-  await test('17. Full CLI dry-run performs zero counter writes and zero index operations while keeping autoIndex/autoCreate disabled', async () => {
+  await test('17. Full CLI staging dry-run (127.0.0.1:27018/quickr_staging) performs zero counter writes and zero index operations', async () => {
     const envMock = createMockMigrationEnv({
       shops: ['SHOP-STAGE'],
       sales: [{ id: 'S-1', shopId: 'SHOP-STAGE', invoiceNumber: 'INV-000004' }]
@@ -702,14 +762,22 @@ async function main() {
     const logs = [];
 
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=staging.cluster.mongodb.net'],
+      argv: ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', '--dry-run'],
       env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://stage_user:StageSecret123@staging.cluster.mongodb.net/quickr_staging',
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage_user:StageSecret123@127.0.0.1:27018/quickr_staging?authSource=quickr_staging',
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net',
         NODE_ENV: 'staging'
       },
       logger: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
       setMongooseFlagsFn: () => { flagsDisabled = true; },
-      connectFn: async () => ({ connection: { host: 'staging.cluster.mongodb.net', name: 'quickr_staging' } }),
+      connectFn: async () => ({
+        connection: {
+          host: '127.0.0.1',
+          port: 27018,
+          name: 'quickr_staging',
+          client: { s: { options: { hosts: [{ host: '127.0.0.1', port: 27018 }] } } }
+        }
+      }),
       disconnectFn: async () => { disconnected = true; },
       migrateFn: (opts) => runInvoiceCounterMigration({
         ...opts,
@@ -726,21 +794,28 @@ async function main() {
     assert.equal(envMock.trace.drops.length, 0);
     assert.equal(envMock.trace.creates.length, 0);
     assert.equal(envMock.trace.saleMutated, false);
-    assert.ok(logs.join('\n').includes('Migration Mode      : DRY_RUN'));
+    const banner = logs.join('\n');
+    assert.ok(banner.includes('Port                : 27018'));
+    assert.ok(banner.includes('Database Name       : quickr_staging'));
+    assert.ok(banner.includes('Migration Mode      : DRY_RUN'));
   });
 
-  await test('18. Credentials and full URIs never appear in banner, normal logs, or thrown error logs', async () => {
-    const secretUri = 'mongodb+srv://secret_admin:UltraSecretPass!123@cluster0.prod.mongodb.net/quickr_prod?authSource=admin';
+  await test('18. Credentials, full URIs, and auth params never appear in banner, normal logs, or thrown error logs', async () => {
+    const secretUri = 'mongodb+srv://secret_admin:UltraSecretPass!123@cluster0.prod.mongodb.net/SGS?authSource=admin';
     assert.equal(sanitizeSensitiveText(`Failed on ${secretUri}`, secretUri), 'Failed on [REDACTED_URI]');
 
     const logs = [];
     let disconnected = false;
     const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_prod', '--confirm-host=cluster0.prod.mongodb.net'],
-      env: { QUICKR_MIGRATION_MONGODB_URI: secretUri, NODE_ENV: 'staging' },
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
+      env: {
+        QUICKR_MIGRATION_MONGODB_URI: secretUri,
+        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net',
+        NODE_ENV: 'production'
+      },
       logger: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
       setMongooseFlagsFn: () => {},
-      connectFn: async () => ({ connection: { host: 'cluster0.prod.mongodb.net', name: 'quickr_prod' } }),
+      connectFn: async () => ({ connection: { host: 'cluster0.prod.mongodb.net', port: 27017, name: 'SGS' } }),
       disconnectFn: async () => { disconnected = true; },
       migrateFn: async () => {
         throw new Error(`Driver error connecting to ${secretUri}`);
@@ -756,122 +831,424 @@ async function main() {
     assert.ok(fullLog.includes('[REDACTED_URI]'));
   });
 
-  await test('19. Connection cleanup and original env.MONGODB_URI restoration occur cleanly after target mismatch', async () => {
+  await test('19. Environment restoration and --env-file cleanup occur on ALL exit paths (mismatch, throw, and success)', async () => {
     let disconnectCount = 0;
-    const env = {
-      QUICKR_MIGRATION_MONGODB_URI: 'mongodb://user:pass@wrong-host.internal:27017/staging_db',
-      NODE_ENV: 'staging'
-    };
+    const tmpEnvPath = path.join(os.tmpdir(), `quickr-test-mig-${Date.now()}.env`);
+    fs.writeFileSync(
+      tmpEnvPath,
+      'QUICKR_MIGRATION_MONGODB_URI=mongodb://stage:pass@127.0.0.1:27018/quickr_staging\nQUICKR_TEST_EXTRA_SECRET=hidden_secret\n',
+      'utf8'
+    );
 
-    const res = await executeMigrationCli({
-      argv: ['--environment=staging', '--confirm-db=staging_db', '--confirm-host=expected-host.internal'],
-      env,
-      logger: { log() {}, error() {} },
-      setMongooseFlagsFn: () => {},
-      connectFn: async () => {
-        assert.equal(env.MONGODB_URI, 'mongodb://user:pass@wrong-host.internal:27017/staging_db');
-        return { connection: { host: 'wrong-host.internal', name: 'staging_db' } };
-      },
-      disconnectFn: async () => { disconnectCount++; },
-      migrateFn: async () => { throw new Error('Should not run migrateFn after host mismatch'); }
-    });
+    try {
+      const env = { MONGODB_URI: 'mongodb://original-dev/quickr', NODE_ENV: 'staging' };
+      const res = await executeMigrationCli({
+        argv: ['--env-file', tmpEnvPath, '--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
+        env,
+        logger: { log() {}, error() {} },
+        setMongooseFlagsFn: () => {},
+        connectFn: async () => {
+          assert.equal(env.MONGODB_URI, 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging');
+          // Mock wrong actual port 27017 returned by Mongoose metadata
+          return { connection: { host: '127.0.0.1', port: 27017, name: 'quickr_staging' } };
+        },
+        disconnectFn: async () => { disconnectCount++; },
+        migrateFn: async () => { throw new Error('Should not run migrateFn after port mismatch'); }
+      });
 
-    assert.equal(res.exitCode, 1);
-    assert.equal(disconnectCount, 1);
-    assert.equal(Object.prototype.hasOwnProperty.call(env, 'MONGODB_URI'), false);
+      assert.equal(res.exitCode, 1);
+      assert.equal(disconnectCount, 1);
+      assert.equal(env.MONGODB_URI, 'mongodb://original-dev/quickr');
+      assert.equal(Object.prototype.hasOwnProperty.call(env, 'QUICKR_MIGRATION_MONGODB_URI'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(env, 'QUICKR_TEST_EXTRA_SECRET'), false);
+
+      // Also verify when MONGODB_URI was initially absent
+      const emptyEnv = {};
+      const resFail = await executeMigrationCli({
+        argv: ['--env-file', tmpEnvPath, '--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
+        env: emptyEnv,
+        logger: { log() {}, error() {} },
+        setMongooseFlagsFn: () => {},
+        connectFn: async () => { throw new Error('Simulated driver failure'); },
+        disconnectFn: async () => {}
+      });
+      assert.equal(resFail.exitCode, 1);
+      assert.equal(Object.prototype.hasOwnProperty.call(emptyEnv, 'MONGODB_URI'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(emptyEnv, 'QUICKR_MIGRATION_MONGODB_URI'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(emptyEnv, 'QUICKR_TEST_EXTRA_SECRET'), false);
+    } finally {
+      fs.unlinkSync(tmpEnvPath);
+    }
   });
 
-  await test('20. Missing --environment argument rejects before connecting', async () => {
+  await test('20. Missing or invalid --environment rejects before connecting', async () => {
+    let connectCalled = 0;
+    const baseEnv = { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging' };
+
+    const resMissing = await executeMigrationCli({
+      argv: ['--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
+      env: baseEnv,
+      logger: { log() {}, error() {} },
+      connectFn: async () => { connectCalled++; return null; },
+      disconnectFn: async () => {}
+    });
+    assert.equal(resMissing.exitCode, 1);
+
+    for (const invalidEnv of ['dev', 'prod', 'local', 'STAGING']) {
+      const resInvalid = await executeMigrationCli({
+        argv: [`--environment=${invalidEnv}`, '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
+        env: baseEnv,
+        logger: { log() {}, error() {} },
+        connectFn: async () => { connectCalled++; return null; },
+        disconnectFn: async () => {}
+      });
+      assert.equal(resInvalid.exitCode, 1);
+    }
+    assert.equal(connectCalled, 0);
+  });
+
+  await test('21. Missing, invalid, or wrong --confirm-port rejects strictly (both pre-connect and post-connect)', async () => {
     let connectCalled = 0;
     const logs = [];
-    const res = await executeMigrationCli({
-      argv: ['--dry-run', '--confirm-db=staging_db', '--confirm-host=staging.host'],
-      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@staging.host/staging_db' },
+    const env = { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging' };
+
+    // A. Missing --confirm-port
+    const resMissing = await executeMigrationCli({
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1'],
+      env,
       logger: { log() {}, error: (m) => logs.push(m) },
       connectFn: async () => { connectCalled++; return null; },
       disconnectFn: async () => {}
     });
-    assert.equal(res.exitCode, 1);
-    assert.equal(connectCalled, 0);
-    assert.ok(logs.some((l) => l.includes('--environment=staging or --environment=production')));
-  });
+    assert.equal(resMissing.exitCode, 1);
+    assert.ok(logs.some((l) => l.includes('--confirm-port')));
 
-  await test('21. Invalid --environment argument (dev/prod/local) rejects strictly before connecting', async () => {
-    for (const invalidEnv of ['dev', 'prod', 'local', 'STAGING']) {
-      let connectCalled = 0;
-      const logs = [];
-      const res = await executeMigrationCli({
-        argv: [`--environment=${invalidEnv}`, '--dry-run', '--confirm-db=staging_db', '--confirm-host=staging.host'],
-        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@staging.host/staging_db' },
-        logger: { log() {}, error: (m) => logs.push(m) },
+    // B. Invalid --confirm-port values
+    for (const badPort of ['abc', '0', '65536', '-1']) {
+      const resBad = await executeMigrationCli({
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', `--confirm-port=${badPort}`],
+        env,
+        logger: { log() {}, error() {} },
         connectFn: async () => { connectCalled++; return null; },
         disconnectFn: async () => {}
       });
-      assert.equal(res.exitCode, 1);
-      assert.equal(connectCalled, 0);
-      assert.ok(logs.some((l) => l.includes('Invalid --environment')));
+      assert.equal(resBad.exitCode, 1);
     }
-  });
 
-  await test('22. Trusted QUICKR_PRODUCTION_MONGO_HOSTS allowlist blocks treating a production host as staging (both pre-connect and post-connect)', async () => {
-    // A. Pre-connect guard on confirmHost
-    let preConnectCalls = 0;
-    const logsA = [];
-    const resPre = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr', '--confirm-host=cluster0.prod.mongodb.net'],
-      env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/quickr',
-        QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net,ac-shard-00-00.prod.mongodb.net'
-      },
-      logger: { log() {}, error: (m) => logsA.push(m) },
-      connectFn: async () => { preConnectCalls++; return null; },
+    // C. Wrong staging port (27017 instead of 27018)
+    const resDevPort = await executeMigrationCli({
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27017'],
+      env,
+      logger: { log() {}, error() {} },
+      connectFn: async () => { connectCalled++; return null; },
       disconnectFn: async () => {}
     });
-    assert.equal(resPre.exitCode, 1);
-    assert.equal(preConnectCalls, 0);
-    assert.ok(logsA.some((l) => l.includes('QUICKR_PRODUCTION_MONGO_HOSTS')));
+    assert.equal(resDevPort.exitCode, 1);
+    assert.equal(connectCalled, 0);
 
-    // B. Post-connect guard catches resolved SRV shard host matching production allowlist even when confirmHost used alias/shard
-    let migrated = false;
-    let disconnected = false;
-    const logsB = [];
-    const resPost = await executeMigrationCli({
-      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr', '--confirm-host=alias.example.net'],
-      env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@alias.example.net/quickr',
-        QUICKR_PRODUCTION_MONGO_HOSTS: 'ac-shard-00-00.prod.mongodb.net'
-      },
-      logger: { log: (m) => logsB.push(m), error: (m) => logsB.push(m) },
+    // D. Post-connect wrong port returned in Mongoose metadata (or missing port metadata) fails closed
+    let postDisconnects = 0;
+    const resPostPort = await executeMigrationCli({
+      argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018'],
+      env,
+      logger: { log() {}, error() {} },
       setMongooseFlagsFn: () => {},
-      connectFn: async () => ({
-        connection: {
-          host: 'ac-shard-00-00.prod.mongodb.net',
-          name: 'quickr',
-          client: { s: { options: { srvHost: 'alias.example.net' } } }
-        }
-      }),
-      disconnectFn: async () => { disconnected = true; },
-      migrateFn: async () => { migrated = true; return { exitCode: 0 }; }
+      connectFn: async () => ({ connection: { host: '127.0.0.1', port: 27017, name: 'quickr_staging' } }),
+      disconnectFn: async () => { postDisconnects++; },
+      migrateFn: async () => { throw new Error('Should not migrate when connected port != 27018'); }
     });
-    assert.equal(resPost.exitCode, 1);
-    assert.equal(migrated, false);
-    assert.equal(disconnected, true);
-    assert.ok(logsB.some((l) => l.includes('QUICKR_PRODUCTION_MONGO_HOSTS')));
+    assert.equal(resPostPort.exitCode, 1);
+    assert.equal(postDisconnects, 1);
 
-    // C. When allowlist is configured, --environment=production rejects staging hosts not in allowlist
-    let nonProdConnectCalls = 0;
-    const resWrongProd = await executeMigrationCli({
-      argv: ['--environment=production', '--dry-run', '--confirm-db=quickr_stage', '--confirm-host=cluster0.stage.mongodb.net'],
+    const resMissingPortMeta = await executeMigrationCli({
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
       env: {
-        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.stage.mongodb.net/quickr_stage',
+        QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS',
         QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net'
       },
       logger: { log() {}, error() {} },
-      connectFn: async () => { nonProdConnectCalls++; return null; },
+      setMongooseFlagsFn: () => {},
+      connectFn: async () => ({ connection: { host: 'cluster0.prod.mongodb.net', name: 'SGS' } }),
+      disconnectFn: async () => { postDisconnects++; }
+    });
+    assert.equal(resMissingPortMeta.exitCode, 1);
+    assert.equal(postDisconnects, 2);
+  });
+
+  await test('22. Staging rejects Atlas SRV, wrong host, wrong DB, wrong port URI, and NODE_ENV=production', async () => {
+    let connectCalled = 0;
+    const cases = [
+      {
+        name: 'Atlas SRV URI with --environment=staging',
+        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/quickr_staging' },
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018']
+      },
+      {
+        name: 'Wrong staging database (quickr instead of quickr_staging)',
+        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr' },
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr', '--confirm-host=127.0.0.1', '--confirm-port=27018']
+      },
+      {
+        name: 'Wrong staging database (SGS)',
+        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/SGS' },
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=SGS', '--confirm-host=127.0.0.1', '--confirm-port=27018']
+      },
+      {
+        name: 'Wrong staging port in URI (27017 instead of 27018)',
+        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27017/quickr_staging' },
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018']
+      },
+      {
+        name: 'Wrong staging host (localhost instead of 127.0.0.1)',
+        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@localhost:27018/quickr_staging' },
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=localhost', '--confirm-port=27018']
+      },
+      {
+        name: 'NODE_ENV=production conflict with --environment=staging',
+        env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging', NODE_ENV: 'production' },
+        argv: ['--environment=staging', '--dry-run', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018']
+      }
+    ];
+
+    for (const c of cases) {
+      const res = await executeMigrationCli({
+        argv: c.argv,
+        env: c.env,
+        logger: { log() {}, error() {} },
+        connectFn: async () => { connectCalled++; return null; },
+        disconnectFn: async () => {}
+      });
+      assert.equal(res.exitCode, 1, `Expected exitCode=1 for case: ${c.name}`);
+    }
+    assert.equal(connectCalled, 0);
+  });
+
+  await test('23. Production fails closed when QUICKR_PRODUCTION_MONGO_HOSTS missing, empty, wildcarded, or unlisted', async () => {
+    let connectCalled = 0;
+
+    // Missing allowlist
+    const resMissing = await executeMigrationCli({
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
+      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS' },
+      logger: { log() {}, error() {} },
+      connectFn: async () => { connectCalled++; return null; },
       disconnectFn: async () => {}
     });
-    assert.equal(resWrongProd.exitCode, 1);
-    assert.equal(nonProdConnectCalls, 0);
+    assert.equal(resMissing.exitCode, 1);
+
+    // Empty / whitespace allowlist
+    const resEmpty = await executeMigrationCli({
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
+      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS', QUICKR_PRODUCTION_MONGO_HOSTS: '   ,  ' },
+      logger: { log() {}, error() {} },
+      connectFn: async () => { connectCalled++; return null; },
+      disconnectFn: async () => {}
+    });
+    assert.equal(resEmpty.exitCode, 1);
+
+    // Wildcard allowlist entry rejected
+    const resWildcard = await executeMigrationCli({
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017'],
+      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS', QUICKR_PRODUCTION_MONGO_HOSTS: '*.mongodb.net' },
+      logger: { log() {}, error() {} },
+      connectFn: async () => { connectCalled++; return null; },
+      disconnectFn: async () => {}
+    });
+    assert.equal(resWildcard.exitCode, 1);
+
+    // Unlisted production hostname
+    const resUnlisted = await executeMigrationCli({
+      argv: ['--environment=production', '--dry-run', '--confirm-db=SGS', '--confirm-host=other.prod.mongodb.net', '--confirm-port=27017'],
+      env: { QUICKR_MIGRATION_MONGODB_URI: 'mongodb+srv://u:p@other.prod.mongodb.net/SGS', QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net' },
+      logger: { log() {}, error() {} },
+      connectFn: async () => { connectCalled++; return null; },
+      disconnectFn: async () => {}
+    });
+    assert.equal(resUnlisted.exitCode, 1);
+    assert.equal(connectCalled, 0);
+  });
+
+  await test('24. Unknown CLI flags, --dryrun typo, and malformed boolean flags abort before APPLY or connecting', async () => {
+    let connectCalled = 0;
+    let migrateCalled = 0;
+
+    const badArgLists = [
+      ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', '--dryrun'],
+      ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', '--dry_run'],
+      ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', '--dry-run=false'],
+      ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', '--dry-run=true'],
+      ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', '--unknown-flag'],
+      ['--environment=staging', '--confirm-db=quickr_staging', '--confirm-host=127.0.0.1', '--confirm-port=27018', 'positional'],
+      ['--environment=production', '--confirm-db=SGS', '--confirm-host=cluster0.prod.mongodb.net', '--confirm-port=27017', '--confirm-production=true']
+    ];
+
+    for (const argv of badArgLists) {
+      const res = await executeMigrationCli({
+        argv,
+        env: {
+          QUICKR_MIGRATION_MONGODB_URI: 'mongodb://stage:pass@127.0.0.1:27018/quickr_staging',
+          QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net'
+        },
+        logger: { log() {}, error() {} },
+        connectFn: async () => { connectCalled++; return null; },
+        migrateFn: async () => { migrateCalled++; return { exitCode: 0 }; },
+        disconnectFn: async () => {}
+      });
+      assert.equal(res.exitCode, 1, `Expected exitCode=1 for malformed argv: ${argv.join(' ')}`);
+    }
+    assert.equal(connectCalled, 0);
+    assert.equal(migrateCalled, 0);
+  });
+
+  await test('25. database.js connectDB sanitizes credentials, URIs, and auth query params in connection error logs', async () => {
+    const errors = [];
+    const logs = [];
+    const secretUri = 'mongodb+srv://prod_admin:Super$ecret99!@cluster0.prod.mongodb.net/SGS?authSource=admin&authMechanism=SCRAM-SHA-256&password=InlinePwd';
+    const origMongoUri = process.env.MONGODB_URI;
+    const origNodeEnv = process.env.NODE_ENV;
+    process.env.MONGODB_URI = secretUri;
+    process.env.NODE_ENV = 'development';
+
+    try {
+      const res = await connectDB({
+        mongooseLib: {
+          connect: async () => {
+            throw new Error(`Authentication failed for ${secretUri} (authSource=admin&password=ExtraSecret) on cluster0.prod.mongodb.net:27017`);
+          }
+        },
+        logger: { log: (m) => logs.push(String(m)), error: (m) => errors.push(String(m)) }
+      });
+      assert.equal(res, null);
+      const errOut = errors.join('\n');
+      assert.equal(errOut.includes('prod_admin'), false);
+      assert.equal(errOut.includes('Super$ecret99!'), false);
+      assert.equal(errOut.includes('InlinePwd'), false);
+      assert.equal(errOut.includes('ExtraSecret'), false);
+      assert.equal(errOut.includes('mongodb+srv://'), false);
+      assert.ok(errOut.includes('[REDACTED_URI]'));
+      assert.ok(errOut.includes('Authentication failed'));
+      assert.ok(errOut.includes('cluster0.prod.mongodb.net:27017'));
+
+      // Also verify bare query params and bare user:pass@host redaction
+      const rawSanitized = sanitizeMongoErrorText(
+        'connect failed user:MyPass@db.internal:27017 ?authSource=admin&tlsCAFile=/etc/ca.pem ECONNREFUSED 127.0.0.1:27018'
+      );
+      assert.equal(rawSanitized.includes('MyPass'), false);
+      assert.equal(rawSanitized.includes('/etc/ca.pem'), false);
+      assert.ok(rawSanitized.includes('[REDACTED_CREDENTIALS]@db.internal:27017'));
+      assert.ok(rawSanitized.includes('ECONNREFUSED 127.0.0.1:27018'));
+    } finally {
+      if (origMongoUri === undefined) delete process.env.MONGODB_URI;
+      else process.env.MONGODB_URI = origMongoUri;
+      if (origNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = origNodeEnv;
+    }
+  });
+
+  await test('26. Destructive test/cleanup script guards block production hosts, NODE_ENV=production, generic --confirm, shared quickr, and backend/.env prod overrides', async () => {
+    const uriInfo = parseMongoUriInfo('mongodb://stage:pass@127.0.0.1:27018/quickr_staging');
+    assert.equal(uriInfo.valid, true);
+    assert.equal(uriInfo.hosts[0].port, 27018);
+    assert.equal(uriInfo.dbName, 'quickr_staging');
+
+    // A. Generic --confirm forbidden
+    assert.throws(
+      () => assertSafeTestDatabaseConfig({
+        scriptName: 'cleanupAllTestShops.js',
+        argv: ['--confirm'],
+        env: { TEST_MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr_test' },
+        requireWipeConfirmation: true,
+        checkBackendEnvFile: false
+      }),
+      /Generic --confirm flag is forbidden/
+    );
+
+    // B. NODE_ENV=production blocked
+    assert.throws(
+      () => assertSafeTestDatabaseConfig({
+        scriptName: 'testBillingConcurrency.js',
+        argv: ['--confirm-test-env', '--confirm-db=quickr_billing_concurrency_test'],
+        env: { NODE_ENV: 'production', TEST_MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr_billing_concurrency_test' },
+        checkBackendEnvFile: false
+      }),
+      /NODE_ENV=production/
+    );
+
+    // C. Refuses MONGODB_URI fallback and requires explicit isolated TEST_MONGODB_URI
+    assert.throws(
+      () => assertSafeTestDatabaseConfig({
+        scriptName: 'testBillingConcurrency.js',
+        argv: ['--confirm-test-env', '--confirm-db=quickr'],
+        env: { MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr' },
+        checkBackendEnvFile: false
+      }),
+      /TEST_MONGODB_URI/
+    );
+
+    // D. Refuses Atlas SRV, *.mongodb.net, allowlisted prod hosts, and SGS database
+    for (const badUri of [
+      'mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS',
+      'mongodb://u:p@ac-00.prod.mongodb.net:27017/quickr_test',
+      'mongodb://127.0.0.1:27017/SGS',
+      'mongodb://127.0.0.1:27017/quickr'
+    ]) {
+      assert.throws(
+        () => assertSafeTestDatabaseConfig({
+          scriptName: 'testGstPricingSuite.js',
+          argv: ['--confirm-test-env', '--confirm-db=quickr_test'],
+          env: {
+            TEST_MONGODB_URI: badUri,
+            QUICKR_PRODUCTION_MONGO_HOSTS: 'cluster0.prod.mongodb.net,ac-00.prod.mongodb.net'
+          },
+          checkBackendEnvFile: false
+        })
+      );
+    }
+
+    // E. Refuses backend/.env containing NODE_ENV=production or Atlas MONGODB_URI
+    const tmpDotEnv = path.join(os.tmpdir(), `quickr-bad-backend-${Date.now()}.env`);
+    fs.writeFileSync(tmpDotEnv, 'MONGODB_URI=mongodb+srv://u:p@cluster0.prod.mongodb.net/SGS\n', 'utf8');
+    try {
+      const check = inspectEnvFileForProductionOverrides(tmpDotEnv);
+      assert.equal(check.safe, false);
+      assert.throws(
+        () => assertSafeTestDatabaseConfig({
+          scriptName: 'testBillingConcurrency.js',
+          argv: ['--confirm-test-env', '--confirm-db=quickr_billing_concurrency_test'],
+          env: { TEST_MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr_billing_concurrency_test' },
+          backendEnvPath: tmpDotEnv,
+          checkBackendEnvFile: true
+        }),
+        /remote\/Atlas\/production/
+      );
+    } finally {
+      fs.unlinkSync(tmpDotEnv);
+    }
+
+    // F. Valid localhost isolated test configuration passes AND syncIndexes pre-check blocks wrong connected targets
+    const safe = assertSafeTestDatabaseConfig({
+      scriptName: 'testBillingConcurrency.js',
+      argv: ['--confirm-test-env', '--confirm-db=quickr_billing_concurrency_test'],
+      env: { TEST_MONGODB_URI: 'mongodb://127.0.0.1:27017/quickr_billing_concurrency_test' },
+      checkBackendEnvFile: false
+    });
+    assert.equal(safe.expectedDbName, 'quickr_billing_concurrency_test');
+
+    assert.throws(
+      () => assertSafeConnectedTestTarget(
+        { connection: { host: 'ac-00.prod.mongodb.net', port: 27017, name: 'SGS' } },
+        safe,
+        { operation: 'syncIndexes' }
+      ),
+      /Refusing syncIndexes/
+    );
+
+    const okMeta = assertSafeConnectedTestTarget(
+      { connection: { host: '127.0.0.1', port: 27017, name: 'quickr_billing_concurrency_test' } },
+      safe,
+      { operation: 'syncIndexes' }
+    );
+    assert.equal(okMeta.dbName, 'quickr_billing_concurrency_test');
   });
 
   console.log(`\n=== MIGRATION SAFETY SUMMARY: ${passed} PASSED, ${failed} FAILED (Total ${passed + failed}) ===\n`);

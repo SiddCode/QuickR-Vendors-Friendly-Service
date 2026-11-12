@@ -1,7 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { connectDB } from '../config/database.js';
+import {
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  sanitizeMongoErrorText
+} from '../utils/mongoSafety.js';
 import { Customer } from '../models/Customer.js';
 import { Product } from '../models/Product.js';
 import { Enquiry } from '../models/Enquiry.js';
@@ -11,9 +17,24 @@ import { Sale } from '../models/Sale.js';
 import { StorageCleanupSetting } from '../models/StorageCleanupSetting.js';
 import { getCleanupMetrics, executeShopCleanup } from '../services/storageCleanupService.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const runTests = async () => {
   console.log('🧪 Starting Storage Cleanup System Tests...');
-  await connectDB();
+  const safeTarget = assertSafeTestDatabaseConfig({
+    scriptName: 'testStorageCleanup.js',
+    argv: process.argv.slice(2),
+    suggestedTestDb: 'quickr_test',
+    backendEnvPath: path.resolve(__dirname, '../.env'),
+    disallowSharedDevDb: true,
+    allowStagingDbIfConfirmed: true
+  });
+
+  const conn = await mongoose.connect(safeTarget.uri, { serverSelectionTimeoutMS: 5000 });
+  assertSafeConnectedTestTarget(conn, safeTarget, { operation: 'storage cleanup test suite' });
+
+  try {
 
   const testShopA = 'test-shop-storage-a';
   const testShopB = 'test-shop-storage-b';
@@ -113,11 +134,14 @@ const runTests = async () => {
   await Product.deleteMany({ shopId: { $in: [testShopA, testShopB] } });
   await Sale.deleteMany({ shopId: { $in: [testShopA, testShopB] } });
   await StorageCleanupSetting.deleteMany({ shopId: { $in: [testShopA, testShopB] } });
+  } finally {
+    await mongoose.disconnect().catch(() => {});
+  }
 
   process.exit(0);
 };
 
 runTests().catch(err => {
-  console.error('Test execution exception:', err);
+  console.error('Test execution exception:', sanitizeMongoErrorText(err?.message || String(err)));
   process.exit(1);
 });

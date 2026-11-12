@@ -7,20 +7,34 @@
  */
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Duplex } from 'node:stream';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
+import {
+  assertSafeTestDatabaseConfig,
+  assertSafeConnectedTestTarget,
+  sanitizeMongoErrorText
+} from '../utils/mongoSafety.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const safeTarget = assertSafeTestDatabaseConfig({
+  scriptName: 'testBillingConcurrency.js',
+  argv: process.argv.slice(2),
+  suggestedTestDb: 'quickr_billing_concurrency_test',
+  backendEnvPath: path.resolve(__dirname, '../.env'),
+  disallowSharedDevDb: true,
+  allowStagingDbIfConfirmed: true
+});
 
 process.env.QUICKR_TEST_IMPORT = 'true';
+process.env.MONGODB_URI = safeTarget.uri;
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'quickr-concurrency-test-secret-key-min-32-chars';
 
-const TEST_URI =
-  process.env.TEST_MONGODB_URI ||
-  process.env.MONGODB_URI ||
-  'mongodb://127.0.0.1:27017/quickr_billing_concurrency_test';
+const TEST_URI = safeTarget.uri;
 
 const { app } = await import('../server.js');
 const { getJwtSecret } = await import('../config/jwt.js');
@@ -100,7 +114,8 @@ async function test(name, fn) {
 async function main() {
   console.log('\n=== QuickR Phase 3 Isolated MongoDB Concurrency & Idempotency Tests ===\n');
 
-  await mongoose.connect(TEST_URI, { serverSelectionTimeoutMS: 5000 });
+  const conn = await mongoose.connect(TEST_URI, { serverSelectionTimeoutMS: 5000 });
+  assertSafeConnectedTestTarget(conn, safeTarget, { operation: 'syncIndexes and billing concurrency suite' });
   await Promise.all([
     Shop.syncIndexes(),
     User.syncIndexes(),
@@ -379,6 +394,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal concurrency test failure:', err);
+  console.error('Fatal concurrency test failure:', sanitizeMongoErrorText(err?.message || String(err), TEST_URI));
   process.exit(1);
 });
