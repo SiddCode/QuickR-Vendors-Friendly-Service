@@ -121,6 +121,7 @@ export interface SaleItem {
   productName: string;
   category: string;
   quantity: number;
+  originalPrice?: number;
   rate: number;
   total: number;
   measurementType?: 'piece' | 'length';

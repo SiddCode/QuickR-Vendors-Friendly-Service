@@ -126,7 +126,9 @@ export const buildWhatsAppBillMessage = (
     const unitSuffix = (i as any).sellingUnit || ((i as any).measurementType === 'length' ? 'm' : '');
     const qtyStr = unitSuffix ? `${qty} ${unitSuffix}` : `${qty}`;
     const lineTotal = (i.total !== undefined ? i.total : (i.rate || 0) * qty);
-    return `${pName} x ${qtyStr} = Rs.${lineTotal.toLocaleString('en-IN')}`;
+    const rateVal = Number(i.rate) || 0;
+    const rateStr = rateVal > 0 ? ` (@ Rs.${rateVal.toLocaleString('en-IN')})` : '';
+    return `${pName} x ${qtyStr}${rateStr} = Rs.${lineTotal.toLocaleString('en-IN')}`;
   });
 
   // Discount percentage & amount calculations

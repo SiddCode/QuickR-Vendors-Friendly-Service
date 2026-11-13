@@ -22,6 +22,7 @@ const saleSchema = new mongoose.Schema(
         sellingUnit: { type: String, enum: ['piece', 'm', 'cm'], default: 'piece' },
         baseQuantity: { type: Number }, // converted decimal quantity in base unit (metres for length, pieces for piece)
         quantity: { type: Number, required: true },
+        originalPrice: { type: Number }, // Original catalogue price before bargaining / edit
         rate: { type: Number, required: true },
         total: { type: Number, required: true },
         gstRate: { type: Number, default: 0 },

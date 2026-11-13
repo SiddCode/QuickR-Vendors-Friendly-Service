@@ -3237,11 +3237,13 @@ app.post('/api/sales', requireAuth, async (req, res) => {
       if (!Number.isFinite(rawQty) || rawQty <= 0) {
         return res.status(400).json({ error: `Invalid quantity for ${item.productName || item.productId || 'item'}` });
       }
-      if (!item.productId) {
-        const customRate = Number(item.rate);
-        if (!Number.isFinite(customRate) || customRate < 0) {
-          return res.status(400).json({ error: `Invalid rate for custom item ${item.productName || 'item'}` });
+      if (item.rate !== undefined && item.rate !== null && item.rate !== '') {
+        const rawRate = Number(item.rate);
+        if (!Number.isFinite(rawRate) || rawRate < 0) {
+          return res.status(400).json({ error: `Invalid unit selling price for ${item.productName || item.productId || 'item'}` });
         }
+      } else if (!item.productId) {
+        return res.status(400).json({ error: `Invalid rate for custom item ${item.productName || 'item'}` });
       }
     }
 
@@ -3295,7 +3297,23 @@ app.post('/api/sales', requireAuth, async (req, res) => {
         requestedQtyByProduct.set(dbProd.id, Math.round(((requestedQtyByProduct.get(dbProd.id) || 0) + baseQty) * 10000) / 10000);
       }
 
-      const trustedRate = dbProd ? Number(dbProd.sellingPrice) : Number(item.rate);
+      let trustedRate;
+      if (item.rate !== undefined && item.rate !== null && item.rate !== '') {
+        const customRate = Number(item.rate);
+        if (!Number.isFinite(customRate) || customRate < 0) {
+          return res.status(400).json({ error: `Invalid unit selling price for ${item.productName || (dbProd ? dbProd.name : 'item')}` });
+        }
+        trustedRate = Math.round(customRate * 100) / 100;
+      } else if (dbProd) {
+        trustedRate = Number(dbProd.sellingPrice);
+      } else {
+        return res.status(400).json({ error: `Unit selling price is required for ${item.productName || 'item'}` });
+      }
+
+      const originalCataloguePrice = dbProd
+        ? Number(dbProd.sellingPrice)
+        : (item.originalPrice !== undefined && item.originalPrice !== null ? Number(item.originalPrice) : trustedRate);
+
       const rawLineTotal = Math.round((baseQty * trustedRate) * 100) / 100;
       serverSubtotal += rawLineTotal;
 
@@ -3306,6 +3324,7 @@ app.post('/api/sales', requireAuth, async (req, res) => {
         sellingUnit,
         rawQty,
         baseQty,
+        originalCataloguePrice,
         trustedRate,
         rawLineTotal
       });
@@ -3359,7 +3378,7 @@ app.post('/api/sales', requireAuth, async (req, res) => {
     const processedItems = [];
 
     for (const line of preparedLines) {
-      const { item, dbProd, isLengthProd, sellingUnit, rawQty, baseQty, trustedRate, rawLineTotal } = line;
+      const { item, dbProd, isLengthProd, sellingUnit, rawQty, baseQty, originalCataloguePrice, trustedRate, rawLineTotal } = line;
       const lineTaxableSubtotal = serverSubtotal > 0
         ? (rawLineTotal * (1 - (numericDiscount / serverSubtotal)))
         : rawLineTotal;
@@ -3399,6 +3418,7 @@ app.post('/api/sales', requireAuth, async (req, res) => {
         sellingUnit,
         baseQuantity: baseQty,
         quantity: rawQty,
+        originalPrice: originalCataloguePrice,
         rate: trustedRate,
         total: rawLineTotal,
         gstRate: itemGstRate,

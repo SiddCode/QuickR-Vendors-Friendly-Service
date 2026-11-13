@@ -22,7 +22,8 @@ import {
   Banknote,
   Smartphone,
   CreditCard,
-  MoreHorizontal
+  MoreHorizontal,
+  Pencil
 } from 'lucide-react';
 import { api } from '../services/api';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
@@ -49,6 +50,7 @@ interface BillItem {
   productId: string;
   quantity: number;
   rate: number;
+  originalRate?: number;
   measurementType?: 'piece' | 'length';
   sellingUnit?: 'piece' | 'm' | 'cm';
 }
@@ -268,6 +270,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           productId: prod.id,
           quantity: 1,
           rate: prod.sellingPrice,
+          originalRate: prod.sellingPrice,
           measurementType: isLen ? 'length' : 'piece',
           sellingUnit: isLen ? 'm' : 'piece'
         }
@@ -566,6 +569,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
         productId: prod.id,
         quantity: 1,
         rate: prod.sellingPrice,
+        originalRate: prod.sellingPrice,
         measurementType: isLen ? 'length' : 'piece',
         sellingUnit: isLen ? 'm' : 'piece'
       }
@@ -587,6 +591,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           const prod = activeProducts.find(p => p.id === value);
           if (prod) {
             updated.rate = prod.sellingPrice;
+            updated.originalRate = prod.sellingPrice;
             const isLen = prod.measurementType === 'length';
             updated.measurementType = isLen ? 'length' : 'piece';
             updated.sellingUnit = isLen ? 'm' : 'piece';
@@ -596,6 +601,40 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       }
       return item;
     }));
+  };
+
+  // Editable Selling Price in Cart
+  const [editingPriceItemId, setEditingPriceItemId] = useState<string | null>(null);
+  const [editingPriceInput, setEditingPriceInput] = useState<string>('');
+  const [priceEditError, setPriceEditError] = useState<string | null>(null);
+
+  const handleStartEditPrice = (item: BillItem) => {
+    setEditingPriceItemId(item.id);
+    setEditingPriceInput(String(item.rate));
+    setPriceEditError(null);
+  };
+
+  const handleSavePrice = (itemId: string) => {
+    const trimmed = editingPriceInput.trim();
+    if (trimmed === '') {
+      setPriceEditError('Price cannot be blank');
+      return;
+    }
+    const val = Number(trimmed);
+    if (!Number.isFinite(val) || val < 0) {
+      setPriceEditError('Enter a valid non-negative price');
+      return;
+    }
+    const rounded = Math.round(val * 100) / 100;
+    handleItemChange(itemId, 'rate', rounded);
+    setEditingPriceItemId(null);
+    setPriceEditError(null);
+  };
+
+  const handleCancelEditPrice = () => {
+    setEditingPriceItemId(null);
+    setEditingPriceInput('');
+    setPriceEditError(null);
   };
 
   // Current customer bill calculations
@@ -656,6 +695,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
     return {
       ...item,
+      originalPrice: item.originalRate !== undefined ? item.originalRate : (prod?.sellingPrice !== undefined ? prod.sellingPrice : item.rate),
       baseQuantity,
       productName: prod?.name || 'Unknown Product',
       category: prod?.category || 'Category',
@@ -1049,6 +1089,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           sellingUnit: i.sellingUnit || (i.measurementType === 'length' ? 'm' : 'piece'),
           baseQuantity: i.baseQuantity,
           quantity: i.quantity,
+          originalPrice: i.originalPrice,
           rate: i.rate,
           total: i.total,
           gstRate: i.gstRate,
@@ -1507,6 +1548,8 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                         const isLen = item.measurementType === 'length';
                         const itemLineTotal = getItemLineTotal(item);
                         const isCartSelected = item.id === selectedCartItemId;
+                        const cataloguePrice = prod?.sellingPrice ?? item.originalRate ?? item.rate;
+                        const isPriceModified = Math.abs((Number(item.rate) || 0) - cataloguePrice) > 0.001;
 
                         // Extract color and size
                         const colorList = prod?.colors?.filter(c => c && c.trim() && c !== 'N/A') || [];
@@ -1619,11 +1662,95 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                 </button>
                               </div>
 
-                              {/* Item Price */}
-                              <div className="w-24 text-right">
-                                <span className="text-[17px] font-bold text-slate-900 block">
-                                  ₹{itemLineTotal.toLocaleString('en-IN')}
-                                </span>
+                              {/* Item Price & Editable Unit Selling Price */}
+                              <div className="min-w-[120px] text-right flex flex-col items-end">
+                                {editingPriceItemId === item.id ? (
+                                  <div className="flex flex-col items-end" onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex items-center gap-1">
+                                      <div className="relative flex items-center">
+                                        <span className="absolute left-1.5 text-xs font-bold text-slate-400 pointer-events-none">₹</span>
+                                        <input
+                                          type="number"
+                                          step="any"
+                                          min="0"
+                                          autoFocus
+                                          value={editingPriceInput}
+                                          onChange={(e) => {
+                                            setEditingPriceInput(e.target.value);
+                                            if (priceEditError) setPriceEditError(null);
+                                          }}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              handleSavePrice(item.id);
+                                            } else if (e.key === 'Escape') {
+                                              e.preventDefault();
+                                              handleCancelEditPrice();
+                                            }
+                                          }}
+                                          className="w-20 pl-4 pr-1 py-1 text-xs font-bold bg-white border border-blue-500 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-2xs text-right"
+                                          placeholder="Price"
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSavePrice(item.id)}
+                                        className="p-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md shadow-2xs transition-colors cursor-pointer"
+                                        title="Save price (Enter)"
+                                      >
+                                        <Check className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleCancelEditPrice}
+                                        className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-colors cursor-pointer"
+                                        title="Cancel (Esc)"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                    {priceEditError && (
+                                      <span className="text-[10px] text-rose-600 font-semibold mt-0.5">{priceEditError}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col items-end">
+                                    {/* Unit selling price with edit trigger */}
+                                    <div className="flex items-center gap-1 text-[11px]">
+                                      {isPriceModified && (
+                                        <span className="text-slate-400 line-through text-[11px] font-medium" title="Catalogue Price">
+                                          ₹{cataloguePrice.toLocaleString('en-IN')}
+                                        </span>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleStartEditPrice(item);
+                                        }}
+                                        className={`group/price flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-bold transition-all cursor-pointer ${
+                                          isPriceModified
+                                            ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                                            : 'bg-slate-50 hover:bg-blue-50 border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700'
+                                        }`}
+                                        title="Click to edit unit selling price"
+                                      >
+                                        <span>₹{Number(item.rate).toLocaleString('en-IN')}{isLen ? '/m' : '/pc'}</span>
+                                        <Pencil className="w-2.5 h-2.5 text-slate-400 group-hover/price:text-blue-600" />
+                                      </button>
+                                      {isPriceModified && (
+                                        <span className="px-1 py-0.2 bg-amber-100 text-amber-700 text-[9px] font-extrabold rounded border border-amber-200">
+                                          Custom
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Line Total */}
+                                    <span className="text-[16px] sm:text-[17px] font-bold text-slate-900 block mt-0.5">
+                                      ₹{itemLineTotal.toLocaleString('en-IN')}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
 
                               {/* Remove Item Button */}
