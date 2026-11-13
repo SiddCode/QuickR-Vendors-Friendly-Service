@@ -123,7 +123,50 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const [items, setItems] = useState<BillItem[]>([]);
   const [selectedCartItemId, setSelectedCartItemId] = useState<string | null>(null);
 
-  const [discountType, setDiscountType] = useState<'percentage' | 'amount'>('percentage');
+  // Shop-scoped Persistent Discount Mode (% vs ₹)
+  const discountModeStorageKey = useMemo(() => {
+    return currentUser?.shopId 
+      ? `quickr_discount_mode_${currentUser.shopId}` 
+      : 'quickr_discount_mode_default';
+  }, [currentUser?.shopId]);
+
+  const [discountType, setDiscountType] = useState<'percentage' | 'amount'>(() => {
+    try {
+      const activeShopKey = currentUser?.shopId 
+        ? `quickr_discount_mode_${currentUser.shopId}` 
+        : 'quickr_discount_mode_default';
+      const saved = localStorage.getItem(activeShopKey);
+      if (saved === 'amount' || saved === 'percentage') {
+        return saved;
+      }
+    } catch {
+      // Storage unavailable fallback
+    }
+    return 'percentage';
+  });
+
+  // Re-sync discount mode if currentUser.shopId updates
+  useEffect(() => {
+    if (!currentUser?.shopId) return;
+    try {
+      const saved = localStorage.getItem(`quickr_discount_mode_${currentUser.shopId}`);
+      if (saved === 'amount' || saved === 'percentage') {
+        setDiscountType(saved);
+      }
+    } catch {
+      // Storage read error ignored
+    }
+  }, [currentUser?.shopId]);
+
+  const handleSetDiscountType = (newType: 'percentage' | 'amount') => {
+    setDiscountType(newType);
+    try {
+      localStorage.setItem(discountModeStorageKey, newType);
+    } catch {
+      // Storage write error ignored
+    }
+  };
+
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [isDiscountDropdownOpen, setIsDiscountDropdownOpen] = useState(false);
   const discountDropdownRef = useRef<HTMLDivElement>(null);
@@ -291,6 +334,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
       // Handle Modals / Dialogs Escape key
       if (e.key === 'Escape') {
+        inlineProductSearchRef.current?.close();
         if (showKeyboardHelp) {
           e.preventDefault();
           setShowKeyboardHelp(false);
@@ -329,7 +373,12 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
       }
 
       // ─── GLOBAL FUNCTION KEYS & POS SHORTCUTS (Work even if focused inside inputs) ───
-      if (e.key === 'F10') {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        inlineProductSearchRef.current?.focus();
+        return;
+      }
+      if (e.key === 'F10' || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) {
         e.preventDefault();
         handleCompleteSaleRef.current();
         return;
@@ -1441,6 +1490,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                     ref={inlineProductSearchRef}
                     products={products}
                     onSelectProduct={handleSelectProductFromInline}
+                    placeholder="Search product name or barcode (F2)..."
                   />
 
                   {/* Cart Product Rows (TEXT ONLY) */}
@@ -1719,7 +1769,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                             <button
                               type="button"
                               onClick={() => {
-                                setDiscountType('percentage');
+                                handleSetDiscountType('percentage');
                                 if (discountValue > 100) setDiscountValue(100);
                                 setIsDiscountDropdownOpen(false);
                               }}
@@ -1733,7 +1783,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                             <button
                               type="button"
                               onClick={() => {
-                                setDiscountType('amount');
+                                handleSetDiscountType('amount');
                                 if (subtotal > 0 && discountValue > subtotal) setDiscountValue(subtotal);
                                 setIsDiscountDropdownOpen(false);
                               }}
@@ -1897,12 +1947,24 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
             <div className="grid grid-cols-2 gap-2 text-xs font-medium text-slate-700">
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
-                <span>Scan Barcode</span>
-                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">S</kbd>
+                <span>Focus Product Search</span>
+                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">F2</kbd>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
                 <span>Focus Customer</span>
                 <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">F4 / C</kbd>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
+                <span>Navigate Search Results</span>
+                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">↑ / ↓</kbd>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
+                <span>Add Highlighted Product</span>
+                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">Enter</kbd>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
+                <span>Scan Barcode</span>
+                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">S</kbd>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
                 <span>Focus Discount</span>
@@ -1911,6 +1973,10 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
                 <span>Focus Payment</span>
                 <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">F8 / P</kbd>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
+                <span>Next / Prev Field</span>
+                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">Tab / ⇧Tab</kbd>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
                 <span>Increase Quantity</span>
@@ -1924,13 +1990,13 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 <span>Remove Item</span>
                 <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-indigo-600 border border-slate-200">Delete</kbd>
               </div>
-              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between col-span-2">
-                <span>Complete Sale & View Invoices</span>
-                <kbd className="bg-emerald-600 text-white px-2.5 py-1 rounded font-mono font-bold shadow-2xs">F10</kbd>
+              <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between">
+                <span>Close / Cancel</span>
+                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-slate-600 border border-slate-200">Esc</kbd>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-xl flex items-center justify-between col-span-2">
-                <span>Close Dialog / Cancel</span>
-                <kbd className="bg-white px-2 py-1 rounded shadow-2xs font-mono font-bold text-slate-600 border border-slate-200">Esc</kbd>
+                <span>Complete Sale (Validation checked)</span>
+                <kbd className="bg-emerald-600 text-white px-2.5 py-1 rounded font-mono font-bold shadow-2xs">Ctrl + Enter / F10</kbd>
               </div>
             </div>
 
