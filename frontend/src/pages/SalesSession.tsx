@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'rea
 import { useApp } from '../context/AppContext';
 import { 
   Plus, 
+  Minus,
   X, 
+  Trash2,
   Receipt, 
   Search, 
   Check, 
@@ -16,7 +18,11 @@ import {
   Power, 
   User as UserIcon,
   ShoppingCart,
-  Keyboard
+  Keyboard,
+  Banknote,
+  Smartphone,
+  CreditCard,
+  MoreHorizontal
 } from 'lucide-react';
 import { api } from '../services/api';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
@@ -112,30 +118,6 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const [customerState, setCustomerState] = useState('Tamil Nadu');
   const [customerStateCode, setCustomerStateCode] = useState('33');
   const [customerGstin, setCustomerGstin] = useState('');
-
-  const INDIAN_STATES = [
-    { code: '33', name: 'Tamil Nadu' },
-    { code: '29', name: 'Karnataka' },
-    { code: '32', name: 'Kerala' },
-    { code: '36', name: 'Telangana' },
-    { code: '37', name: 'Andhra Pradesh' },
-    { code: '27', name: 'Maharashtra' },
-    { code: '07', name: 'Delhi' },
-    { code: '09', name: 'Uttar Pradesh' },
-    { code: '19', name: 'West Bengal' },
-    { code: '24', name: 'Gujarat' },
-    { code: '08', name: 'Rajasthan' },
-    { code: '03', name: 'Punjab' },
-    { code: '06', name: 'Haryana' },
-    { code: '10', name: 'Bihar' },
-    { code: '23', name: 'Madhya Pradesh' }
-  ];
-
-  const handleCustStateChange = (stName: string) => {
-    setCustomerState(stName);
-    const match = INDIAN_STATES.find(s => s.name === stName);
-    if (match) setCustomerStateCode(match.code);
-  };
   
   // Cart items & Selected Cart Item for Keyboard +/-/Delete
   const [items, setItems] = useState<BillItem[]>([]);
@@ -649,6 +631,10 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
     ? Math.round((taxableSubtotal + totalGst) * 100) / 100 
     : Math.max(0, subtotal - discountAmount);
 
+  const applicableGstRates = useMemo(() => {
+    return Array.from(new Set(enrichedItems.filter(i => i.gstRate > 0).map(i => `${i.gstRate}%`))).join(', ');
+  }, [enrichedItems]);
+
   const handleDiscountInputChange = (valStr: string) => {
     if (valStr === '') {
       setDiscountValue(0);
@@ -1102,8 +1088,8 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   };
 
   return (
-    <div className="flex-grow p-4 lg:p-8 space-y-6 bg-slate-50 min-h-screen font-sans">
-      <div className="max-w-4xl mx-auto space-y-6">
+    <div className="flex-grow p-4 lg:p-6 space-y-6 bg-[#f4f7fb] min-h-screen font-sans">
+      <div className="max-w-7xl mx-auto space-y-6">
 
         {/* ─── SESSION HEADER ─── */}
         <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1229,285 +1215,299 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
               </div>
             )}
 
-            {/* MAIN BILLING FORM CARD */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              
-              {/* CUSTOMER SECTION */}
-              <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                    <UserIcon className="w-4 h-4 text-slate-400" /> Customer Information <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded font-bold">F4 / C</span>
-                  </h2>
-                  <span className="text-xs text-slate-400 font-medium">Press <kbd className="bg-slate-200 px-1.5 py-0.5 rounded font-bold text-slate-700">Tab</kbd> to move field</span>
-                </div>
-                
-                <div className="flex gap-4 mb-4">
-                  <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                    <input 
-                      type="radio" 
-                      checked={isWalkIn} 
-                      onChange={() => setIsWalkIn(true)} 
-                      className="text-primary-600 focus:ring-primary-500 w-4 h-4"
-                    />
-                    Walk-in Customer
-                  </label>
-                  <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
-                    <input 
-                      type="radio" 
-                      checked={!isWalkIn} 
-                      onChange={() => setIsWalkIn(false)} 
-                      className="text-primary-600 focus:ring-primary-500 w-4 h-4"
-                    />
-                    Existing Customer
-                  </label>
-                </div>
+            {/* ─── TWO-COLUMN ACTIVE BILLING WORKSPACE ─── */}
+            <div className="flex flex-col lg:flex-row gap-6 items-start">
 
-                {isWalkIn ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* ─── LEFT COLUMN (approx. 62% width on desktop) ─── */}
+              <div className="w-full lg:w-[62%] space-y-6">
+
+                {/* 2. LEFT TOP — CUSTOMER DETAILS */}
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      <UserIcon className="w-4 h-4 text-blue-600" /> Customer Details
+                    </h2>
+                    <span className="text-[11px] text-slate-400 font-medium">Press <kbd className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono font-bold text-slate-600">F4 / C</kbd></span>
+                  </div>
+
+                  {/* Walk-in vs Existing radio buttons */}
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer">
+                      <input 
+                        type="radio" 
+                        checked={isWalkIn} 
+                        onChange={() => setIsWalkIn(true)} 
+                        className="text-blue-600 focus:ring-blue-500 w-4 h-4 accent-blue-600 cursor-pointer"
+                      />
+                      Walk-in Customer
+                    </label>
+                    <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer">
+                      <input 
+                        type="radio" 
+                        checked={!isWalkIn} 
+                        onChange={() => setIsWalkIn(false)} 
+                        className="text-blue-600 focus:ring-blue-500 w-4 h-4 accent-blue-600 cursor-pointer"
+                      />
+                      Existing Customer
+                    </label>
+                  </div>
+
+                  {isWalkIn ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Customer Name (Optional)</label>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">Customer Name</label>
                         <input 
                           ref={walkinCustomerNameRef}
                           type="text" 
                           placeholder="e.g. Ramesh"
                           value={customerName}
                           onChange={e => setCustomerName(e.target.value)}
-                          className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-200 font-medium text-slate-800 transition-all"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Phone Number (Optional)</label>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">Phone Number</label>
                         <input 
                           ref={walkinCustomerPhoneRef}
                           type="tel" 
                           placeholder="e.g. 9876543210"
                           value={customerPhone}
                           onChange={e => setCustomerPhone(e.target.value)}
-                          className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-200 font-medium text-slate-800 font-mono transition-all"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs sm:text-sm font-semibold font-mono text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
                         />
                       </div>
                     </div>
-                    {customerPhone.trim() && (
-                      <label className="flex items-center gap-2 pt-1 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={allowWhatsAppOffers}
-                          onChange={e => setAllowWhatsAppOffers(e.target.checked)}
-                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                        />
-                        <span className="text-xs font-semibold text-slate-600">
-                          Allow order updates & occasional offers on WhatsApp
-                        </span>
-                      </label>
-                    )}
-                    {isGstRegistered && (
-                      <div className="pt-2 border-t border-slate-100 space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">Customer State</label>
-                            <select
-                              value={customerState}
-                              onChange={e => handleCustStateChange(e.target.value)}
-                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-primary-500"
-                            >
-                              {INDIAN_STATES.map(st => (
-                                <option key={st.code} value={st.name}>{st.name} ({st.code})</option>
-                              ))}
-                            </select>
+                  ) : (
+                    <div className="space-y-3">
+                      <div ref={dropdownRef} className="relative">
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">Search & Select Customer *</label>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                            <Search className="w-4 h-4" />
                           </div>
-                          <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">State Code</label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={customerStateCode}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs font-mono font-bold text-slate-600 cursor-not-allowed"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Customer GSTIN (Optional)</label>
                           <input
+                            ref={customerSearchInputRef}
                             type="text"
-                            placeholder="e.g. 33AAAAA0000A1Z5"
-                            value={customerGstin}
-                            onChange={e => setCustomerGstin(e.target.value.toUpperCase())}
-                            maxLength={15}
-                            className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-primary-500 uppercase tracking-wider"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div ref={dropdownRef} className="relative">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Select Customer *</label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                        <Search className="w-4 h-4" />
-                      </div>
-                      <input
-                        ref={customerSearchInputRef}
-                        type="text"
-                        placeholder="🔍 Search by name or phone..."
-                        value={isDropdownOpen ? customerSearchQuery : (selectedCustomerObj ? `${selectedCustomerObj.name} (${selectedCustomerObj.phone})` : customerSearchQuery)}
-                        onFocus={() => {
-                          setIsDropdownOpen(true);
-                          setCustomerSearchQuery('');
-                          setHighlightedCustomerIndex(0);
-                        }}
-                        onChange={(e) => {
-                          setCustomerSearchQuery(e.target.value);
-                          if (!isDropdownOpen) setIsDropdownOpen(true);
-                          setHighlightedCustomerIndex(0);
-                        }}
-                        onKeyDown={(e) => {
-                          if (!isDropdownOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
-                            setIsDropdownOpen(true);
-                            return;
-                          }
-
-                          if (isDropdownOpen && filteredCustomers.length > 0) {
-                            if (e.key === 'ArrowDown') {
-                              e.preventDefault();
-                              setHighlightedCustomerIndex(prev => (prev + 1) % filteredCustomers.length);
-                            } else if (e.key === 'ArrowUp') {
-                              e.preventDefault();
-                              setHighlightedCustomerIndex(prev => (prev - 1 + filteredCustomers.length) % filteredCustomers.length);
-                            } else if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const targetCust = filteredCustomers[highlightedCustomerIndex];
-                              if (targetCust) {
-                                setSelectedCustomerId(targetCust.id);
-                                setCustomerSearchQuery('');
-                                setIsDropdownOpen(false);
+                            placeholder="Search by customer name or phone..."
+                            value={isDropdownOpen ? customerSearchQuery : (selectedCustomerObj ? `${selectedCustomerObj.name} (${selectedCustomerObj.phone})` : customerSearchQuery)}
+                            onFocus={() => {
+                              setIsDropdownOpen(true);
+                              setCustomerSearchQuery('');
+                              setHighlightedCustomerIndex(0);
+                            }}
+                            onChange={(e) => {
+                              setCustomerSearchQuery(e.target.value);
+                              if (!isDropdownOpen) setIsDropdownOpen(true);
+                              setHighlightedCustomerIndex(0);
+                            }}
+                            onKeyDown={(e) => {
+                              if (!isDropdownOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                                setIsDropdownOpen(true);
+                                return;
                               }
-                            }
-                          }
-                        }}
-                        className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-9 pr-10 text-sm focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-200 shadow-2xs font-medium text-slate-800 transition-all"
-                      />
-                      <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
-                        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`} />
-                      </div>
-                    </div>
 
-                    {isDropdownOpen && (
-                      <div className="absolute z-50 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto py-1.5 text-sm divide-y divide-slate-50">
-                        {filteredCustomers.length > 0 ? (
-                          filteredCustomers.map((c, idx) => {
-                            const isSelected = c.id === selectedCustomerId;
-                            const isHighlighted = idx === highlightedCustomerIndex;
-                            return (
-                              <div
-                                key={c.id}
-                                onClick={() => {
-                                  setSelectedCustomerId(c.id);
-                                  setCustomerSearchQuery('');
-                                  setIsDropdownOpen(false);
-                                }}
-                                onMouseEnter={() => setHighlightedCustomerIndex(idx)}
-                                className={`px-3.5 py-2.5 cursor-pointer flex items-center justify-between transition-colors ${
-                                  isHighlighted ? 'bg-primary-50 font-bold border-l-4 border-primary-600' : ''
-                                } ${isSelected ? 'text-primary-700' : ''}`}
-                              >
-                                <div className="flex flex-col">
-                                  <span className={`font-bold ${isSelected ? 'text-primary-600' : 'text-slate-800'}`}>
-                                    {c.name}
-                                  </span>
-                                  <span className="text-xs text-slate-400 font-medium font-mono">
-                                    {c.phone}
-                                  </span>
-                                </div>
-                                {isSelected && (
-                                  <Check className="w-4 h-4 text-primary-600 shrink-0" />
-                                )}
+                              if (isDropdownOpen && filteredCustomers.length > 0) {
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  setHighlightedCustomerIndex(prev => (prev + 1) % filteredCustomers.length);
+                                } else if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  setHighlightedCustomerIndex(prev => (prev - 1 + filteredCustomers.length) % filteredCustomers.length);
+                                } else if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const targetCust = filteredCustomers[highlightedCustomerIndex];
+                                  if (targetCust) {
+                                    setSelectedCustomerId(targetCust.id);
+                                    setCustomerSearchQuery('');
+                                    setIsDropdownOpen(false);
+                                  }
+                                }
+                              }
+                            }}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-9 pr-10 text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all shadow-2xs"
+                          />
+                          <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
+                            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                          </div>
+                        </div>
+
+                        {isDropdownOpen && (
+                          <div className="absolute z-50 mt-1.5 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto py-1 text-sm divide-y divide-slate-50">
+                            {filteredCustomers.length > 0 ? (
+                              filteredCustomers.map((c, idx) => {
+                                const isSelected = c.id === selectedCustomerId;
+                                const isHighlighted = idx === highlightedCustomerIndex;
+                                return (
+                                  <div
+                                    key={c.id}
+                                    onClick={() => {
+                                      setSelectedCustomerId(c.id);
+                                      setCustomerSearchQuery('');
+                                      setIsDropdownOpen(false);
+                                    }}
+                                    onMouseEnter={() => setHighlightedCustomerIndex(idx)}
+                                    className={`px-3.5 py-2.5 cursor-pointer flex items-center justify-between transition-colors ${
+                                      isHighlighted ? 'bg-blue-50 font-bold border-l-4 border-blue-600' : ''
+                                    } ${isSelected ? 'text-blue-700' : ''}`}
+                                  >
+                                    <div className="flex flex-col">
+                                      <span className={`font-bold ${isSelected ? 'text-blue-600' : 'text-slate-800'}`}>
+                                        {c.name}
+                                      </span>
+                                      <span className="text-xs text-slate-400 font-mono">
+                                        {c.phone}
+                                      </span>
+                                    </div>
+                                    {isSelected && (
+                                      <Check className="w-4 h-4 text-blue-600 shrink-0" />
+                                    )}
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <div className="px-4 py-3 text-xs text-slate-400 font-semibold text-center">
+                                No matching customers found
                               </div>
-                            );
-                          })
-                        ) : (
-                          <div className="px-4 py-3 text-xs text-slate-400 font-semibold text-center">
-                            No matching customers found
+                            )}
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
 
-              {/* PRODUCTS / CART ITEMS SECTION */}
-              <div className="p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                    Current Sale Cart Items <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded font-bold">+ / - / Delete</span>
-                  </h2>
-                  <span className="text-xs text-slate-400 font-semibold">{items.length} product(s) added</span>
+                      {selectedCustomerObj && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-400 mb-1">Customer Name</label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={selectedCustomerObj.name}
+                              className="w-full bg-slate-100/70 border border-slate-200 rounded-xl py-2 px-3 text-xs sm:text-sm font-semibold text-slate-700 cursor-not-allowed"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-400 mb-1">Phone Number</label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={selectedCustomerObj.phone}
+                              className="w-full bg-slate-100/70 border border-slate-200 rounded-xl py-2 px-3 text-xs sm:text-sm font-semibold font-mono text-slate-700 cursor-not-allowed"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Permanent Inline Product Search */}
-                <InlineProductSearch
-                  ref={inlineProductSearchRef}
-                  products={products}
-                  onSelectProduct={handleSelectProductFromInline}
-                />
-                
-                {items.length === 0 ? (
-                  <div className="p-6 sm:p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50 space-y-2">
-                    <ShoppingCart className="w-8 h-8 text-slate-300 mx-auto" />
-                    <p className="text-xs font-bold text-slate-600">Cart is empty</p>
-                    <p className="text-[11px] text-slate-400">Scan product barcode or click Add Product to build customer bill</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {items.map((item) => {
-                      const isCartSelected = item.id === selectedCartItemId;
-                      const isLen = item.measurementType === 'length';
-                      const itemLineTotal = getItemLineTotal(item);
-                      const baseQty = getItemBaseQuantity(item);
+                {/* 3. LEFT MIDDLE — PRODUCTS IN CART */}
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
+                  {/* Cart Header */}
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-base sm:text-lg font-bold text-slate-800">
+                        Products in Cart
+                      </h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                        {items.length} {items.length === 1 ? 'item' : 'items'}
+                      </span>
+                    </div>
 
-                      return (
-                        <div 
-                          key={item.id} 
-                          onClick={() => setSelectedCartItemId(item.id)}
-                          className={`p-3 sm:p-4 rounded-xl border flex flex-col sm:flex-row gap-3 items-stretch sm:items-end transition-all cursor-pointer ${
-                            isCartSelected 
-                              ? 'bg-primary-50/40 border-primary-400 shadow-xs ring-2 ring-primary-200' 
-                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70'
-                          }`}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleAddItem}
+                        className="flex items-center gap-1 px-2.5 py-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        title="Focus product search (/)"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Product</span>
+                      </button>
+                      {barcodeEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => setIsCameraScannerOpen(true)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          title="Scan Barcode (S)"
                         >
-                          <div className="flex-grow w-full min-w-0">
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="block text-xs font-semibold text-slate-500">Select Product</label>
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>Scan Barcode</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Inline Product Search */}
+                  <InlineProductSearch
+                    ref={inlineProductSearchRef}
+                    products={products}
+                    onSelectProduct={handleSelectProductFromInline}
+                  />
+
+                  {/* Cart Product Rows (TEXT ONLY) */}
+                  {items.length === 0 ? (
+                    <div className="p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50 space-y-1.5">
+                      <ShoppingCart className="w-8 h-8 text-slate-300 mx-auto" />
+                      <p className="text-xs font-bold text-slate-600">Cart is empty</p>
+                      <p className="text-[11px] text-slate-400">Search products above or scan a barcode to add items</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {items.map((item) => {
+                        const prod = products.find(p => p.id === item.productId);
+                        const isLen = item.measurementType === 'length';
+                        const itemLineTotal = getItemLineTotal(item);
+                        const isCartSelected = item.id === selectedCartItemId;
+
+                        // Extract color and size
+                        const colorList = prod?.colors?.filter(c => c && c.trim() && c !== 'N/A') || [];
+                        const sizeList = prod?.sizes?.filter(s => s && s.trim() && s !== 'N/A') || [];
+
+                        let variantText = '';
+                        if (colorList.length > 0 && sizeList.length > 0) {
+                          variantText = `Colour: ${colorList.join(', ')} • Size: ${sizeList.join(', ')}`;
+                        } else if (colorList.length > 0) {
+                          variantText = `Colour: ${colorList.join(', ')}`;
+                        } else if (sizeList.length > 0) {
+                          variantText = `Size: ${sizeList.join(', ')}`;
+                        } else if (isLen) {
+                          variantText = `Fabric / Length (${item.sellingUnit || 'm'})`;
+                        } else if (prod?.category) {
+                          variantText = prod.category;
+                        }
+
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => setSelectedCartItemId(item.id)}
+                            className={`p-3.5 sm:p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all cursor-pointer ${
+                              isCartSelected
+                                ? 'bg-blue-50/40 border-blue-400 shadow-2xs ring-1 ring-blue-300'
+                                : 'bg-white border-slate-200/80 hover:bg-slate-50/80'
+                            }`}
+                          >
+                            {/* Left side: Product Name & Colour/Size (TEXT ONLY) */}
+                            <div className="min-w-0 flex-1">
+                              <h4 className="text-[16px] font-semibold text-slate-800 leading-snug truncate">
+                                {prod?.name || 'Selected Product'}
+                              </h4>
+                              {variantText && (
+                                <p className="text-[13px] text-slate-500 font-normal mt-0.5 truncate">
+                                  {variantText}
+                                </p>
+                              )}
                             </div>
-                            <select 
-                              value={item.productId}
-                              onChange={e => handleItemChange(item.id, 'productId', e.target.value)}
-                              className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:border-primary-500 truncate"
-                            >
-                              {activeProducts.map(p => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name} {p.measurementType === 'length' ? '(Fabric/Length)' : ''} {p.barcode ? `(${p.barcode})` : ''}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          
-                          <div className="grid grid-cols-2 sm:flex items-center gap-3 w-full sm:w-auto">
-                            {isLen && (
-                              <div className="w-full sm:w-24">
-                                <label className="block text-xs font-semibold text-slate-500 mb-1">Unit</label>
-                                <div className="flex bg-slate-200 p-0.5 rounded-xl">
+
+                            {/* Right side: Quantity Controls, Item Price, Remove button */}
+                            <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 shrink-0">
+                              {isLen && (
+                                <div className="flex bg-slate-200 p-0.5 rounded-lg text-xs font-bold">
                                   <button
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleItemChange(item.id, 'sellingUnit', 'm');
                                     }}
-                                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
-                                      item.sellingUnit === 'm' ? 'bg-primary-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                                    }`}
+                                    className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${item.sellingUnit === 'm' ? 'bg-blue-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
                                   >
                                     m
                                   </button>
@@ -1517,244 +1517,366 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                       e.stopPropagation();
                                       handleItemChange(item.id, 'sellingUnit', 'cm');
                                     }}
-                                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
-                                      item.sellingUnit === 'cm' ? 'bg-primary-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                                    }`}
+                                    className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${item.sellingUnit === 'cm' ? 'bg-blue-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'}`}
                                   >
                                     cm
                                   </button>
                                 </div>
+                              )}
+
+                              {/* Quantity Controls */}
+                              <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const step = isLen && item.sellingUnit === 'cm' ? 10 : 1;
+                                    const minVal = isLen ? 0.01 : 1;
+                                    const newQty = Math.max(minVal, Math.round(((Number(item.quantity) || 1) - step) * 100) / 100);
+                                    handleItemChange(item.id, 'quantity', newQty);
+                                  }}
+                                  className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors font-bold cursor-pointer"
+                                  title="Decrease quantity (-)"
+                                >
+                                  <Minus className="w-3.5 h-3.5" />
+                                </button>
+
+                                <input
+                                  type="number"
+                                  min={isLen ? "0.01" : "1"}
+                                  step={isLen ? (item.sellingUnit === 'cm' ? "1" : "0.01") : "1"}
+                                  value={item.quantity}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={e => {
+                                    const val = parseFloat(e.target.value);
+                                    handleItemChange(item.id, 'quantity', isNaN(val) ? '' : Math.max(isLen ? 0.01 : 1, val));
+                                  }}
+                                  className="w-12 text-center text-[16px] font-semibold text-slate-800 bg-transparent border-0 focus:outline-none p-0"
+                                />
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const step = isLen && item.sellingUnit === 'cm' ? 10 : 1;
+                                    const newQty = Math.round(((Number(item.quantity) || 0) + step) * 100) / 100;
+                                    handleItemChange(item.id, 'quantity', newQty);
+                                  }}
+                                  className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-colors font-bold cursor-pointer"
+                                  title="Increase quantity (+)"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
                               </div>
-                            )}
 
-                            <div className="w-full sm:w-24">
-                              <label className="block text-xs font-semibold text-slate-500 mb-1">
-                                {isLen ? `Quantity (${item.sellingUnit || 'm'})` : 'Quantity'}
-                              </label>
-                              <input 
-                                type="number" 
-                                min={isLen ? "0.01" : "1"}
-                                step={isLen ? (item.sellingUnit === 'cm' ? "1" : "0.01") : "1"}
-                                value={item.quantity}
-                                onChange={e => {
-                                  const val = parseFloat(e.target.value);
-                                  handleItemChange(item.id, 'quantity', isNaN(val) ? '' : Math.max(0.01, val));
+                              {/* Item Price */}
+                              <div className="w-24 text-right">
+                                <span className="text-[17px] font-bold text-slate-900 block">
+                                  ₹{itemLineTotal.toLocaleString('en-IN')}
+                                </span>
+                              </div>
+
+                              {/* Remove Item Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveItem(item.id);
                                 }}
-                                className="w-full bg-white border border-slate-200 rounded-xl py-2 px-2 text-xs sm:text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
-                              />
-                            </div>
-
-                            <div className="w-full sm:w-28">
-                              <label className="block text-xs font-semibold text-slate-500 mb-1">
-                                {isLen ? 'Rate (₹/m)' : 'Rate (₹)'}
-                              </label>
-                              <input 
-                                type="number" 
-                                min="0"
-                                step="0.01"
-                                value={item.rate}
-                                onChange={e => handleItemChange(item.id, 'rate', Math.max(0, Number(e.target.value)))}
-                                className="w-full bg-white border border-slate-200 rounded-xl py-2 px-2 text-xs sm:text-sm font-bold text-center text-slate-800 focus:outline-none focus:border-primary-500"
-                              />
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="Remove product"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
                           </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
-                          <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60 w-full sm:w-auto">
-                            <div className="text-left sm:text-right">
-                              <span className="block text-[10px] text-slate-400 font-bold uppercase">
-                                {isLen && item.sellingUnit === 'cm' ? `Total (${baseQty} m)` : 'Item Total'}
-                              </span>
-                              <span className="text-sm font-black text-slate-800">₹{itemLineTotal.toLocaleString('en-IN')}</span>
-                            </div>
+                  {/* Cart Summary (At the bottom of Cart card) */}
+                  {items.length > 0 && (
+                    <div className="pt-4 border-t border-slate-200 space-y-2 bg-slate-50/60 -mx-5 -mb-5 p-5 rounded-b-2xl">
+                      <div className="flex justify-between items-center text-[14px] text-slate-600 font-medium">
+                        <span>Subtotal</span>
+                        <span className="font-semibold text-slate-800">
+                          ₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
 
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleRemoveItem(item.id);
-                              }}
-                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg shrink-0 transition-colors"
-                              title="Remove product (Delete)"
-                            >
-                              <X className="w-5 h-5" />
-                            </button>
-                          </div>
+                      {isGstRegistered && (
+                        <div className="flex justify-between items-center text-[14px] text-slate-600 font-medium">
+                          <span>
+                            GST {applicableGstRates ? `(${applicableGstRates})` : ''} {shopGstin ? `(${shopGstin})` : ''}
+                          </span>
+                          <span className="font-semibold text-slate-800">
+                            +₹{totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                      )}
 
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <button 
-                    onClick={handleAddItem}
-                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 text-primary-600 font-bold text-xs hover:bg-primary-50 px-3.5 py-2.5 rounded-xl border border-primary-200 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" /> Add Product
-                  </button>
-                  {barcodeEnabled && (
-                    <button
-                      onClick={() => setIsCameraScannerOpen(true)}
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 text-indigo-600 font-bold text-xs hover:bg-indigo-50 px-3.5 py-2.5 rounded-xl border border-indigo-200 transition-colors"
-                    >
-                      <Camera className="w-4 h-4" /> Camera Scan <span className="text-[10px] bg-indigo-100 px-1 rounded">S</span>
-                    </button>
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/80">
+                        <span className="text-[18px] font-bold text-slate-900">Cart Total</span>
+                        <span className="text-[18px] font-bold text-blue-700">
+                          ₹{grandTotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
-              
-              {/* PAYMENT & SUMMARY SECTION */}
-              <div className="p-6 border-t border-slate-100 bg-slate-50 flex flex-col md:flex-row justify-between gap-6">
-                
-                {/* Payment Method */}
+
+                {/* 4. LEFT BOTTOM — PAYMENT METHOD */}
                 <div 
                   ref={paymentMethodContainerRef}
                   tabIndex={0}
-                  className="w-full md:w-1/2 space-y-3 focus:outline-none focus:ring-2 focus:ring-primary-400 rounded-xl p-2 transition-all"
+                  className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 >
                   <div className="flex items-center justify-between">
-                    <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                      Payment Method <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded font-bold">F8 / P</span>
-                    </h2>
-                    <span className="text-[10px] text-slate-400 font-medium">Use ↑ ↓ Arrow Keys</span>
+                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                      Payment Method
+                    </h3>
+                    <span className="text-[11px] text-slate-400 font-medium">F8 / P</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    {['Cash', 'UPI', 'Card', 'Other'].map(method => (
-                      <button
-                        key={method}
-                        onClick={() => setPaymentMethod(method)}
-                        className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all ${
-                          paymentMethod === method 
-                            ? 'bg-primary-600 border-primary-600 text-white shadow-xs ring-2 ring-primary-300' 
-                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        {method}
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { id: 'Cash', label: 'Cash', icon: Banknote },
+                      { id: 'UPI', label: 'UPI', icon: Smartphone },
+                      { id: 'Card', label: 'Card', icon: CreditCard },
+                      { id: 'Other', label: 'Other', icon: MoreHorizontal }
+                    ].map(({ id, label, icon: Icon }) => {
+                      const isSelected = paymentMethod === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setPaymentMethod(id)}
+                          className={`py-3 px-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all text-xs font-bold cursor-pointer ${
+                            isSelected
+                              ? 'bg-blue-50 border-2 border-blue-600 text-blue-700 shadow-xs ring-2 ring-blue-100 font-extrabold'
+                              : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+                          }`}
+                        >
+                          <Icon className={`w-5 h-5 ${isSelected ? 'text-blue-600' : 'text-slate-500'}`} />
+                          <span>{label}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* CURRENT CUSTOMER BILL SUMMARY */}
-                <div className="w-full md:w-1/2 space-y-3 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
-                  <h3 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2">Current Customer Bill</h3>
-                  
-                  <div className="flex justify-between items-center text-xs font-semibold text-slate-600">
-                    <span>Subtotal</span>
-                    <span>₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+
+              {/* ─── RIGHT COLUMN (approx. 38% width on desktop) ─── */}
+              <div className="w-full lg:w-[38%] space-y-6 lg:sticky lg:top-6">
+
+                {/* 5. RIGHT TOP — LARGE TOTAL AMOUNT */}
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl sm:rounded-3xl p-6 sm:p-7 text-white shadow-md shadow-blue-500/15">
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-100 block">
+                    Total Amount
+                  </span>
+                  <div className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white mt-1.5 flex items-baseline">
+                    ₹{grandTotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
-                  
-                  {/* Discount line */}
-                  <div className="flex justify-between items-center text-xs font-semibold text-slate-600">
-                    <div ref={discountDropdownRef} className="relative flex items-center gap-1">
-                      <span className="flex items-center gap-1">
-                        Discount <span className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded font-bold">D</span>
+                  <p className="text-[12px] text-blue-100/80 mt-1 font-medium">
+                    {items.length === 0 ? 'No items in cart' : `${items.length} product(s) in cart • ${paymentMethod} selected`}
+                  </p>
+                </div>
+
+                {/* 6. RIGHT BOTTOM — PAYMENT SUMMARY & ACTIONS */}
+                <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-2xs p-6 space-y-5">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                      Payment Summary
+                    </h3>
+                    <span className="text-xs text-slate-400 font-semibold">{items.length} product(s)</span>
+                  </div>
+
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between items-center text-slate-600 font-medium">
+                      <span>Subtotal</span>
+                      <span className="font-semibold text-slate-800">
+                        ₹{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
+                    </div>
+
+                    {/* Discount Selector */}
+                    <div className="flex justify-between items-center text-slate-600 font-medium">
+                      <div ref={discountDropdownRef} className="relative flex items-center gap-1.5">
+                        <span>Discount</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsDiscountDropdownOpen(!isDiscountDropdownOpen)}
+                          className="flex items-center gap-0.5 text-[11px] font-extrabold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-lg border border-blue-200 transition-colors cursor-pointer"
+                        >
+                          <span>{discountType === 'percentage' ? '%' : '₹'}</span>
+                          <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isDiscountDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {isDiscountDropdownOpen && (
+                          <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg text-xs font-semibold py-1 w-36 text-slate-700 divide-y divide-slate-50">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDiscountType('percentage');
+                                if (discountValue > 100) setDiscountValue(100);
+                                setIsDiscountDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 hover:bg-blue-50 hover:text-blue-600 flex items-center justify-between transition-colors ${
+                                discountType === 'percentage' ? 'bg-blue-50 text-blue-600 font-bold' : ''
+                              }`}
+                            >
+                              <span>Percentage (%)</span>
+                              {discountType === 'percentage' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDiscountType('amount');
+                                if (subtotal > 0 && discountValue > subtotal) setDiscountValue(subtotal);
+                                setIsDiscountDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 hover:bg-blue-50 hover:text-blue-600 flex items-center justify-between transition-colors ${
+                                discountType === 'amount' ? 'bg-blue-50 text-blue-600 font-bold' : ''
+                              }`}
+                            >
+                              <span>Amount (₹)</span>
+                              {discountType === 'amount' && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          ref={discountInputRef}
+                          type="number"
+                          min="0"
+                          max={discountType === 'percentage' ? 100 : subtotal}
+                          step="any"
+                          value={discountValue === 0 ? '' : discountValue}
+                          onChange={e => handleDiscountInputChange(e.target.value)}
+                          placeholder="0"
+                          className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-center transition-all"
+                        />
+                        <span className="font-bold text-slate-600 text-xs">{discountType === 'percentage' ? '%' : '₹'}</span>
+                      </div>
+                    </div>
+
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between items-center text-xs font-bold text-emerald-600">
+                        <span>Discount applied ({discountType === 'percentage' ? `${validatedDiscountValue}%` : `₹${validatedDiscountValue}`}):</span>
+                        <span>-₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+
+                    {isGstRegistered && (
+                      <div className="flex justify-between items-center text-slate-600 font-medium pt-1">
+                        <span className="flex items-center gap-1">
+                          GST
+                          {applicableGstRates && <span className="text-xs text-slate-400">({applicableGstRates})</span>}
+                          {shopGstin && <span className="text-xs text-slate-400">({shopGstin})</span>}
+                        </span>
+                        <span className="font-semibold text-slate-800">
+                          +₹{totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Visually Prominent Grand Total */}
+                    <div className="border-t border-slate-200 pt-3 flex justify-between items-baseline">
+                      <span className="text-base font-extrabold text-slate-900 uppercase">Grand Total</span>
+                      <span className="text-2xl font-black text-emerald-600">
+                        ₹{grandTotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Large Green Complete Sale Button */}
+                  <div className="pt-2 space-y-3">
+                    <button
+                      ref={completeSaleBtnRef}
+                      onClick={handleCompleteSale}
+                      disabled={isSubmitting || items.length === 0 || connectingMsg !== null}
+                      className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-base rounded-xl shadow-md shadow-emerald-600/20 transition-all flex justify-center items-center gap-2 disabled:opacity-50 cursor-pointer focus:outline-none focus:ring-4 focus:ring-emerald-200"
+                    >
+                      <Receipt className="w-5 h-5" />
+                      <span>
+                        {connectingMsg
+                          ? connectingMsg
+                          : isSubmitting
+                            ? 'Completing Sale...'
+                            : submissionUncertain
+                              ? 'Verify & Complete Sale'
+                              : 'Complete Sale'}
+                      </span>
+                      <span className="bg-emerald-800/60 text-emerald-100 text-xs px-2 py-0.5 rounded font-mono font-bold">F10</span>
+                    </button>
+
+                    {/* Print Bill & WhatsApp Sharing */}
+                    <div className="flex gap-3">
                       <button
                         type="button"
-                        onClick={() => setIsDiscountDropdownOpen(!isDiscountDropdownOpen)}
-                        className="flex items-center gap-0.5 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-200 transition-colors"
+                        onClick={() => {
+                          if (items.length === 0 && !completedSale) {
+                            alert('Cart is empty. Add products to print.');
+                            return;
+                          }
+                          printSaleInvoiceWindow(
+                            completedSale || {
+                              invoiceNumber: 'DRAFT',
+                              customerName: isWalkIn ? (customerName || 'Walk-in Customer') : (selectedCustomerObj?.name || 'Customer'),
+                              customerPhone: isWalkIn ? customerPhone : (selectedCustomerObj?.phone || ''),
+                              items: enrichedItems,
+                              subtotal,
+                              discountAmount,
+                              totalAmount: grandTotalAmount,
+                              paymentMethod,
+                              createdAt: new Date().toISOString()
+                            },
+                            shopName
+                          );
+                        }}
+                        className="flex-1 py-2.5 px-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
                       >
-                        <span>{discountType === 'percentage' ? '%' : '₹'}</span>
-                        <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isDiscountDropdownOpen ? 'rotate-180' : ''}`} />
+                        <Printer className="w-4 h-4 text-slate-600" />
+                        <span>Print Bill</span>
                       </button>
 
-                      {isDiscountDropdownOpen && (
-                        <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-slate-200 rounded-xl shadow-lg text-xs font-semibold py-1 w-36 text-slate-700 divide-y divide-slate-50">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDiscountType('percentage');
-                              if (discountValue > 100) setDiscountValue(100);
-                              setIsDiscountDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-2 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-between transition-colors ${
-                              discountType === 'percentage' ? 'bg-indigo-50 text-indigo-600 font-bold' : ''
-                            }`}
-                          >
-                            <span>Percentage (%)</span>
-                            {discountType === 'percentage' && <Check className="w-3.5 h-3.5 text-indigo-600" />}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDiscountType('amount');
-                              if (subtotal > 0 && discountValue > subtotal) setDiscountValue(subtotal);
-                              setIsDiscountDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-2 hover:bg-indigo-50 hover:text-indigo-600 flex items-center justify-between transition-colors ${
-                              discountType === 'amount' ? 'bg-indigo-50 text-indigo-600 font-bold' : ''
-                            }`}
-                          >
-                            <span>Amount (₹)</span>
-                            {discountType === 'amount' && <Check className="w-3.5 h-3.5 text-indigo-600" />}
-                          </button>
-                        </div>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const phone = isWalkIn ? customerPhone : (selectedCustomerObj?.phone || '');
+                          if (!phone || !phone.trim()) {
+                            alert('Customer phone number is required to share bill on WhatsApp.');
+                            return;
+                          }
+                          const saleToShare = completedSale || {
+                            invoiceNumber: 'DRAFT',
+                            customerName: isWalkIn ? (customerName || 'Customer') : (selectedCustomerObj?.name || 'Customer'),
+                            customerPhone: phone,
+                            items: enrichedItems,
+                            subtotal,
+                            discountAmount,
+                            totalAmount: grandTotalAmount,
+                            paymentMethod,
+                            createdAt: new Date().toISOString()
+                          };
+                          const billMsg = buildWhatsAppBillMessage(shopName, saleToShare.customerName || 'Customer', saleToShare);
+                          openWhatsApp(phone, billMsg, shopName, saleToShare.customerName || 'Customer');
+                        }}
+                        className="flex-1 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                      >
+                        <MessageSquare className="w-4 h-4 text-emerald-600" />
+                        <span>Share via WhatsApp</span>
+                      </button>
                     </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <input 
-                        ref={discountInputRef}
-                        type="number" 
-                        min="0"
-                        max={discountType === 'percentage' ? 100 : subtotal}
-                        step="any"
-                        value={discountValue === 0 ? '' : discountValue}
-                        onChange={e => handleDiscountInputChange(e.target.value)}
-                        placeholder="0"
-                        className="w-16 bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-xs font-bold focus:outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-200 text-center transition-all"
-                      />
-                      <span className="font-bold text-slate-600 text-xs">{discountType === 'percentage' ? '%' : '₹'}</span>
-                    </div>
-                  </div>
-
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between items-center text-xs font-bold text-emerald-600">
-                      <span>Discount ({discountType === 'percentage' ? `${validatedDiscountValue}%` : `₹${validatedDiscountValue}`}):</span>
-                      <span>-₹{discountAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  )}
-
-                  {isGstRegistered && (
-                    <div className="flex justify-between items-center text-xs font-bold text-indigo-600 pt-1 border-t border-slate-100">
-                      <span className="flex items-center gap-1">
-                        GST Amount:
-                        {shopGstin && <span className="text-[10px] text-slate-400 font-mono">({shopGstin})</span>}
-                      </span>
-                      <span>+₹{totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  )}
-
-                  {/* PROMINENT CURRENT BILL TOTAL */}
-                  <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
-                    <span className="text-sm font-extrabold text-slate-800 uppercase tracking-wide">Total</span>
-                    <span className="text-xl font-black text-emerald-600">₹{grandTotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
+
               </div>
 
-              {/* ACTION FOOTER */}
-              <div className="p-6 bg-white border-t border-slate-100 flex items-center justify-between gap-4">
-                <button 
-                  ref={completeSaleBtnRef}
-                  onClick={handleCompleteSale}
-                  disabled={isSubmitting || items.length === 0 || connectingMsg !== null}
-                  className="flex-1 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm rounded-xl shadow-md transition-all flex justify-center items-center gap-2 disabled:opacity-50 cursor-pointer focus:outline-none focus:ring-4 focus:ring-emerald-300"
-                >
-                  <Receipt className="w-5 h-5" />
-                  <span>
-                    {connectingMsg
-                      ? connectingMsg
-                      : isSubmitting
-                        ? 'Completing Sale...'
-                        : submissionUncertain
-                          ? 'Verify & Complete Sale'
-                          : 'Complete Sale'}
-                  </span>
-                  <span className="bg-emerald-800/60 text-emerald-100 text-xs px-2 py-0.5 rounded font-mono font-bold">F10</span>
-                </button>
-              </div>
             </div>
           </div>
         )}
