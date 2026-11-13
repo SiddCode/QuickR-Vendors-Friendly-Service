@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Plus, X, Receipt, Search, Check, ChevronDown, Camera, Barcode, AlertTriangle, Printer, MessageSquare, CheckCircle2 } from 'lucide-react';
 import { api } from '../services/api';
 import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
+import { AddProductSelectModal } from '../components/AddProductSelectModal';
+import type { Product } from '../types';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
 import { printSaleInvoiceWindow } from '../utils/printInvoice';
 
@@ -28,7 +30,16 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   const { customers, products, createSale, shopProfile, shopName, connectionState, checkHealth } = useApp();
   const [connectingMsg, setConnectingMsg] = useState<string | null>(null);
 
-  const activeProducts = products.filter(p => p.isActive);
+  const activeProducts = useMemo(
+    () => products
+      .filter(p => p.isActive)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+    [products]
+  );
+
+  // Add Product Search Modal state
+  const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
+  const [targetCartItemId, setTargetCartItemId] = useState<string | null>(null);
 
   // Barcode scanning state
   const [barcodeEnabled] = useState<boolean>(() => {
@@ -260,13 +271,28 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   }, [billingInitialData]);
 
   const handleAddItem = () => {
-    if (activeProducts.length === 0) return;
-    setItems([...items, {
-      id: Date.now().toString(),
-      productId: activeProducts[0].id,
-      quantity: 1,
-      rate: activeProducts[0].sellingPrice
-    }]);
+    setTargetCartItemId(null);
+    setIsAddProductModalOpen(true);
+  };
+
+  const handleSelectProductFromModal = (prod: Product) => {
+    setIsAddProductModalOpen(false);
+    if (!prod || !prod.isActive) return;
+
+    if (targetCartItemId) {
+      handleItemChange(targetCartItemId, 'productId', prod.id);
+      setTargetCartItemId(null);
+    } else {
+      setItems(prevItems => [
+        ...prevItems,
+        {
+          id: Date.now().toString(),
+          productId: prod.id,
+          quantity: 1,
+          rate: prod.sellingPrice
+        }
+      ]);
+    }
   };
 
   const handleRemoveItem = (id: string) => {
@@ -684,7 +710,19 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
                 items.map((item) => (
                 <div key={item.id} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex flex-col md:flex-row gap-4 items-end">
                   <div className="flex-grow w-full">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Product</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-500">Product</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTargetCartItemId(item.id);
+                          setIsAddProductModalOpen(true);
+                        }}
+                        className="text-[11px] text-primary-600 hover:text-primary-800 font-bold flex items-center gap-1 transition-colors"
+                      >
+                        <Search className="w-3 h-3" /> Search / Change
+                      </button>
+                    </div>
                     <select 
                       value={item.productId}
                       onChange={e => handleItemChange(item.id, 'productId', e.target.value)}
@@ -1079,6 +1117,18 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
           </div>
         </div>
       )}
+
+      {/* Add / Search Product Selection Modal */}
+      <AddProductSelectModal
+        isOpen={isAddProductModalOpen}
+        onClose={() => {
+          setIsAddProductModalOpen(false);
+          setTargetCartItemId(null);
+        }}
+        onSelectProduct={handleSelectProductFromModal}
+        products={products}
+        title={targetCartItemId ? 'Change Product' : 'Select Product to Add'}
+      />
     </div>
   );
 };

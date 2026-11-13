@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   Plus, 
@@ -21,6 +21,8 @@ import {
 import { api } from '../services/api';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
 import { printSaleInvoiceWindow } from '../utils/printInvoice';
+import { AddProductSelectModal } from '../components/AddProductSelectModal';
+import type { Product } from '../types';
 
 const BarcodeScannerModal = lazy(() => import('../components/BarcodeScannerModal').then(m => ({ default: m.BarcodeScannerModal })));
 
@@ -70,7 +72,16 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   const [connectingMsg, setConnectingMsg] = useState<string | null>(null);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState<boolean>(false);
 
-  const activeProducts = products.filter(p => p.isActive);
+  const activeProducts = useMemo(
+    () => products
+      .filter(p => p.isActive)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+    [products]
+  );
+
+  // Add Product Search Modal state
+  const [isAddProductModalOpen, setIsAddProductModalOpen] = useState<boolean>(false);
+  const [targetCartItemId, setTargetCartItemId] = useState<string | null>(null);
 
   // Focus Refs for Keyboard Navigation
   const customerSearchInputRef = useRef<HTMLInputElement>(null);
@@ -299,6 +310,12 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
       // Handle Modals / Dialogs Escape key
       if (e.key === 'Escape') {
+        if (isAddProductModalOpen) {
+          e.preventDefault();
+          setIsAddProductModalOpen(false);
+          setTargetCartItemId(null);
+          return;
+        }
         if (showKeyboardHelp) {
           e.preventDefault();
           setShowKeyboardHelp(false);
@@ -509,19 +526,34 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   }, []);
 
   const handleAddItem = () => {
-    if (activeProducts.length === 0) return;
-    const newItemId = Date.now().toString();
-    const firstProd = activeProducts[0];
-    const isLen = firstProd.measurementType === 'length';
-    setItems([...items, {
-      id: newItemId,
-      productId: firstProd.id,
-      quantity: 1,
-      rate: firstProd.sellingPrice,
-      measurementType: isLen ? 'length' : 'piece',
-      sellingUnit: isLen ? 'm' : 'piece'
-    }]);
-    setSelectedCartItemId(newItemId);
+    setTargetCartItemId(null);
+    setIsAddProductModalOpen(true);
+  };
+
+  const handleSelectProductFromModal = (prod: Product) => {
+    setIsAddProductModalOpen(false);
+    if (!prod || !prod.isActive) return;
+
+    const isLen = prod.measurementType === 'length';
+
+    if (targetCartItemId) {
+      handleItemChange(targetCartItemId, 'productId', prod.id);
+      setTargetCartItemId(null);
+    } else {
+      const newItemId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setSelectedCartItemId(newItemId);
+      setItems(prevItems => [
+        ...prevItems,
+        {
+          id: newItemId,
+          productId: prod.id,
+          quantity: 1,
+          rate: prod.sellingPrice,
+          measurementType: isLen ? 'length' : 'piece',
+          sellingUnit: isLen ? 'm' : 'piece'
+        }
+      ]);
+    }
   };
 
   const handleRemoveItem = (id: string) => {
@@ -1454,7 +1486,20 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           }`}
                         >
                           <div className="flex-grow w-full min-w-0">
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">Select Product</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs font-semibold text-slate-500">Select Product</label>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTargetCartItemId(item.id);
+                                  setIsAddProductModalOpen(true);
+                                }}
+                                className="text-[11px] text-primary-600 hover:text-primary-800 font-bold flex items-center gap-1 transition-colors"
+                              >
+                                <Search className="w-3 h-3" /> Search / Change
+                              </button>
+                            </div>
                             <select 
                               value={item.productId}
                               onChange={e => handleItemChange(item.id, 'productId', e.target.value)}
@@ -1969,6 +2014,18 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
           </div>
         </div>
       )}
+
+      {/* Add / Search Product Selection Modal */}
+      <AddProductSelectModal
+        isOpen={isAddProductModalOpen}
+        onClose={() => {
+          setIsAddProductModalOpen(false);
+          setTargetCartItemId(null);
+        }}
+        onSelectProduct={handleSelectProductFromModal}
+        products={products}
+        title={targetCartItemId ? 'Change Product' : 'Select Product to Add'}
+      />
     </div>
   );
 };

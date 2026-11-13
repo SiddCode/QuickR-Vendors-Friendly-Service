@@ -1332,6 +1332,7 @@ app.delete('/api/customers/:id', requireAuth, requireNonStaff, async (req, res) 
 app.get('/api/products', requireAuth, async (req, res) => {
   try {
     const list = await Product.find({ shopId: req.user.shopId }).lean();
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch products' });

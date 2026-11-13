@@ -272,8 +272,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         api.getShopProfile().catch(() => null),
       ]);
 
+      const sortedProducts = Array.isArray(pList) 
+        ? [...pList].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })) 
+        : [];
       setCustomers(cList);
-      setProducts(pList);
+      setProducts(sortedProducts);
       setEnquiries(eList);
       setFollowUps(fList);
       setSales(sList);
@@ -347,7 +350,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addProduct = async (productData: Omit<Product, 'id' | 'createdAt'>): Promise<Product | null> => {
     try {
       const created = await api.createProduct(productData);
-      setProducts(prev => [created, ...prev]);
+      setProducts(prev => {
+        if (prev.some(p => p.id === created.id)) return prev;
+        return [...prev, created].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+      });
       return created;
     } catch (err: any) {
       alert(`Unable to save product: ${err.message || 'Server error'}`);
@@ -358,7 +364,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateProduct = async (id: string, updates: Partial<Product>): Promise<Product | null> => {
     try {
       const updated = await api.updateProduct(id, updates);
-      setProducts(prev => prev.map(p => p.id === id ? updated : p));
+      setProducts(prev => prev.map(p => p.id === id ? updated : p).sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })));
       return updated;
     } catch (err: any) {
       alert(`Unable to update product: ${err.message || 'Server error'}`);

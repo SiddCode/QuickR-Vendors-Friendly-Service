@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   ArrowLeft, 
@@ -35,7 +35,12 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
   const [newCustLoc, setNewCustLoc] = useState('Chennai, Tamil Nadu');
 
   // Step state
-  const activeProducts = products.filter(p => p.isActive);
+  const activeProducts = useMemo(
+    () => products
+      .filter(p => p.isActive)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+    [products]
+  );
   const [prodId, setProdId] = useState(activeProducts[0]?.id || '');
   const currentProduct = activeProducts.find(p => p.id === prodId) || activeProducts[0];
   
