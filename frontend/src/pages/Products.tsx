@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, lazy, Suspense, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle, Barcode, Printer, Sparkles, CheckCircle2, Upload } from 'lucide-react';
+import { Package, Search, Plus, Edit2, Trash2, X, AlertCircle, Barcode, Printer, Sparkles, CheckCircle2, Upload, Loader2 } from 'lucide-react';
 import type { Product } from '../types';
 import { useDebounce } from '../hooks/useDebounce';
 
@@ -15,6 +15,14 @@ export const CATEGORIES = {
   "Custom": []
 };
 
+const STANDARD_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
+
+const formatProductList = (items?: any): string => {
+  if (Array.isArray(items)) return items.filter(Boolean).join(', ');
+  if (typeof items === 'string' && items.trim()) return items.trim();
+  return '';
+};
+
 export const Products = () => {
   const { currentUser, products, addProduct, updateProduct, deleteProduct, bulkDeleteProducts, generateProductBarcode, shopName, shopProfile } = useApp();
   const isStaff = currentUser?.role === 'staff';
@@ -26,6 +34,9 @@ export const Products = () => {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
+  const [customSizeInput, setCustomSizeInput] = useState('');
   
   // Printable & Newly Created Barcode Modal states
   const [printProduct, setPrintProduct] = useState<Product | null>(null);
@@ -45,17 +56,33 @@ export const Products = () => {
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
   // Form State
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    categoryGroup: string;
+    category: string;
+    customCategory: string;
+    sellingPrice: string;
+    originalPrice: string;
+    sizes: string[];
+    colors: string;
+    availability: string;
+    measurementType: 'piece' | 'length';
+    description: string;
+    gstRate: string;
+    hsnCode: string;
+    priceIncludesGst: boolean;
+    isActive: boolean;
+  }>({
     name: '',
     categoryGroup: "MEN'S WEAR",
     category: 'Shirts',
     customCategory: '',
     sellingPrice: '',
     originalPrice: '',
-    sizes: '',
+    sizes: [],
     colors: '',
     availability: '10',
-    measurementType: 'piece' as 'piece' | 'length',
+    measurementType: 'piece',
     description: '',
     gstRate: '0',
     hsnCode: '',
@@ -141,7 +168,38 @@ export const Products = () => {
     }
   };
 
+  const handleAddSize = (sizeToAdd: string) => {
+    const clean = sizeToAdd.trim();
+    if (!clean) return;
+    if (formData.sizes.some(s => s.toLowerCase() === clean.toLowerCase())) {
+      return; // Avoid duplicate size selections
+    }
+    setFormData(prev => ({
+      ...prev,
+      sizes: [...prev.sizes, clean]
+    }));
+  };
+
+  const handleRemoveSize = (sizeToRemove: string) => {
+    setFormData(prev => ({
+      ...prev,
+      sizes: prev.sizes.filter(s => s.toLowerCase() !== sizeToRemove.toLowerCase())
+    }));
+  };
+
+  const handleToggleSize = (sizeToToggle: string) => {
+    if (formData.sizes.some(s => s.toLowerCase() === sizeToToggle.toLowerCase())) {
+      handleRemoveSize(sizeToToggle);
+    } else {
+      handleAddSize(sizeToToggle);
+    }
+  };
+
   const handleOpenModal = (product?: Product) => {
+    setCustomSizeInput('');
+    isSubmittingRef.current = false;
+    setIsSubmitting(false);
+
     if (product) {
       setEditingProduct(product);
       
@@ -154,6 +212,20 @@ export const Products = () => {
         }
       }
 
+      let parsedSizes: string[] = [];
+      if (Array.isArray(product.sizes)) {
+        parsedSizes = product.sizes.map(s => String(s).trim()).filter(Boolean);
+      } else if (typeof product.sizes === 'string' && (product.sizes as string).trim()) {
+        parsedSizes = (product.sizes as string).split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      let parsedColors = '';
+      if (Array.isArray(product.colors)) {
+        parsedColors = product.colors.filter(Boolean).join(', ');
+      } else if (typeof (product as any).colors === 'string') {
+        parsedColors = (product as any).colors;
+      }
+
       setFormData({
         name: product.name,
         categoryGroup: foundGroup,
@@ -161,8 +233,8 @@ export const Products = () => {
         customCategory: foundGroup === 'Custom' ? product.category : '',
         sellingPrice: String(product.sellingPrice),
         originalPrice: product.originalPrice ? String(product.originalPrice) : '',
-        sizes: product.sizes ? product.sizes.join(', ') : '',
-        colors: product.colors ? product.colors.join(', ') : '',
+        sizes: parsedSizes,
+        colors: parsedColors,
         availability: String(product.availability || 0),
         measurementType: product.measurementType || 'piece',
         description: product.description || '',
@@ -180,8 +252,8 @@ export const Products = () => {
         customCategory: '',
         sellingPrice: '',
         originalPrice: '',
-        sizes: 'S, M, L, XL',
-        colors: 'Blue, Black',
+        sizes: [],
+        colors: '',
         availability: '10',
         measurementType: 'piece',
         description: '',
@@ -196,6 +268,10 @@ export const Products = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || isSubmitting) {
+      return;
+    }
+
     const parsedPrice = parseFloat(formData.sellingPrice);
     const parsedAvail = parseFloat(formData.availability);
     const parsedOrig = formData.originalPrice ? parseFloat(formData.originalPrice) : undefined;
@@ -214,37 +290,48 @@ export const Products = () => {
       return;
     }
 
-    const finalCategory = formData.categoryGroup === 'Custom' || formData.category === 'Custom'
-      ? (formData.customCategory.trim() || 'General')
-      : formData.category;
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
 
-    const payload = {
-      name: formData.name.trim(),
-      category: finalCategory,
-      sellingPrice: parsedPrice,
-      originalPrice: parsedOrig,
-      sizes: formData.sizes ? formData.sizes.split(',').map(s => s.trim()).filter(Boolean) : [],
-      colors: formData.colors ? formData.colors.split(',').map(c => c.trim()).filter(Boolean) : [],
-      availability: parsedAvail,
-      measurementType: formData.measurementType,
-      description: formData.description.trim(),
-      gstRate: Math.max(0, parsedGst),
-      hsnCode: formData.hsnCode.trim(),
-      priceIncludesGst: formData.priceIncludesGst,
-      isActive: formData.isActive
-    };
+    try {
+      const finalCategory = formData.categoryGroup === 'Custom' || formData.category === 'Custom'
+        ? (formData.customCategory.trim() || 'General')
+        : formData.category;
 
-    if (editingProduct) {
-      const updated = await updateProduct(editingProduct.id, payload);
-      if (updated) {
-        setIsModalOpen(false);
+      const payload = {
+        name: formData.name.trim(),
+        category: finalCategory,
+        sellingPrice: parsedPrice,
+        originalPrice: parsedOrig,
+        sizes: Array.isArray(formData.sizes) ? formData.sizes : [],
+        colors: formData.colors ? formData.colors.split(',').map(c => c.trim()).filter(Boolean) : [],
+        availability: parsedAvail,
+        measurementType: formData.measurementType,
+        description: formData.description.trim(),
+        gstRate: Math.max(0, parsedGst),
+        hsnCode: formData.hsnCode.trim(),
+        priceIncludesGst: formData.priceIncludesGst,
+        isActive: formData.isActive
+      };
+
+      if (editingProduct && editingProduct.id) {
+        const updated = await updateProduct(editingProduct.id, payload);
+        if (updated) {
+          setIsModalOpen(false);
+          setEditingProduct(null);
+        }
+      } else if (!editingProduct) {
+        const createdProd = await addProduct(payload);
+        if (createdProd) {
+          setNewlyCreatedProduct(createdProd);
+          setIsModalOpen(false);
+        }
       }
-    } else {
-      const createdProd = await addProduct(payload);
-      if (createdProd) {
-        setNewlyCreatedProduct(createdProd);
-        setIsModalOpen(false);
-      }
+    } catch (err) {
+      console.error('Failed to save or update product:', err);
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -397,7 +484,9 @@ export const Products = () => {
                         />
                         <div>
                           <h3 className="font-bold text-slate-800 text-sm">{prod.name}</h3>
-                          <p className="text-xs text-slate-400 mt-0.5">{prod.sizes.join(', ')} • {prod.colors.join(', ')}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {[formatProductList(prod.sizes), formatProductList(prod.colors)].filter(Boolean).join(' • ') || 'Standard'}
+                          </p>
                         </div>
                       </div>
                       <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px] font-bold">
@@ -510,7 +599,9 @@ export const Products = () => {
                         </td>
                         <td className="p-4">
                           <p className="font-bold text-slate-800">{prod.name}</p>
-                          <p className="text-xs text-slate-400">{prod.sizes.join(', ')} • {prod.colors.join(', ')}</p>
+                          <p className="text-xs text-slate-400">
+                            {[formatProductList(prod.sizes), formatProductList(prod.colors)].filter(Boolean).join(' • ') || 'Standard'}
+                          </p>
                         </td>
                         <td className="p-4">
                           <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold">
@@ -673,14 +764,28 @@ export const Products = () => {
                 {editingProduct ? 'Edit Product' : 'Add New Product'}
               </h2>
               <button 
-                onClick={() => setIsModalOpen(false)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl"
+                onClick={() => {
+                  if (!isSubmitting) {
+                    setIsModalOpen(false);
+                    setEditingProduct(null);
+                  }
+                }}
+                disabled={isSubmitting}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl disabled:opacity-40"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form 
+              onSubmit={handleSubmit} 
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && isSubmitting) {
+                  e.preventDefault();
+                }
+              }}
+              className="p-6 space-y-4"
+            >
               {/* Product Status (Active / Inactive) */}
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -897,28 +1002,139 @@ export const Products = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Sizes (Comma separated)</label>
-                  <input 
-                    type="text" 
-                    placeholder="S, M, L, XL"
-                    value={formData.sizes}
-                    onChange={e => setFormData({ ...formData, sizes: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 text-sm"
-                  />
+              {/* Sizes Multi-Select Section */}
+              <div className="p-3.5 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Sizes (Multi-Select) <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    {formData.sizes.length > 0 
+                      ? `Selected: ${formData.sizes.join(', ')}` 
+                      : 'None selected'}
+                  </span>
                 </div>
 
+                {/* Standard Sizes Quick Toggle Buttons */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">Colors (Comma separated)</label>
-                  <input 
-                    type="text" 
-                    placeholder="Blue, Navy, Black"
-                    value={formData.colors}
-                    onChange={e => setFormData({ ...formData, colors: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 text-sm"
-                  />
+                  <p className="text-[11px] text-slate-500 mb-1.5 font-medium">Standard Sizes:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {STANDARD_SIZES.map(sz => {
+                      const isSelected = formData.sizes.some(s => s.toLowerCase() === sz.toLowerCase());
+                      return (
+                        <button
+                          key={sz}
+                          type="button"
+                          onClick={() => handleToggleSize(sz)}
+                          className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all ${
+                            isSelected
+                              ? 'bg-primary-600 border-primary-600 text-white shadow-xs'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+                          }`}
+                        >
+                          {isSelected ? `✓ ${sz}` : sz}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+
+                {/* Dropdown Selector & Custom Size Input */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-1 font-medium">Select from dropdown:</label>
+                    <select
+                      value=""
+                      onChange={e => {
+                        if (e.target.value) handleAddSize(e.target.value);
+                      }}
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 text-xs bg-white text-slate-700"
+                    >
+                      <option value="">+ Add standard size...</option>
+                      {STANDARD_SIZES.map(sz => {
+                        const isSelected = formData.sizes.some(s => s.toLowerCase() === sz.toLowerCase());
+                        return (
+                          <option key={sz} value={sz} disabled={isSelected}>
+                            {sz} {isSelected ? '(Already selected)' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-1 font-medium">Or enter custom size:</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="e.g. 38, 40, Free Size"
+                        value={customSizeInput}
+                        onChange={e => setCustomSizeInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (customSizeInput.trim()) {
+                              handleAddSize(customSizeInput);
+                              setCustomSizeInput('');
+                            }
+                          }
+                        }}
+                        className="w-full px-2.5 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 text-xs bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (customSizeInput.trim()) {
+                            handleAddSize(customSizeInput);
+                            setCustomSizeInput('');
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl whitespace-nowrap transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Removable Selected Size Chips */}
+                {formData.sizes.length > 0 && (
+                  <div className="pt-1.5 border-t border-slate-200/60">
+                    <p className="text-[11px] text-slate-500 mb-1.5 font-medium">Active Selected Sizes (Click × to remove):</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {formData.sizes.map(sz => (
+                        <span
+                          key={sz}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-white text-slate-800 rounded-lg text-xs font-semibold border border-slate-200 shadow-2xs"
+                        >
+                          <span>{sz}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveSize(sz)}
+                            className="text-slate-400 hover:text-rose-600 rounded p-0.5"
+                            title={`Remove ${sz}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Colors */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  Colors <span className="text-slate-400 font-normal">(Optional, comma-separated)</span>
+                </label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Blue, Navy, Black (leave blank if none)"
+                  value={formData.colors}
+                  onChange={e => setFormData({ ...formData, colors: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:border-primary-400 text-sm"
+                />
               </div>
 
               <div className="flex items-center gap-2 pt-2">
@@ -937,16 +1153,32 @@ export const Products = () => {
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                 <button 
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-sm font-semibold"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    if (!isSubmitting) {
+                      setIsModalOpen(false);
+                      setEditingProduct(null);
+                    }
+                  }}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl text-sm font-semibold disabled:opacity-40"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit"
-                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-bold shadow-sm"
+                  disabled={isSubmitting}
+                  className={`px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-bold shadow-sm transition-all flex items-center justify-center gap-2 ${
+                    isSubmitting ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
                 >
-                  {editingProduct ? 'Update Product' : 'Save Product'}
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{editingProduct ? 'Updating...' : 'Saving...'}</span>
+                    </>
+                  ) : (
+                    <span>{editingProduct ? 'Update Product' : 'Save Product'}</span>
+                  )}
                 </button>
               </div>
             </form>

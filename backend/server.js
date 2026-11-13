@@ -1393,6 +1393,9 @@ app.get('/api/products/barcode/:barcode', requireAuth, async (req, res) => {
   }
 });
 
+// Slide window cache to prevent duplicate product creations from rapid double clicks or repeated requests
+const recentProductCreations = new Map();
+
 app.post('/api/products', requireAuth, async (req, res) => {
   try {
     const { name, category, subcategory, sellingPrice, originalPrice, sizes, colors, availability, description, isActive, gstRate, hsnCode, priceIncludesGst, measurementType } = req.body;
@@ -1416,20 +1419,36 @@ app.post('/api/products', requireAuth, async (req, res) => {
     }
 
     const cleanMeasurementType = measurementType === 'length' ? 'length' : 'piece';
+    const shopId = req.user.shopId;
+    const cleanName = String(name).trim();
+    const cleanCategory = String(category || 'Shirts').trim();
+    const cleanSizes = Array.isArray(sizes) 
+      ? sizes.map(s => String(s).trim()).filter(Boolean) 
+      : (typeof sizes === 'string' && sizes.trim() ? sizes.split(',').map(s => s.trim()).filter(Boolean) : []);
+    const cleanColors = Array.isArray(colors) 
+      ? colors.map(c => String(c).trim()).filter(Boolean) 
+      : (typeof colors === 'string' && colors.trim() ? colors.split(',').map(c => c.trim()).filter(Boolean) : []);
+
+    // Deduplication check: if identical create payload arrives within 3000ms for this shop, return existing product
+    const dedupKey = `${shopId}:${cleanName.toLowerCase()}:${numSellingPrice}:${cleanCategory}:${JSON.stringify(cleanSizes)}:${JSON.stringify(cleanColors)}`;
+    const recent = recentProductCreations.get(dedupKey);
+    if (recent && (Date.now() - recent.timestamp < 3000)) {
+      return res.status(200).json(recent.product);
+    }
 
     // Auto-generate authoritative QuickR barcode
-    const barcode = await generateUniqueBarcode(req.user.shopId);
+    const barcode = await generateUniqueBarcode(shopId);
 
     const id = `PROD-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
     const newProd = new Product({
       id,
-      name: String(name).trim(),
-      category: category || 'Shirts',
+      name: cleanName,
+      category: cleanCategory,
       subcategory: subcategory || '',
       sellingPrice: numSellingPrice,
       originalPrice,
-      sizes: sizes || [],
-      colors: colors || [],
+      sizes: cleanSizes,
+      colors: cleanColors,
       availability: numAvailability,
       description: description || '',
       gstRate: numGstRate,
@@ -1438,10 +1457,17 @@ app.post('/api/products', requireAuth, async (req, res) => {
       measurementType: cleanMeasurementType,
       isActive: isActive !== undefined ? isActive : true,
       barcode,
-      shopId: req.user.shopId
+      shopId
     });
 
     await newProd.save();
+    recentProductCreations.set(dedupKey, { timestamp: Date.now(), product: newProd });
+    if (recentProductCreations.size > 200) {
+      const cutoff = Date.now() - 10000;
+      for (const [k, v] of recentProductCreations.entries()) {
+        if (v.timestamp < cutoff) recentProductCreations.delete(k);
+      }
+    }
     res.status(201).json(newProd);
   } catch (err) {
     console.error('Create product error:', err);
@@ -1477,8 +1503,16 @@ app.put('/api/products/:id', requireAuth, async (req, res) => {
     if (subcategory !== undefined) prod.subcategory = subcategory;
     if (sellingPrice !== undefined) prod.sellingPrice = sellingPrice;
     if (originalPrice !== undefined) prod.originalPrice = originalPrice;
-    if (sizes) prod.sizes = sizes;
-    if (colors) prod.colors = colors;
+    if (sizes !== undefined) {
+      prod.sizes = Array.isArray(sizes) 
+        ? sizes.map(s => String(s).trim()).filter(Boolean) 
+        : (typeof sizes === 'string' && sizes.trim() ? sizes.split(',').map(s => s.trim()).filter(Boolean) : []);
+    }
+    if (colors !== undefined) {
+      prod.colors = Array.isArray(colors) 
+        ? colors.map(c => String(c).trim()).filter(Boolean) 
+        : (typeof colors === 'string' && colors.trim() ? colors.split(',').map(c => c.trim()).filter(Boolean) : []);
+    }
     if (availability !== undefined) prod.availability = availability;
     if (description !== undefined) prod.description = description;
     if (isActive !== undefined) {
