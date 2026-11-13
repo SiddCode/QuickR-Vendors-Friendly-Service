@@ -302,15 +302,17 @@ async function runAllTests() {
   });
 
   // Test 14: Mobile layout works without clipping
-  await test('Scenario 14: Mobile layout has responsive sizing without clipping', async () => {
+  await test('Scenario 14: Mobile layout has responsive sizing without clipping in InlineProductSearch', async () => {
     const fs = await import('node:fs');
-    const modalCode = fs.readFileSync('frontend/src/components/AddProductSelectModal.tsx', 'utf8');
+    const inlineCode = fs.readFileSync('frontend/src/components/InlineProductSearch.tsx', 'utf8');
 
-    // Verify key responsive classes
-    assert.ok(modalCode.includes('max-h-[85vh]'), 'Modal must have viewport height cap');
-    assert.ok(modalCode.includes('overflow-y-auto'), 'Product list must scroll vertically');
-    assert.ok(modalCode.includes('truncate'), 'Long product names must be truncated on mobile');
-    assert.ok(modalCode.includes('text-xs sm:text-sm'), 'Responsive font sizing');
+    // Verify key responsive classes and inline design
+    assert.ok(inlineCode.includes('overflow-y-auto'), 'Product list must scroll vertically');
+    assert.ok(inlineCode.includes('truncate'), 'Long product names must be truncated on mobile');
+    assert.ok(inlineCode.includes('text-xs sm:text-sm'), 'Responsive font sizing');
+    assert.ok(inlineCode.includes('Clear search'), 'Clear search button must be present');
+    assert.ok(inlineCode.includes('No products found'), 'No products found inline message');
+    assert.ok(inlineCode.includes('Plus'), 'Add (+) button present for each product');
   });
 
   // Test 15: Live Express GET /api/products returns products sorted A–Z case-insensitively
@@ -405,6 +407,34 @@ async function runAllTests() {
     const names = res.body.map(p => p.name);
     // Ascending A-Z case-insensitive: Apple Cap, BANANA HOODIE, blue Shirt, zebra scarf
     assert.deepEqual(names, ['Apple Cap', 'BANANA HOODIE', 'blue Shirt', 'zebra scarf']);
+  });
+
+  // Test 16: Complete elimination of popup/modal for product selection
+  await test('Scenario 16: Complete elimination of product selection popup modal', async () => {
+    const fs = await import('node:fs');
+    const salesSessionCode = fs.readFileSync('frontend/src/pages/SalesSession.tsx', 'utf8');
+    const billingCode = fs.readFileSync('frontend/src/pages/Billing.tsx', 'utf8');
+
+    // Confirm AddProductSelectModal is not imported or used anywhere
+    assert.equal(salesSessionCode.includes('AddProductSelectModal'), false, 'SalesSession must not use AddProductSelectModal');
+    assert.equal(billingCode.includes('AddProductSelectModal'), false, 'Billing must not use AddProductSelectModal');
+    assert.equal(salesSessionCode.includes('Select Product to Add'), false, 'SalesSession must not contain popup title');
+    assert.equal(billingCode.includes('Select Product to Add'), false, 'Billing must not contain popup title');
+    assert.equal(salesSessionCode.includes('isAddProductModalOpen'), false, 'SalesSession must not have isAddProductModalOpen state');
+    assert.equal(billingCode.includes('isAddProductModalOpen'), false, 'Billing must not have isAddProductModalOpen state');
+    assert.equal(fs.existsSync('frontend/src/components/AddProductSelectModal.tsx'), false, 'AddProductSelectModal.tsx must be deleted');
+  });
+
+  // Test 17: InlineProductSearch is embedded permanently above cart items
+  await test('Scenario 17: InlineProductSearch is embedded permanently above cart items', async () => {
+    const fs = await import('node:fs');
+    const salesSessionCode = fs.readFileSync('frontend/src/pages/SalesSession.tsx', 'utf8');
+    const billingCode = fs.readFileSync('frontend/src/pages/Billing.tsx', 'utf8');
+
+    assert.ok(salesSessionCode.includes('<InlineProductSearch'), 'SalesSession must embed InlineProductSearch');
+    assert.ok(billingCode.includes('<InlineProductSearch'), 'Billing must embed InlineProductSearch');
+    assert.ok(salesSessionCode.includes('onSelectProduct={handleSelectProductFromInline}'), 'SalesSession must bind inline select handler');
+    assert.ok(billingCode.includes('onSelectProduct={handleSelectProductFromInline}'), 'Billing must bind inline select handler');
   });
 
   console.log(`\n========================================`);

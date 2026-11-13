@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Plus, X, Receipt, Search, Check, ChevronDown, Camera, Barcode, AlertTriangle, Printer, MessageSquare, CheckCircle2 } from 'lucide-react';
 import { api } from '../services/api';
 import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
-import { AddProductSelectModal } from '../components/AddProductSelectModal';
+import { InlineProductSearch, type InlineProductSearchRef } from '../components/InlineProductSearch';
 import type { Product } from '../types';
 import { openWhatsApp, buildWhatsAppBillMessage } from '../utils/whatsapp';
 import { printSaleInvoiceWindow } from '../utils/printInvoice';
@@ -37,9 +37,8 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
     [products]
   );
 
-  // Add Product Search Modal state
-  const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
-  const [targetCartItemId, setTargetCartItemId] = useState<string | null>(null);
+  // Inline Product Search ref
+  const inlineProductSearchRef = useRef<InlineProductSearchRef>(null);
 
   // Barcode scanning state
   const [barcodeEnabled] = useState<boolean>(() => {
@@ -271,28 +270,21 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
   }, [billingInitialData]);
 
   const handleAddItem = () => {
-    setTargetCartItemId(null);
-    setIsAddProductModalOpen(true);
+    inlineProductSearchRef.current?.focus();
   };
 
-  const handleSelectProductFromModal = (prod: Product) => {
-    setIsAddProductModalOpen(false);
+  const handleSelectProductFromInline = (prod: Product) => {
     if (!prod || !prod.isActive) return;
 
-    if (targetCartItemId) {
-      handleItemChange(targetCartItemId, 'productId', prod.id);
-      setTargetCartItemId(null);
-    } else {
-      setItems(prevItems => [
-        ...prevItems,
-        {
-          id: Date.now().toString(),
-          productId: prod.id,
-          quantity: 1,
-          rate: prod.sellingPrice
-        }
-      ]);
-    }
+    setItems(prevItems => [
+      ...prevItems,
+      {
+        id: Date.now().toString(),
+        productId: prod.id,
+        quantity: 1,
+        rate: prod.sellingPrice
+      }
+    ]);
   };
 
   const handleRemoveItem = (id: string) => {
@@ -699,12 +691,21 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
                 </div>
               )}
             </div>
+
+            {/* Permanent Inline Product Search */}
+            <div className="mb-4">
+              <InlineProductSearch
+                ref={inlineProductSearchRef}
+                products={products}
+                onSelectProduct={handleSelectProductFromInline}
+              />
+            </div>
             
             <div className="space-y-4">
               {items.length === 0 ? (
                 <div className="p-8 border border-dashed border-slate-200 rounded-2xl text-center bg-slate-50/50">
                   <p className="text-xs font-bold text-slate-500">Cart is empty</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Scan a product barcode or tap "Search / Add Item" to build the bill</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Scan a product barcode or search products above to build the bill</p>
                 </div>
               ) : (
                 items.map((item) => (
@@ -712,16 +713,6 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
                   <div className="flex-grow w-full">
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-slate-500">Product</label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTargetCartItemId(item.id);
-                          setIsAddProductModalOpen(true);
-                        }}
-                        className="text-[11px] text-primary-600 hover:text-primary-800 font-bold flex items-center gap-1 transition-colors"
-                      >
-                        <Search className="w-3 h-3" /> Search / Change
-                      </button>
                     </div>
                     <select 
                       value={item.productId}
@@ -1118,17 +1109,6 @@ export const Billing: React.FC<BillingProps> = ({ setCurrentPage, billingInitial
         </div>
       )}
 
-      {/* Add / Search Product Selection Modal */}
-      <AddProductSelectModal
-        isOpen={isAddProductModalOpen}
-        onClose={() => {
-          setIsAddProductModalOpen(false);
-          setTargetCartItemId(null);
-        }}
-        onSelectProduct={handleSelectProductFromModal}
-        products={products}
-        title={targetCartItemId ? 'Change Product' : 'Select Product to Add'}
-      />
     </div>
   );
 };
