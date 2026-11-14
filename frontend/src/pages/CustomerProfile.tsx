@@ -1,34 +1,27 @@
-import React, { useState } from 'react';
-import { formatDateIST, formatTimeIST, formatDateTimeIST } from '../utils/date';
+import React, { useState, useEffect, useMemo } from 'react';
+import { formatDateTimeIST, formatDateIST, formatTimeIST } from '../utils/date';
 import { StatusBadge } from '../components/StatusBadge';
 import { useApp } from '../context/AppContext';
 import { 
   ArrowLeft, 
   MapPin, 
-  Mail, 
   Phone, 
   Plus, 
   FileText, 
   MessageSquare,
-  Heart, 
-  CheckSquare, 
-  Palette, 
-  Clock, 
-  Calendar,
-  MoreHorizontal,
-  Sparkles,
-  RefreshCw,
-  AlertCircle,
-  TrendingUp,
+  Heart,
+  Clock,
   Trash2,
   AlertTriangle,
   Loader2,
-  Megaphone
+  Megaphone,
+  Edit2,
+  Check,
+  X
 } from 'lucide-react';
 import { api } from '../services/api';
 import { messageGenerationService } from '../services/messageGenerationService';
 import { openWhatsApp } from '../utils/whatsapp';
-import { useAiRateLimit } from '../hooks/useAiRateLimit';
 
 interface CustomerProfileProps {
   customerId: string;
@@ -36,9 +29,26 @@ interface CustomerProfileProps {
   setSelectedCustomerId: (id: string) => void;
 }
 
+type TimelineFilter = 'ALL' | 'ENQUIRIES' | 'PURCHASES' | 'FOLLOWUPS' | 'CAMPAIGNS';
+
+interface TimelineEntry {
+  id: string;
+  type: 'enquiry' | 'purchase' | 'followup' | 'campaign' | 'activity';
+  date: Date;
+  title: string;
+  description: string;
+  badge?: string;
+  badgeColor?: 'emerald' | 'amber' | 'blue' | 'rose' | 'slate' | 'indigo';
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
+}
+
 export const CustomerProfile: React.FC<CustomerProfileProps> = ({ 
   customerId, 
-  setCurrentPage
+  setCurrentPage,
+  setSelectedCustomerId
 }) => {
   const { 
     customers, 
@@ -49,64 +59,48 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     activities, 
     products,
     addNote,
+    updateCustomer,
     deleteCustomer,
     shopName
   } = useApp();
 
-  const { rateLimitInfo, remainingSeconds, triggerRateLimit, clearRateLimit } = useAiRateLimit();
+  const customer = customers.find(c => c.id === customerId);
+
+  // Delete modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'enquiries' | 'followups' | 'campaigns' | 'notes' | 'activity'>('overview');
+  // Notes state
   const [noteContent, setNoteContent] = useState('');
+
+  // Timeline filter state
+  const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>('ALL');
 
   // Customer Campaign History State
   const [campaignHistory, setCampaignHistory] = useState<any[]>([]);
-  const [loadingCampaignHistory, setLoadingCampaignHistory] = useState(false);
+  const [, setLoadingCampaignHistory] = useState(false);
 
-  // AI Intelligence State
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiResult, setAiResult] = useState<{
-    leadLevel: 'HOT' | 'WARM' | 'COLD' | 'LOW_PRIORITY';
-    confidence: 'HIGH' | 'MEDIUM' | 'LOW';
-    reason: string;
-    recommendedAction: string;
-    recommendedTiming: 'TODAY' | 'TOMORROW' | 'WITHIN_3_DAYS' | 'WAIT' | 'NO_FOLLOW_UP';
-  } | null>(null);
-
-  // AI Sales Opportunity State
-  const [oppLoading, setOppLoading] = useState(false);
-  const [oppError, setOppError] = useState<string | null>(null);
-  const [oppResult, setOppResult] = useState<{
-    opportunityScore: number;
-    leadLevel: 'HOT' | 'WARM' | 'COLD' | 'LOW_PRIORITY';
-    recommendedAction: string;
-    recommendedTiming: 'TODAY' | 'TOMORROW' | 'WITHIN_3_DAYS' | 'WAIT' | 'NO_FOLLOW_UP';
-    reason: string;
-    product?: {
-      id: string;
-      name: string;
-      size?: string;
-      currentStock: number | null;
-      inStock: boolean | null;
-    } | null;
-  } | null>(null);
-
-  const customer = customers.find(c => c.id === customerId);
-
-  // WhatsApp Offer Permission State (declared before early return to satisfy Rules of Hooks)
+  // WhatsApp Offer Permission State
   const [offerPermissionEnabled, setOfferPermissionEnabled] = useState(false);
   const [loadingPermission, setLoadingPermission] = useState(false);
   const [confirmPermissionModal, setConfirmPermissionModal] = useState<'enable' | 'disable' | null>(null);
-  const [customMsgText, setCustomMsgText] = useState('');
 
-  React.useEffect(() => {
+  // Preferences editing state
+  const [isEditingPreferences, setIsEditingPreferences] = useState(false);
+  const [prefInterestedIn, setPrefInterestedIn] = useState('');
+  const [prefSize, setPrefSize] = useState('');
+  const [prefColors, setPrefColors] = useState('');
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+
+  // Load campaign history and WhatsApp offer permission
+  useEffect(() => {
     if (customer?.id) {
       setLoadingCampaignHistory(true);
       api.getCustomerCampaignHistory(customer.id)
         .then(res => {
-          if (res.success) setCampaignHistory(res.history);
+          if (res.success && Array.isArray(res.history)) {
+            setCampaignHistory(res.history);
+          }
         })
         .catch(err => console.error('Failed to load campaign history:', err))
         .finally(() => setLoadingCampaignHistory(false));
@@ -114,32 +108,33 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
       setLoadingPermission(true);
       api.getCustomerOfferPermission(customer.id)
         .then(res => {
-          if (res.success) setOfferPermissionEnabled(res.allowWhatsAppOffers);
+          if (res.success) {
+            setOfferPermissionEnabled(Boolean(res.allowWhatsAppOffers));
+          }
         })
         .catch(err => console.error('Failed to load offer permission:', err))
         .finally(() => setLoadingPermission(false));
     }
   }, [customer?.id]);
 
-  const customerFollowUpsAll = customer ? followUps.filter(f => f.customerId === customer.id) : [];
-  const pendingFollowUpForInit = customerFollowUpsAll.find(f => f.status === 'ready');
-  const defaultWhatsAppMessage = customer
-    ? (pendingFollowUpForInit?.message || messageGenerationService.generateFollowUpQuickMessage(
-        customer.name,
-        'Black Shirt',
-        customer.preferences?.preferredSize
-      ))
-    : '';
-
-  React.useEffect(() => {
-    setCustomMsgText(defaultWhatsAppMessage);
-  }, [customer?.id, defaultWhatsAppMessage]);
+  // Sync preference editing state when opening modal or customer changes
+  useEffect(() => {
+    if (customer) {
+      setPrefInterestedIn(customer.preferences?.interestedIn || '');
+      setPrefSize(customer.preferences?.preferredSize || '');
+      const colors = customer.preferences?.preferredColors;
+      setPrefColors(Array.isArray(colors) ? colors.join(', ') : (colors || ''));
+    }
+  }, [customer]);
 
   if (!customer) {
     return (
-      <div className="p-8 text-center">
+      <div className="flex-grow p-8 text-center font-sans">
         <p className="text-slate-400">Customer not found</p>
-        <button onClick={() => setCurrentPage('customers')} className="text-primary-500 font-bold mt-4 flex items-center gap-1 mx-auto">
+        <button 
+          onClick={() => setCurrentPage('customers')} 
+          className="text-primary-600 font-bold mt-4 flex items-center gap-1 mx-auto hover:underline text-sm"
+        >
           <ArrowLeft className="w-4 h-4" /> Back to Customers
         </button>
       </div>
@@ -147,9 +142,23 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
   }
 
   const customerEnquiries = enquiries.filter(e => e.customerId === customer.id);
-  const customerFollowUps = customerFollowUpsAll;
+  const customerFollowUps = followUps.filter(f => f.customerId === customer.id);
+  const customerSales = sales.filter(s => s.customerId === customer.id);
   const customerNotes = notes.filter(n => n.customerId === customer.id);
   const customerActivities = activities.filter(a => a.customerId === customer.id);
+
+  // Generate default WhatsApp message
+  const pendingFollowUp = customerFollowUps.find(f => f.status === 'ready');
+  const defaultWhatsAppMessage = pendingFollowUp?.message || messageGenerationService.generateFollowUpQuickMessage(
+    customer.name,
+    customerEnquiries[0]?.productName || 'our collection',
+    customer.preferences?.preferredSize
+  );
+
+  const handleSendWhatsApp = (customMsg?: string) => {
+    const textToSend = customMsg || defaultWhatsAppMessage;
+    openWhatsApp(customer.phone, textToSend, shopName, customer.name);
+  };
 
   const handleTogglePermission = async (enable: boolean) => {
     if (!customer?.id) return;
@@ -167,822 +176,514 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
     }
   };
 
-  // Quick WhatsApp Recommendation Content
-  const pendingFollowUp = pendingFollowUpForInit;
-  const whatsAppMessage = defaultWhatsAppMessage;
+  const handleSavePreferences = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingPreferences(true);
+    try {
+      const cleanedColors = prefColors
+        .split(',')
+        .map(c => c.trim())
+        .filter(Boolean);
 
-  const handleSendWhatsApp = () => {
-    const textToSend = customMsgText || whatsAppMessage;
-    if (!textToSend.trim()) return;
-    openWhatsApp(customer.phone, textToSend, shopName, customer.name);
+      const updatedPrefs = {
+        interestedIn: prefInterestedIn.trim(),
+        preferredSize: prefSize.trim(),
+        preferredColors: cleanedColors
+      };
+
+      await updateCustomer(customer.id, { preferences: updatedPrefs });
+      setIsEditingPreferences(false);
+    } finally {
+      setIsSavingPreferences(false);
+    }
   };
 
   const handleAddNoteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!noteContent.trim()) return;
-    addNote(customer.id, noteContent);
+    addNote(customer.id, noteContent.trim());
     setNoteContent('');
   };
 
+  // Build unified chronological activity timeline
+  const timelineEntries: TimelineEntry[] = useMemo(() => {
+    const list: TimelineEntry[] = [];
+
+    // 1. Enquiries
+    customerEnquiries.forEach(enq => {
+      const prod = products.find(p => p.id === enq.productId);
+      const prodName = enq.productName || prod?.name || 'Product';
+      const sizeText = enq.size && enq.size !== 'N/A' ? ` (${enq.size})` : '';
+      const priceText = enq.priceAtEnquiry || prod?.sellingPrice ? `₹${(enq.priceAtEnquiry || prod?.sellingPrice || 0).toLocaleString('en-IN')}` : '';
+
+      list.push({
+        id: `enq-${enq.id}`,
+        type: 'enquiry',
+        date: new Date(enq.createdAt),
+        title: `Enquiry: ${prodName}${sizeText}`,
+        description: [
+          priceText ? `Price: ${priceText}` : '',
+          enq.color && enq.color !== 'Standard' && enq.color !== 'N/A' ? `Colour: ${enq.color}` : '',
+          enq.quantity > 1 ? `Qty: ${enq.quantity}` : '',
+          enq.notes ? `"${enq.notes}"` : ''
+        ].filter(Boolean).join(' • ') || 'Customer enquired about this product.',
+        badge: enq.purchaseStatus === 'Purchased' ? 'Purchased' : enq.purchaseStatus || 'Pending',
+        badgeColor: enq.purchaseStatus === 'Purchased' ? 'emerald' : 'amber'
+      });
+    });
+
+    // 2. Purchases (Sales)
+    customerSales.forEach(sale => {
+      const itemCount = (sale.items || []).reduce((acc, i) => acc + (i.quantity || 1), 0);
+      const itemNames = (sale.items || []).map(i => i.productName).filter(Boolean).slice(0, 3).join(', ');
+      const extraItems = (sale.items?.length || 0) > 3 ? ` +${sale.items.length - 3} more` : '';
+
+      list.push({
+        id: `sale-${sale.id}`,
+        type: 'purchase',
+        date: new Date(sale.createdAt),
+        title: `Purchase Completed • Invoice ${sale.invoiceNumber || sale.id}`,
+        description: `${itemNames || 'Items'}${extraItems} (${itemCount} item${itemCount === 1 ? '' : 's'}) • ₹${(sale.totalAmount || 0).toLocaleString('en-IN')} via ${sale.paymentMethod || 'Cash'}`,
+        badge: `₹${(sale.totalAmount || 0).toLocaleString('en-IN')}`,
+        badgeColor: 'emerald'
+      });
+    });
+
+    // 3. Follow-ups
+    customerFollowUps.forEach(fw => {
+      const isReady = fw.status === 'ready';
+      const isCompleted = fw.status === 'completed';
+      const isClosed = fw.status === 'closed';
+
+      list.push({
+        id: `fw-${fw.id}`,
+        type: 'followup',
+        date: new Date(fw.scheduledAt || fw.createdAt),
+        title: `Follow-up ${isReady ? '(Due Today)' : isCompleted ? '(Completed)' : isClosed ? '(Closed)' : '(Scheduled)'}`,
+        description: fw.reason || fw.message || 'Follow-up regarding customer enquiry.',
+        badge: isReady ? 'Due Today' : isCompleted ? 'Completed' : fw.status,
+        badgeColor: isReady ? 'rose' : isCompleted ? 'emerald' : 'blue',
+        action: isReady ? {
+          label: 'Open WhatsApp',
+          onClick: () => handleSendWhatsApp(fw.message)
+        } : undefined
+      });
+    });
+
+    // 4. Campaign History
+    campaignHistory.forEach((camp, idx) => {
+      list.push({
+        id: `camp-${idx}-${camp.campaignTitle}`,
+        type: 'campaign',
+        date: new Date(camp.sentAt || Date.now()),
+        title: `Campaign: ${camp.campaignTitle}`,
+        description: [
+          camp.discount ? `Offer: ${camp.discount}` : '',
+          camp.responseType ? `Customer response: ${camp.responseType}` : '',
+          camp.responseNotes ? `"${camp.responseNotes}"` : ''
+        ].filter(Boolean).join(' • ') || `Sent status: ${camp.sentStatus}`,
+        badge: camp.sentStatus || 'Sent',
+        badgeColor: camp.sentStatus === 'DELIVERED' || camp.sentStatus === 'READ' ? 'emerald' : 'indigo'
+      });
+    });
+
+    // 5. Activity log (excluding duplicate enquiry/followup logs)
+    customerActivities.forEach(act => {
+      if (act.type === 'enquiry_created' || act.type === 'followup_created') {
+        return; // Avoid duplicating already captured enquiries and follow-ups
+      }
+      list.push({
+        id: `act-${act.id}`,
+        type: 'activity',
+        date: new Date(act.createdAt),
+        title: act.type === 'message_sent' ? 'WhatsApp Message Sent' : 'Customer Activity',
+        description: act.description,
+        badge: act.type === 'message_sent' ? 'Message' : 'Activity',
+        badgeColor: 'slate'
+      });
+    });
+
+    // Sort newest first
+    return list.sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [customerEnquiries, customerSales, customerFollowUps, campaignHistory, customerActivities, products]);
+
+  // Filtered timeline
+  const filteredTimeline = useMemo(() => {
+    if (timelineFilter === 'ALL') return timelineEntries;
+    if (timelineFilter === 'ENQUIRIES') return timelineEntries.filter(t => t.type === 'enquiry');
+    if (timelineFilter === 'PURCHASES') return timelineEntries.filter(t => t.type === 'purchase');
+    if (timelineFilter === 'FOLLOWUPS') return timelineEntries.filter(t => t.type === 'followup');
+    if (timelineFilter === 'CAMPAIGNS') return timelineEntries.filter(t => t.type === 'campaign');
+    return timelineEntries;
+  }, [timelineEntries, timelineFilter]);
+
+  // Preferences existence check
+  const hasInterestedIn = Boolean(customer.preferences?.interestedIn && customer.preferences.interestedIn.trim());
+  const hasSize = Boolean(customer.preferences?.preferredSize && customer.preferences.preferredSize.trim());
+  const rawColors = customer.preferences?.preferredColors as any;
+  const hasColors = Boolean(
+    (Array.isArray(rawColors) && rawColors.length > 0) ||
+    (typeof rawColors === 'string' && rawColors.trim())
+  );
+  const hasAnyPreferences = hasInterestedIn || hasSize || hasColors;
+
   return (
-    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">
-      {/* Back Header */}
+    <div className="flex-grow p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full font-sans space-y-6 animate-fadeIn">
+      
+      {/* Top Navigation Row */}
       <div className="flex items-center justify-between">
         <button 
           onClick={() => setCurrentPage('customers')} 
-          className="text-slate-500 hover:text-slate-700 flex items-center gap-1.5 font-bold text-xs"
+          className="text-slate-500 hover:text-slate-800 flex items-center gap-1.5 font-bold text-xs sm:text-sm transition-colors"
         >
-          <ArrowLeft className="w-4.5 h-4.5" /> Back to Customers
+          <ArrowLeft className="w-4 h-4" /> Back to Customers
         </button>
 
         <button
           onClick={() => setShowDeleteModal(true)}
-          className="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors shadow-2xs"
+          className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+          title="Delete Customer"
         >
           <Trash2 className="w-3.5 h-3.5" /> Delete Customer
         </button>
       </div>
 
-      {/* Profile Info Header */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary-50 text-primary-600 font-extrabold text-2xl flex items-center justify-center shrink-0">
-            {customer.name.split(' ').map(n => n[0]).join('')}
+      {/* A. Customer Header Card */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-soft p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="w-14 h-14 rounded-full bg-primary-50 text-primary-600 font-black text-xl flex items-center justify-center shrink-0 border border-primary-100">
+            {customer.name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'C'}
           </div>
-          <div>
-            <h2 className="text-xl sm:text-2xl font-bold text-slate-800">{customer.name}</h2>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-400 mt-1 font-medium">
-              <a href={`tel:${customer.phone}`} className="flex items-center gap-1 hover:text-primary-600 transition-colors"><Phone className="w-3.5 h-3.5" /> {customer.phone}</a>
-              <span className="flex items-center gap-1"><Mail className="w-3.5 h-3.5" /> {customer.email}</span>
-              <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {customer.location}</span>
-            </div>
-          </div>
-        </div>
 
-        {/* Quick Stats Grid */}
-        <div className="flex flex-wrap gap-6 sm:gap-8 text-left text-xs border-t md:border-t-0 md:border-l border-slate-100 pt-4 md:pt-0 pl-0 md:pl-8">
-          <div>
-            <p className="text-slate-400 font-medium">Customer ID</p>
-            <p className="font-bold text-slate-700 mt-0.5">{customer.id}</p>
-          </div>
-          <div>
-            <p className="text-slate-400 font-medium">WhatsApp Offers</p>
-            <div className="mt-0.5 flex items-center gap-2">
-              <span className={`inline-flex items-center gap-1 font-bold text-xs ${
-                offerPermissionEnabled ? 'text-emerald-700' : 'text-slate-500'
-              }`}>
-                {offerPermissionEnabled ? '🟢 Enabled' : '⚪ Not enabled'}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">{customer.name}</h1>
+              <StatusBadge status={customer.status || 'Active'} />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
+              <a 
+                href={`tel:${customer.phone}`} 
+                className="flex items-center gap-1.5 text-slate-700 hover:text-primary-600 font-semibold transition-colors"
+              >
+                <Phone className="w-3.5 h-3.5 text-slate-400" /> {customer.phone}
+              </a>
+
+              {/* Location only if available */}
+              {customer.location && customer.location.trim() && (
+                <span className="flex items-center gap-1 text-slate-500">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400" /> {customer.location}
+                </span>
+              )}
+
+              {/* Subtle Customer ID */}
+              <span className="text-[11px] text-slate-400 font-mono">
+                ID: {customer.id}
+              </span>
+            </div>
+
+            {/* Subtle WhatsApp Offers Consent status */}
+            <div className="flex items-center gap-2 pt-0.5 text-[11px]">
+              <span className="text-slate-400 font-medium">WhatsApp Offers:</span>
+              <span className={`font-bold ${offerPermissionEnabled ? 'text-emerald-700' : 'text-slate-500'}`}>
+                {offerPermissionEnabled ? 'Enabled' : 'Disabled'}
               </span>
               <button
                 onClick={() => setConfirmPermissionModal(offerPermissionEnabled ? 'disable' : 'enable')}
                 disabled={loadingPermission}
-                className="text-[11px] font-bold text-indigo-600 hover:underline"
+                className="text-primary-600 hover:text-primary-800 underline font-semibold disabled:opacity-50"
               >
-                {offerPermissionEnabled ? '[ Disable Offers ]' : '[ Enable Offers ]'}
+                {offerPermissionEnabled ? 'Change' : 'Enable'}
               </button>
             </div>
           </div>
-          <div>
-            <p className="text-slate-400 font-medium">Total Enquiries</p>
-            <p className="font-bold text-slate-700 mt-0.5">{customerEnquiries.length}</p>
-          </div>
-          <div>
-            <p className="text-slate-400 font-medium">Total Purchases</p>
-            <p className="font-bold text-emerald-600 mt-0.5">{Math.max(sales.filter(s => s.customerId === customer.id).length, customer.totalPurchases || 0)}</p>
-          </div>
-          <div>
-            <p className="text-slate-400 font-medium">Customer Status</p>
-            <div className="mt-0.5">
-              <StatusBadge status={customer.status} />
-            </div>
-          </div>
+        </div>
+
+        {/* Primary Actions: New Enquiry & WhatsApp */}
+        <div className="flex items-center gap-2.5 sm:self-center shrink-0">
+          <button
+            onClick={() => {
+              setSelectedCustomerId(customer.id);
+              setCurrentPage('new-enquiry');
+            }}
+            className="flex-1 sm:flex-initial bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all"
+          >
+            <Plus className="w-4 h-4" /> New Enquiry
+          </button>
+
+          <button
+            onClick={() => handleSendWhatsApp()}
+            className="flex-1 sm:flex-initial bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all"
+          >
+            <MessageSquare className="w-4 h-4" /> WhatsApp
+          </button>
         </div>
       </div>
 
-      {/* Main Layout Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* Left Side Tab Navigation & Content */}
-        <div className="lg:col-span-8 space-y-6">
-          
-          {/* Tabs */}
-          <div className="flex border-b border-slate-100 gap-6 text-sm font-semibold overflow-x-auto">
-            {(['overview', 'enquiries', 'followups', 'campaigns', 'notes', 'activity'] as const).map(tab => (
+      {/* B. Customer Preferences Card */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-soft p-5 sm:p-6 space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+            <Heart className="w-4 h-4 text-rose-500" />
+            <span>Customer Preferences</span>
+          </div>
+
+          <button
+            onClick={() => setIsEditingPreferences(true)}
+            className="text-xs font-bold text-primary-600 hover:text-primary-700 bg-primary-50 hover:bg-primary-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+          >
+            <Edit2 className="w-3 h-3" /> {hasAnyPreferences ? 'Edit' : '+ Add Preferences'}
+          </button>
+        </div>
+
+        {hasAnyPreferences ? (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1 text-xs">
+            {/* Interested products/categories */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Interested In</span>
+              <p className="font-bold text-slate-800 text-sm">
+                {customer.preferences?.interestedIn || '—'}
+              </p>
+            </div>
+
+            {/* Preferred size */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Preferred Size</span>
+              <p className="font-bold text-slate-800 text-sm">
+                {customer.preferences?.preferredSize || '—'}
+              </p>
+            </div>
+
+            {/* Preferred colours */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Preferred Colours</span>
+              <p className="font-bold text-slate-800 text-sm">
+                {Array.isArray(customer.preferences?.preferredColors) 
+                  ? customer.preferences.preferredColors.join(', ') || '—'
+                  : customer.preferences?.preferredColors || '—'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="py-2 text-xs text-slate-400 font-medium">
+            No preferences recorded yet. Tap <span className="font-bold text-slate-600">"+ Add Preferences"</span> to save size, color, or item interests for customer recommendations.
+          </div>
+        )}
+      </div>
+
+      {/* C. Customer Activity Timeline Card */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-soft p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+            <Clock className="w-4 h-4 text-primary-500" />
+            <span>Customer Activity Timeline</span>
+            <span className="text-xs text-slate-400 font-normal">({timelineEntries.length})</span>
+          </div>
+
+          {/* Simple compact filter pills */}
+          <div className="flex flex-wrap gap-1.5 text-xs font-semibold">
+            {[
+              { id: 'ALL' as const, label: 'All' },
+              { id: 'ENQUIRIES' as const, label: `Enquiries (${customerEnquiries.length})` },
+              { id: 'PURCHASES' as const, label: `Purchases (${customerSales.length})` },
+              { id: 'FOLLOWUPS' as const, label: `Follow-ups (${customerFollowUps.length})` },
+              ...(campaignHistory.length > 0 ? [{ id: 'CAMPAIGNS' as const, label: `Campaigns (${campaignHistory.length})` }] : [])
+            ].map(f => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`pb-3 capitalize transition-all duration-150 relative shrink-0 ${
-                  activeTab === tab 
-                    ? 'text-primary-500' 
-                    : 'text-slate-400 hover:text-slate-600'
+                key={f.id}
+                onClick={() => setTimelineFilter(f.id)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  timelineFilter === f.id
+                    ? 'bg-slate-800 text-white shadow-2xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {tab === 'campaigns' ? 'Campaign History' : tab}
-                {tab === 'enquiries' && (
-                  <span className="ml-1.5 px-1.5 py-0.5 bg-primary-50 text-primary-500 rounded text-xs font-bold">
-                    {customerEnquiries.length}
-                  </span>
-                )}
-                {tab === 'followups' && (
-                  <span className="ml-1.5 px-1.5 py-0.5 bg-danger-50 text-danger-500 rounded text-xs font-bold">
-                    {customerFollowUps.filter(f => f.status === 'ready').length}
-                  </span>
-                )}
-                {tab === 'campaigns' && (
-                  <span className="ml-1.5 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-xs font-bold">
-                    {campaignHistory.length}
-                  </span>
-                )}
-                {tab === 'notes' && (
-                  <span className="ml-1.5 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-xs font-bold">
-                    {customerNotes.length}
-                  </span>
-                )}
-                {activeTab === tab && (
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-500 rounded-full" />
-                )}
+                {f.label}
               </button>
             ))}
           </div>
-
-          {/* Tab Contents */}
-          <div className="space-y-6">
-            
-            {/* Overview / Enquiry History Table */}
-            {(activeTab === 'overview' || activeTab === 'enquiries') && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-base font-bold text-slate-800">Enquiry History</h3>
-                  <button 
-                    onClick={() => setCurrentPage('new-enquiry')}
-                    className="text-xs font-bold bg-primary-50 text-primary-500 hover:bg-primary-100 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> New Enquiry
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="text-slate-400 font-semibold border-b border-slate-50 pb-2">
-                        <th className="py-2.5 text-xs">Date</th>
-                        <th className="py-2.5 text-xs">Product</th>
-                        <th className="py-2.5 text-xs text-center">Size</th>
-                        <th className="py-2.5 text-xs">Price</th>
-                        <th className="py-2.5 text-xs text-center">Interest</th>
-                        <th className="py-2.5 text-xs text-center">Purchase Status</th>
-                        <th className="py-2.5 text-xs text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {customerEnquiries.map(item => {
-                        const prod = products.find(p => p.id === item.productId);
-                        return (
-                          <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-3">
-                              <p className="font-semibold text-slate-700">
-                                {formatDateIST(item.createdAt)}
-                              </p>
-                              <p className="text-xs text-slate-400">
-                                {formatTimeIST(item.createdAt)}
-                              </p>
-                            </td>
-                            <td className="py-3 flex items-center gap-3">
-                              <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-400 uppercase">
-                                {(item.productName || prod?.name || 'U')[0]}
-                              </div>
-                              <div>
-                                <p className="font-bold text-slate-700">{item.productName || prod?.name || 'Unknown'}</p>
-                                <p className="text-xs text-slate-400">{item.productCategory || prod?.category || 'Category'}</p>
-                              </div>
-                            </td>
-                            <td className="py-3 text-center">
-                              <span className="px-2 py-0.5 bg-primary-50 text-primary-500 rounded text-xs font-bold">
-                                {item.size}
-                              </span>
-                            </td>
-                            <td className="py-3 font-semibold text-slate-700">₹{(item.priceAtEnquiry || prod?.sellingPrice || 0).toLocaleString('en-IN')}</td>
-                            <td className="py-3 text-center">
-                              <StatusBadge status={item.interest === 'Interested' ? 'Interested' : 'Maybe'} />
-                            </td>
-                            <td className="py-3 text-center">
-                              <StatusBadge status={item.purchaseStatus === 'Purchased' ? 'Purchased' : "Didn't purchase"} />
-                            </td>
-                            <td className="py-3 text-center">
-                              <button className="p-1 hover:bg-slate-50 rounded text-slate-400 hover:text-slate-600">
-                                <MoreHorizontal className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Notes List tab */}
-            {(activeTab === 'overview' || activeTab === 'notes') && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-slate-400" /> Notes
-                  </h3>
-                </div>
-
-                <form onSubmit={handleAddNoteSubmit} className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Add a new note..."
-                    value={noteContent}
-                    onChange={(e) => setNoteContent(e.target.value)}
-                    className="flex-grow bg-slate-50 border border-slate-100 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-400 focus:bg-white transition-all duration-150"
-                  />
-                  <button 
-                    type="submit"
-                    className="bg-primary-50 hover:bg-primary-100 text-primary-500 font-semibold text-xs px-4 py-2 rounded-xl transition-colors"
-                  >
-                    + Add Note
-                  </button>
-                </form>
-
-                <div className="space-y-2">
-                  {customerNotes.map(note => (
-                    <div key={note.id} className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 text-sm text-slate-600">
-                      <p className="leading-relaxed">{note.content}</p>
-                      <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                        Added on {formatDateTimeIST(note.createdAt)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Follow-ups tab */}
-            {(activeTab === 'overview' || activeTab === 'followups') && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-slate-400" /> Follow-ups
-                  </h3>
-                  <button onClick={() => setCurrentPage('smart-followup')} className="text-xs font-bold text-primary-500 hover:underline">
-                    View All
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {customerFollowUps.map(item => (
-                    <div key={item.id} className={`p-4 rounded-xl border ${item.status === 'ready' ? 'bg-danger-50/20 border-danger-100' : 'bg-slate-50 border-slate-100'} flex items-center justify-between`}>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-bold uppercase tracking-wider ${item.status === 'ready' ? 'text-danger-500' : 'text-slate-400'}`}>
-                            {item.status === 'ready' ? 'Follow up today' : item.status}
-                          </span>
-                          <span className="text-xs text-slate-400">• Reminder: Black Shirt XL availability</span>
-                        </div>
-                      </div>
-                      {item.status === 'ready' && (
-                        <button 
-                          onClick={handleSendWhatsApp}
-                          className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
-                        >
-                          <MessageSquare className="w-3.5 h-3.5" /> Open WhatsApp
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Campaign History tab */}
-            {activeTab === 'campaigns' && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft font-sans">
-                <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-                  <Megaphone className="w-5 h-5 text-emerald-600" />
-                  Campaign History & Response Timeline
-                </h3>
-                {loadingCampaignHistory ? (
-                  <p className="text-xs text-slate-400 py-4 text-center">Loading campaign history...</p>
-                ) : campaignHistory.length === 0 ? (
-                  <div className="text-center py-8 space-y-2">
-                    <Megaphone className="w-8 h-8 text-slate-300 mx-auto" />
-                    <p className="text-xs text-slate-400">No promotional campaign activity recorded for this customer yet.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {campaignHistory.map((item, idx) => (
-                      <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 text-xs">
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-bold text-slate-800 text-sm">{item.campaignTitle}</h4>
-                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{item.discount}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-slate-500 text-[11px]">
-                          <p><span className="text-slate-400">Sent Status:</span> <strong className="text-slate-700 font-mono">{item.sentStatus}</strong></p>
-                          <p><span className="text-slate-400">Method:</span> <strong className="text-slate-700 font-mono">{item.sendingMethod}</strong></p>
-                          <p><span className="text-slate-400">Customer Response:</span> <strong className="text-emerald-700">{item.responseType}</strong></p>
-                          <p><span className="text-slate-400">Date:</span> <span>{new Date(item.sentAt).toLocaleDateString('en-IN')}</span></p>
-                        </div>
-                        {item.responseNotes && (
-                          <p className="text-[11px] text-slate-600 bg-white p-2 rounded-xl border border-slate-100 mt-1 italic">
-                            "{item.responseNotes}"
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {activeTab === 'activity' && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft">
-                <h3 className="text-base font-bold text-slate-800 mb-4">Activity Timeline</h3>
-                <div className="relative border-l border-slate-100 ml-4 pl-6 space-y-6">
-                  {customerActivities.map(act => (
-                    <div key={act.id} className="relative">
-                      {/* marker */}
-                      <div className="absolute -left-[30px] top-1.5 w-3 h-3 rounded-full border-2 border-white bg-primary-500 shadow-sm" />
-                      <div>
-                        <p className="text-sm font-semibold text-slate-700">{act.description}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">{formatDateTimeIST(act.createdAt)}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </div>
         </div>
 
-        {/* Right Side Cards */}
-        <div className="lg:col-span-4 space-y-6 font-sans">
-          
-          {/* What QuickR knows card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft">
-            <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">What QuickR knows:</h3>
-            <div className="space-y-4">
-              <div className="flex items-center gap-3.5 text-xs font-semibold text-slate-700">
-                <div className="p-2 bg-pink-50 text-pink-500 rounded-lg"><Heart className="w-4 h-4" /></div>
-                <span>Interested in &rarr; <span className="font-bold text-slate-800">Formal shirts</span></span>
-              </div>
-              <div className="flex items-center gap-3.5 text-xs font-semibold text-slate-700">
-                <div className="p-2 bg-blue-50 text-blue-500 rounded-lg"><CheckSquare className="w-4 h-4" /></div>
-                <span>Preferred size &rarr; <span className="font-bold text-slate-800">XL</span></span>
-              </div>
-              <div className="flex items-center gap-3.5 text-xs font-semibold text-slate-700">
-                <div className="p-2 bg-purple-50 text-purple-500 rounded-lg"><Palette className="w-4 h-4" /></div>
-                <span>Preferred colors &rarr; <span className="font-bold text-slate-800">Dark</span></span>
-              </div>
-              <div className="flex items-center gap-3.5 text-xs font-semibold text-slate-700">
-                <div className="p-2 bg-amber-50 text-amber-500 rounded-lg"><Clock className="w-4 h-4" /></div>
-                <span>Last purchase &rarr; <span className="font-bold text-slate-800">12 days ago</span></span>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Sales Opportunity Card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4 font-sans">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <TrendingUp className="w-4 h-4 text-emerald-500" />
-                AI Sales Opportunity
-              </h3>
-              {oppResult ? (
-                <button
-                  onClick={async () => {
-                    setOppLoading(true);
-                    setOppError(null);
-                    try {
-                      const res = await api.generateSalesOpportunity(customer.id);
-                      if (res.success && res.opportunity) {
-                        setOppResult(res.opportunity);
-                      } else {
-                        setOppError(res.error || 'Local AI is currently unavailable.');
-                      }
-                    } catch (err: any) {
-                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
-                        triggerRateLimit(err);
-                      } else {
-                        setOppError(err.message || 'AI service is currently unavailable.');
-                      }
-                    } finally {
-                      setOppLoading(false);
-                    }
-                  }}
-                  disabled={oppLoading || (rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0)}
-                  className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3 h-3 ${oppLoading ? 'animate-spin' : ''}`} />
-                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
-                </button>
-              ) : null}
-            </div>
-
-            {!oppResult && !oppLoading && !oppError && (
-              <div className="text-center py-4 space-y-3">
-                <p className="text-xs text-slate-500">Calculate AI Sales Opportunity Score & recommended next action.</p>
-                <button
-                  onClick={async () => {
-                    setOppLoading(true);
-                    setOppError(null);
-                    try {
-                      const res = await api.generateSalesOpportunity(customer.id);
-                      if (res.success && res.opportunity) {
-                        setOppResult(res.opportunity);
-                        clearRateLimit();
-                      } else {
-                        setOppError(res.error || 'AI service is currently unavailable.');
-                      }
-                    } catch (err: any) {
-                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
-                        triggerRateLimit(err);
-                      } else {
-                        setOppError(err.message || 'AI service is currently unavailable.');
-                      }
-                    } finally {
-                      setOppLoading(false);
-                    }
-                  }}
-                  disabled={rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <TrendingUp className="w-4 h-4" />
-                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze Opportunity'}
-                </button>
-              </div>
-            )}
-
-            {rateLimitInfo.isRateLimited && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2 text-xs text-amber-800 font-semibold animate-fadeIn">
-                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-                <span>
-                  {rateLimitInfo.isQuotaExceeded
-                    ? "Today's AI usage limit has been reached. Please try again after the quota resets."
-                    : remainingSeconds !== null && remainingSeconds > 0
-                    ? `Try again in ${remainingSeconds} seconds`
-                    : remainingSeconds === 0
-                    ? "You can try again now"
-                    : "Rate limit reached. Please try again shortly."}
-                </span>
-              </div>
-            )}
-
-            {oppLoading && (
-              <div className="py-6 text-center space-y-2">
-                <RefreshCw className="w-6 h-6 text-emerald-500 animate-spin mx-auto" />
-                <p className="text-xs font-bold text-slate-700">Evaluating sales opportunity...</p>
-                <p className="text-[10px] text-slate-400">Processing recency, engagement & purchase signals</p>
-              </div>
-            )}
-
-            {oppError && (
-              <div className="space-y-3">
-                <div className="p-3 bg-danger-50 border border-danger-100 rounded-xl flex items-center gap-2 text-xs text-danger-700 font-semibold">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{oppError}</span>
-                </div>
-                <button
-                  onClick={async () => {
-                    setOppLoading(true);
-                    setOppError(null);
-                    try {
-                      const res = await api.generateSalesOpportunity(customer.id);
-                      if (res.success && res.opportunity) {
-                        setOppResult(res.opportunity);
-                      } else {
-                        setOppError(res.error || 'Local AI is currently unavailable.');
-                      }
-                    } catch (err: any) {
-                      setOppError(err.message || 'Local AI is currently unavailable.');
-                    } finally {
-                      setOppLoading(false);
-                    }
-                  }}
-                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 rounded-lg transition-all"
-                >
-                  Retry Analysis
-                </button>
-              </div>
-            )}
-
-            {oppResult && !oppLoading && (
-              <div className="space-y-3.5 text-xs text-slate-700 animate-fadeIn">
-                <div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-100 text-center space-y-1">
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">AI Opportunity Score</span>
-                  <div className="text-3xl font-black text-emerald-700">
-                    {oppResult.opportunityScore}<span className="text-xs text-emerald-400 font-bold">/100</span>
-                  </div>
-                  <div className="pt-1">
-                    <span className="inline-flex items-center gap-1 font-extrabold text-xs px-2.5 py-1 rounded-md bg-white border border-emerald-200 text-emerald-800 shadow-2xs">
-                      {oppResult.leadLevel === 'HOT' && '🔥 HOT LEAD'}
-                      {oppResult.leadLevel === 'WARM' && '🟡 WARM LEAD'}
-                      {oppResult.leadLevel === 'COLD' && '❄️ COLD LEAD'}
-                      {oppResult.leadLevel === 'LOW_PRIORITY' && '⚪ LOW PRIORITY'}
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Recommended Action</span>
-                  <p className="bg-white p-3 rounded-xl border border-slate-100 text-slate-800 font-bold leading-relaxed">
-                    {oppResult.recommendedAction}
-                  </p>
-                </div>
-
-                <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px]">
-                  <span className="font-semibold text-slate-400">Timing</span>
-                  <span className="font-extrabold text-slate-800 bg-white border border-slate-200 px-2.5 py-0.5 rounded-md">
-                    {oppResult.recommendedTiming.replace(/_/g, ' ')}
-                  </span>
-                </div>
-
-                {oppResult.product && (
-                  <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px]">
-                    <span className="font-semibold text-slate-400">Product Inventory</span>
-                    {oppResult.product.inStock === true ? (
-                      <span className="font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md">
-                        In Stock ({oppResult.product.currentStock != null ? `Available: ${oppResult.product.currentStock}` : 'Available'})
-                      </span>
-                    ) : oppResult.product.inStock === false ? (
-                      <span className="font-extrabold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-md">
-                        Out of Stock
-                      </span>
-                    ) : (
-                      <span className="font-semibold text-slate-500 bg-white border border-slate-200 px-2.5 py-0.5 rounded-md">
-                        Stock unavailable
+        {/* Timeline list */}
+        {filteredTimeline.length > 0 ? (
+          <div className="space-y-3 pt-1">
+            {filteredTimeline.map(entry => (
+              <div 
+                key={entry.id} 
+                className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/60 hover:bg-slate-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              >
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-slate-800 text-sm">{entry.title}</span>
+                    
+                    {entry.badge && (
+                      <span className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                        entry.badgeColor === 'emerald' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                        entry.badgeColor === 'amber' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                        entry.badgeColor === 'rose' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                        entry.badgeColor === 'indigo' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
+                        entry.badgeColor === 'blue' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                        'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}>
+                        {entry.badge}
                       </span>
                     )}
                   </div>
-                )}
 
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Reason</span>
-                  <p className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-slate-600 leading-relaxed font-medium">
-                    {oppResult.reason}
+                  <p className="text-slate-600 leading-relaxed font-medium">{entry.description}</p>
+                  
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {formatDateIST(entry.date)} • {formatTimeIST(entry.date)}
                   </p>
                 </div>
-              </div>
-            )}
-          </div>
 
-          {/* AI Customer Intelligence Card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4 font-sans">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-primary-500" />
-                AI Customer Intelligence
+                {/* Inline Action (e.g. Open WhatsApp on ready follow-up) */}
+                {entry.action && (
+                  <button
+                    onClick={entry.action.onClick}
+                    className="self-start sm:self-center shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>{entry.action.label}</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-8 text-center text-xs text-slate-400 space-y-1">
+            <p className="font-semibold text-slate-500">No activity matching filter</p>
+            <p>New enquiries, purchases, and follow-ups will appear here chronologically.</p>
+          </div>
+        )}
+      </div>
+
+      {/* D. Notes Section */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-soft p-5 sm:p-6 space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+            <FileText className="w-4 h-4 text-slate-400" />
+            <span>Customer Notes</span>
+            <span className="text-xs text-slate-400 font-normal">({customerNotes.length})</span>
+          </div>
+        </div>
+
+        {/* Add Note Form */}
+        <form onSubmit={handleAddNoteSubmit} className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Write a quick customer note..."
+            value={noteContent}
+            onChange={(e) => setNoteContent(e.target.value)}
+            className="flex-grow bg-slate-50 border border-slate-200 rounded-xl py-2 px-3.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white transition-all"
+          />
+          <button 
+            type="submit"
+            disabled={!noteContent.trim()}
+            className="bg-primary-600 hover:bg-primary-700 disabled:opacity-40 text-white font-bold text-xs px-4 py-2 rounded-xl transition-colors shrink-0 shadow-2xs"
+          >
+            + Add Note
+          </button>
+        </form>
+
+        {/* Notes List */}
+        {customerNotes.length > 0 ? (
+          <div className="space-y-2 pt-1">
+            {customerNotes.map(note => (
+              <div key={note.id} className="p-3 bg-slate-50/80 rounded-xl border border-slate-100 text-xs text-slate-700">
+                <p className="leading-relaxed font-medium">{note.content}</p>
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                  {formatDateTimeIST(note.createdAt)}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-400 italic py-1">No notes recorded yet.</p>
+        )}
+      </div>
+
+      {/* Edit Preferences Modal */}
+      {isEditingPreferences && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                <Heart className="w-4 h-4 text-rose-500" />
+                Edit Preferences
               </h3>
-              {aiResult ? (
-                <button
-                  onClick={async () => {
-                    setAiLoading(true);
-                    setAiError(null);
-                    try {
-                      const res = await api.generateCustomerIntelligence(customer.id);
-                      if (res.success && res.intelligence) {
-                        setAiResult(res.intelligence);
-                      } else {
-                        setAiError(res.error || 'Local AI is currently unavailable.');
-                      }
-                    } catch (err: any) {
-                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
-                        triggerRateLimit(err);
-                      } else {
-                        setAiError(err.message || 'AI service is currently unavailable.');
-                      }
-                    } finally {
-                      setAiLoading(false);
-                    }
-                  }}
-                  disabled={aiLoading || (rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0)}
-                  className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 hover:bg-primary-50 px-2 py-1 rounded-md transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3 h-3 ${aiLoading ? 'animate-spin' : ''}`} />
-                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Refresh Analysis'}
-                </button>
-              ) : null}
+              <button 
+                onClick={() => setIsEditingPreferences(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            {!aiResult && !aiLoading && !aiError && (
-              <div className="text-center py-4 space-y-3">
-                <p className="text-xs text-slate-500 font-medium">Analyze business history & engagement signals using QuickR AI.</p>
-                <button
-                  onClick={async () => {
-                    setAiLoading(true);
-                    setAiError(null);
-                    try {
-                      const res = await api.generateCustomerIntelligence(customer.id);
-                      if (res.success && res.intelligence) {
-                        setAiResult(res.intelligence);
-                        clearRateLimit();
-                      } else {
-                        setAiError(res.error || 'AI service is currently unavailable.');
-                      }
-                    } catch (err: any) {
-                      if (err?.status === 429 || err?.errorCode === 'RATE_LIMITED' || err?.errorCode === 'QUOTA_EXCEEDED') {
-                        triggerRateLimit(err);
-                      } else {
-                        setAiError(err.message || 'AI service is currently unavailable.');
-                      }
-                    } finally {
-                      setAiLoading(false);
-                    }
-                  }}
-                  disabled={rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0}
-                  className="w-full bg-primary-500 hover:bg-primary-600 text-white font-bold text-xs py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  {rateLimitInfo.isRateLimited && remainingSeconds !== null && remainingSeconds > 0 ? `Retry in ${remainingSeconds}s` : 'Analyze with AI'}
-                </button>
-              </div>
-            )}
-
-            {aiLoading && (
-              <div className="py-6 text-center space-y-2">
-                <RefreshCw className="w-6 h-6 text-primary-500 animate-spin mx-auto" />
-                <p className="text-xs font-bold text-slate-700">Analyzing customer...</p>
-                <p className="text-[10px] text-slate-400">Processing recent engagement & enquiry signals</p>
-              </div>
-            )}
-
-            {aiError && (
-              <div className="space-y-3">
-                <div className="p-3 bg-danger-50 border border-danger-100 rounded-xl flex items-center gap-2 text-xs text-danger-700 font-semibold">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{aiError}</span>
-                </div>
-                <button
-                  onClick={async () => {
-                    setAiLoading(true);
-                    setAiError(null);
-                    try {
-                      const res = await api.generateCustomerIntelligence(customer.id);
-                      if (res.success && res.intelligence) {
-                        setAiResult(res.intelligence);
-                      } else {
-                        setAiError(res.error || 'Local AI is currently unavailable.');
-                      }
-                    } catch (err: any) {
-                      setAiError(err.message || 'Local AI is currently unavailable.');
-                    } finally {
-                      setAiLoading(false);
-                    }
-                  }}
-                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 rounded-lg transition-all"
-                >
-                  Retry Analysis
-                </button>
-              </div>
-            )}
-
-            {aiResult && !aiLoading && (
-              <div className="space-y-3.5 text-xs text-slate-700 animate-fadeIn">
-                <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl border border-slate-100">
-                  <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Lead</span>
-                    <span className="font-extrabold text-sm flex items-center gap-1.5 mt-0.5">
-                      {aiResult.leadLevel === 'HOT' && <><span className="text-danger-500">🔥</span> HOT</>}
-                      {aiResult.leadLevel === 'WARM' && <><span className="text-amber-500">🟡</span> WARM</>}
-                      {aiResult.leadLevel === 'COLD' && <><span className="text-blue-500">❄️</span> COLD</>}
-                      {aiResult.leadLevel === 'LOW_PRIORITY' && <><span className="text-slate-400">⚪</span> LOW PRIORITY</>}
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Confidence</span>
-                    <span className="font-bold text-xs text-slate-700 mt-0.5 capitalize">{aiResult.confidence.toLowerCase()}</span>
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Why:</span>
-                  <p className="bg-white p-3 rounded-xl border border-slate-100 text-slate-700 leading-relaxed font-medium">
-                    {aiResult.reason}
-                  </p>
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Recommended Action:</span>
-                  <p className="bg-primary-50/50 p-3 rounded-xl border border-primary-100/50 text-primary-900 font-bold leading-relaxed">
-                    {aiResult.recommendedAction}
-                  </p>
-                </div>
-
-                <div className="flex justify-between items-center pt-1 border-t border-slate-50 text-[11px]">
-                  <span className="font-semibold text-slate-400">Timing:</span>
-                  <span className="font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-md">
-                    {aiResult.recommendedTiming.replace(/_/g, ' ')}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* WHAT SHOULD WE DO? Card */}
-          {pendingFollowUp && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">WHAT SHOULD WE DO?</h3>
-              <div className="flex items-start gap-2.5">
-                <div className="w-2 h-2 rounded-full bg-danger-500 mt-1.5 shrink-0" />
-                <div>
-                  <h4 className="text-sm font-bold text-slate-800">Follow up today</h4>
-                  <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-                    Customer showed interest in Black Shirt XL but didn't purchase.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-[11px] font-bold text-slate-400 uppercase">Editable WhatsApp Draft</label>
-                <textarea 
-                  value={customMsgText}
-                  onChange={e => setCustomMsgText(e.target.value)}
-                  rows={3}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-medium focus:outline-none focus:border-emerald-500 focus:bg-white transition-all"
-                  placeholder="Type WhatsApp message..."
+            <form onSubmit={handleSavePreferences} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Interested Categories / Products</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Shirts, Denim, Kurtis"
+                  value={prefInterestedIn}
+                  onChange={(e) => setPrefInterestedIn(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white"
                 />
               </div>
 
-              <button 
-                onClick={handleSendWhatsApp}
-                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all"
-              >
-                <MessageSquare className="w-4 h-4" /> Open WhatsApp
-              </button>
-            </div>
-          )}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Preferred Size</label>
+                <input
+                  type="text"
+                  placeholder="e.g. M, L, XL, 32, Free Size"
+                  value={prefSize}
+                  onChange={(e) => setPrefSize(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white"
+                />
+              </div>
 
-          {/* Quick Actions card */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft">
-            <h3 className="text-sm font-bold text-slate-800 mb-4">Quick Actions</h3>
-            <div className="space-y-2">
-              <button 
-                onClick={() => setCurrentPage('new-enquiry')}
-                className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-100 text-slate-600 text-xs font-semibold transition-all group"
-              >
-                <span>Add New Enquiry</span>
-                <span className="text-slate-400 group-hover:translate-x-0.5 transition-transform">&rarr;</span>
-              </button>
-              <button 
-                onClick={() => setCurrentPage('smart-followup')}
-                className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-100 text-slate-600 text-xs font-semibold transition-all group"
-              >
-                <span>Schedule Follow-up</span>
-                <span className="text-slate-400 group-hover:translate-x-0.5 transition-transform">&rarr;</span>
-              </button>
-              <button 
-                onClick={() => setActiveTab('notes')}
-                className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-100 text-slate-600 text-xs font-semibold transition-all group"
-              >
-                <span>Add Note</span>
-                <span className="text-slate-400 group-hover:translate-x-0.5 transition-transform">&rarr;</span>
-              </button>
-            </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Preferred Colours</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Black, Navy Blue, White (comma separated)"
+                  value={prefColors}
+                  onChange={(e) => setPrefColors(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSavingPreferences}
+                  onClick={() => setIsEditingPreferences(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-50 text-xs transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingPreferences}
+                  className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-colors disabled:opacity-50"
+                >
+                  {isSavingPreferences ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>{isSavingPreferences ? 'Saving...' : 'Save Preferences'}</span>
+                </button>
+              </div>
+            </form>
           </div>
-
-          {/* Recent activity list */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft">
-            <h3 className="text-sm font-bold text-slate-800 mb-4">Recent activity</h3>
-            <div className="space-y-4">
-              <div className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-success-500 mt-1.5 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-slate-700">15 May 2025, 10:30 AM</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Enquiry added for Black Shirt (XL)</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-warning-500 mt-1.5 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-slate-700">16 May 2025, 09:15 AM</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Marked as Interested</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-primary-500 mt-1.5 shrink-0" />
-                <div>
-                  <p className="text-xs font-bold text-slate-700">16 May 2025, 09:16 AM</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Status updated: Didn't purchase</p>
-                </div>
-              </div>
-            </div>
-            <button onClick={() => setActiveTab('activity')} className="text-xs text-primary-500 font-bold hover:underline mt-4 block">
-              View all activity &rarr;
-            </button>
-          </div>
-
         </div>
-      </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fadeIn p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 font-sans">
             <div className="flex items-center gap-3 text-rose-600">
-              <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center shrink-0 border border-rose-100">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-800">Delete customer?</h3>
@@ -991,7 +692,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-              This will permanently remove this customer and their enquiries, follow-ups, messages, and activity history from QuickR. Historical sales will be preserved.
+              This will permanently remove this customer, their enquiries, follow-ups, and notes. Historical sales invoices are strictly preserved.
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -999,7 +700,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                 type="button"
                 disabled={isDeleting}
                 onClick={() => setShowDeleteModal(false)}
-                className="px-4 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50"
+                className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -1019,7 +720,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
                     setIsDeleting(false);
                   }
                 }}
-                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 <span>{isDeleting ? 'Deleting...' : 'Delete Customer'}</span>
@@ -1029,11 +730,11 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
         </div>
       )}
 
-      {/* WhatsApp Offer Permission Confirmation Modal */}
+      {/* WhatsApp Offer Permission Modal */}
       {confirmPermissionModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 animate-fadeIn p-4">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fadeIn">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4 text-center font-sans">
-            <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
+            <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto border border-indigo-100">
               <Megaphone className="w-6 h-6" />
             </div>
 
@@ -1043,8 +744,8 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
               </h3>
               <p className="text-xs text-slate-500 mt-1.5 leading-relaxed font-medium">
                 {confirmPermissionModal === 'enable'
-                  ? `Confirm that ${customer.name} has agreed to receive order updates and occasional offers on WhatsApp.`
-                  : `Stop sending promotional WhatsApp offers to ${customer.name}? Customer details, sales, and enquiries will remain intact.`}
+                  ? `Confirm that ${customer.name} agreed to receive order updates and occasional offers on WhatsApp.`
+                  : `Stop sending promotional WhatsApp offers to ${customer.name}? Customer details and billing history remain intact.`}
               </p>
             </div>
 
@@ -1072,6 +773,7 @@ export const CustomerProfile: React.FC<CustomerProfileProps> = ({
           </div>
         </div>
       )}
+
     </div>
   );
 };

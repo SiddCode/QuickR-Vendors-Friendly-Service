@@ -176,6 +176,16 @@ export const api = {
     return handleResponse<Customer>(res);
   },
 
+  async updateCustomer(id: string, data: Partial<Customer>): Promise<Customer> {
+    const res = await apiFetch(`${API_BASE_URL}/customers/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<Customer>(res);
+  },
+
   async deleteCustomer(id: string): Promise<{ success: boolean; message?: string }> {
     const res = await apiFetch(`${API_BASE_URL}/customers/${id}`, {
       method: 'DELETE',

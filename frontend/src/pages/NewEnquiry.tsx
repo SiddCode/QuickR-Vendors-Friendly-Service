@@ -1,13 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { 
   ArrowLeft, 
   Search, 
   Plus, 
   Check, 
-  FileText
+  User, 
+  Package, 
+  Calendar, 
+  FileText, 
+  CheckCircle2, 
+  AlertCircle,
+  Loader2,
+  X
 } from 'lucide-react';
-
 import { calculateFollowUpDateIST } from '../utils/date';
 
 interface NewEnquiryProps {
@@ -23,65 +29,115 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
 }) => {
   const { customers, products, addCustomer, addEnquiry } = useApp();
 
-  // Selected customer state
-  const [selectedCustId, setSelectedCustId] = useState(initialCustomerId || customers[0]?.id || '');
-  const [custSearch, setCustSearch] = useState('');
-  const [showCustDropdown, setShowCustDropdown] = useState(false);
-
-  // Add new customer form toggle
-  const [showAddCustForm, setShowAddCustForm] = useState(false);
-  const [newCustName, setNewCustName] = useState('');
-  const [newCustPhone, setNewCustPhone] = useState('');
-
-  // Step state
+  // Active products sorted alphabetically A-Z
   const activeProducts = useMemo(
     () => products
       .filter(p => p.isActive)
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
     [products]
   );
-  const [prodId, setProdId] = useState(activeProducts[0]?.id || '');
+
+  // 1. Customer Selection State
+  const [selectedCustId, setSelectedCustId] = useState<string>(() => {
+    if (initialCustomerId && customers.some(c => c.id === initialCustomerId)) {
+      return initialCustomerId;
+    }
+    return customers[0]?.id || '';
+  });
+  const [custSearch, setCustSearch] = useState('');
+  const [showCustDropdown, setShowCustDropdown] = useState(false);
+  const [isChangingCustomer, setIsChangingCustomer] = useState(false);
+
+  // Add New Customer Sub-form State
+  const [showAddCustForm, setShowAddCustForm] = useState(false);
+  const [newCustName, setNewCustName] = useState('');
+  const [newCustPhone, setNewCustPhone] = useState('');
+  const [isCreatingCust, setIsCreatingCust] = useState(false);
+
+  // 2. Product Selection State
+  const [prodId, setProdId] = useState<string>(activeProducts[0]?.id || '');
   const currentProduct = activeProducts.find(p => p.id === prodId) || activeProducts[0];
-  
-  const [size, setSize] = useState(currentProduct?.sizes?.[0] || 'N/A');
-  const [color, setColor] = useState(currentProduct?.colors?.[0] || 'N/A');
+
+  // 3. Customer Requirement State
+  const [size, setSize] = useState<string>('Free Size');
+  const [color, setColor] = useState<string>('Standard');
   const [qty, setQty] = useState(1);
-  const interest = 'Interested';
-  const purchaseStatus = "Didn't Purchase";
+
+  // 4. Follow-up State
   const [recommendFollowUp, setRecommendFollowUp] = useState(true);
   const [followUpDate, setFollowUpDate] = useState('Tomorrow');
+  const [customDate, setCustomDate] = useState('');
+
+  // 5. Optional Note State
   const [notes, setNotes] = useState('');
+
+  // Form Status State
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isSubmittingEnquiry, setIsSubmittingEnquiry] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const currentCustomer = customers.find(c => c.id === selectedCustId);
 
-  // Update size/color defaults when product changes
-  React.useEffect(() => {
+  // Automatically update size and color when product changes
+  useEffect(() => {
     if (currentProduct) {
-      if (!currentProduct.sizes.includes(size)) setSize(currentProduct.sizes[0] || 'N/A');
-      if (!currentProduct.colors.includes(color)) setColor(currentProduct.colors[0] || 'N/A');
+      if (currentProduct.sizes && currentProduct.sizes.length > 0) {
+        if (!currentProduct.sizes.includes(size)) {
+          setSize(currentProduct.sizes[0]);
+        }
+      } else {
+        setSize('Free Size');
+      }
+
+      if (currentProduct.colors && currentProduct.colors.length > 0) {
+        if (!currentProduct.colors.includes(color)) {
+          setColor(currentProduct.colors[0]);
+        }
+      } else {
+        setColor('Standard');
+      }
     }
   }, [prodId, currentProduct]);
 
-  const handleCustSelect = (id: string) => {
+  // Filtered customer list for search
+  const customerListFiltered = useMemo(() => {
+    if (!custSearch.trim()) return customers.slice(0, 10);
+    const q = custSearch.toLowerCase().trim();
+    return customers.filter(c => 
+      c.name.toLowerCase().includes(q) || 
+      c.phone.replace(/\D/g, '').includes(q.replace(/\D/g, ''))
+    );
+  }, [customers, custSearch]);
+
+  const handleSelectCustomer = (id: string) => {
     setSelectedCustId(id);
     setCustSearch('');
     setShowCustDropdown(false);
+    setIsChangingCustomer(false);
+    setFormError(null);
   };
 
-  const [isCreatingCust, setIsCreatingCust] = useState(false);
-  const [isSubmittingEnquiry, setIsSubmittingEnquiry] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const handleAddNewCustomerSubmit = async (e: React.MouseEvent) => {
+  // Quick Add Customer Handler
+  const handleAddNewCustomerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCustName.trim() || !newCustPhone.trim() || isCreatingCust) return;
+    const cleanName = newCustName.trim();
+    const cleanPhone = newCustPhone.trim().replace(/\D/g, '');
+
+    if (!cleanName) {
+      setFormError('Customer name is required.');
+      return;
+    }
+    if (cleanPhone.length < 10) {
+      setFormError('Please enter a valid 10-digit mobile number.');
+      return;
+    }
 
     setFormError(null);
     setIsCreatingCust(true);
     try {
       const newCust = await addCustomer({
-        name: newCustName.trim(),
-        phone: newCustPhone.trim(),
+        name: cleanName,
+        phone: cleanPhone,
         email: '',
         location: '',
         preferences: {},
@@ -93,6 +149,7 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
         setShowAddCustForm(false);
         setNewCustName('');
         setNewCustPhone('');
+        setIsChangingCustomer(false);
       } else {
         setFormError('Could not save customer. Please check the 10-digit mobile number.');
       }
@@ -101,474 +158,523 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
     }
   };
 
-  const handleCreateEnquiry = async () => {
-    if (!selectedCustId || !prodId || isSubmittingEnquiry) return;
+  // Create Enquiry Handler
+  const handleCreateEnquiry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmittingEnquiry) return; // Prevent duplicate submissions
 
-    const calculatedScheduledAt = recommendFollowUp
-      ? calculateFollowUpDateIST(followUpDate)
-      : undefined;
+    if (!selectedCustId) {
+      setFormError('Please select or add a customer.');
+      return;
+    }
+    if (!prodId) {
+      setFormError('Please select a product.');
+      return;
+    }
+
+    let calculatedScheduledAt: Date | undefined;
+    let targetFollowUpDate: string | undefined;
+
+    if (recommendFollowUp) {
+      if (followUpDate === 'Custom' && customDate) {
+        calculatedScheduledAt = new Date(customDate);
+        targetFollowUpDate = customDate;
+      } else {
+        calculatedScheduledAt = calculateFollowUpDateIST(followUpDate);
+        targetFollowUpDate = followUpDate;
+      }
+    }
 
     setFormError(null);
     setIsSubmittingEnquiry(true);
+
     try {
       const created = await addEnquiry({
         customerId: selectedCustId,
         productId: prodId,
-        size,
-        color,
+        size: size || 'Free Size',
+        color: color || 'Standard',
         quantity: Math.max(1, Number(qty) || 1),
-        interest,
-        purchaseStatus,
-        notes,
+        interest: 'Interested',
+        purchaseStatus: "Didn't Purchase",
+        notes: notes.trim(),
         scheduledAt: calculatedScheduledAt ? calculatedScheduledAt.toISOString() : undefined,
-        followUpDate: recommendFollowUp ? followUpDate : undefined
+        followUpDate: targetFollowUpDate
       });
 
       if (created) {
+        setSuccessMessage('Enquiry created successfully!');
         setSelectedCustomerId(selectedCustId);
-        setCurrentPage('customer-profile');
+        // Short delay to display success feedback before returning to customer profile
+        setTimeout(() => {
+          setCurrentPage('customer-profile');
+        }, 500);
       } else {
         setFormError('Failed to save enquiry. Please try again.');
+        setIsSubmittingEnquiry(false);
       }
-    } finally {
+    } catch (err: any) {
+      setFormError(err.message || 'An error occurred while creating enquiry.');
       setIsSubmittingEnquiry(false);
     }
   };
 
+  // If no customers or products exist
   if (customers.length === 0) {
     return (
-      <div className="flex-grow p-12 flex flex-col items-center justify-center font-sans text-slate-500">
-        <h2 className="text-xl font-bold text-slate-700 mb-2">Create a customer first.</h2>
-        <p className="mb-6">You need at least one customer to create an enquiry.</p>
-        <button onClick={() => setCurrentPage('customers')} className="bg-primary-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-primary-700">Go to Customers</button>
+      <div className="flex-grow p-8 flex flex-col items-center justify-center font-sans text-center max-w-md mx-auto space-y-4">
+        <div className="w-12 h-12 rounded-full bg-primary-50 text-primary-600 flex items-center justify-center mx-auto">
+          <User className="w-6 h-6" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-800">No Customers Found</h2>
+        <p className="text-xs text-slate-500">You need at least one customer to create an enquiry.</p>
+        <button 
+          onClick={() => setCurrentPage('customers')} 
+          className="bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-sm transition-all"
+        >
+          Go to Customers
+        </button>
       </div>
     );
   }
 
   if (activeProducts.length === 0) {
     return (
-      <div className="flex-grow p-12 flex flex-col items-center justify-center font-sans text-slate-500">
-        <h2 className="text-xl font-bold text-slate-700 mb-2">Add a product first to create an enquiry.</h2>
-        <p className="mb-6">You need at least one active product to create an enquiry.</p>
-        <button onClick={() => setCurrentPage('products')} className="bg-primary-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-primary-700">Go to Products</button>
+      <div className="flex-grow p-8 flex flex-col items-center justify-center font-sans text-center max-w-md mx-auto space-y-4">
+        <div className="w-12 h-12 rounded-full bg-primary-50 text-primary-600 flex items-center justify-center mx-auto">
+          <Package className="w-6 h-6" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-800">No Active Products</h2>
+        <p className="text-xs text-slate-500">You need at least one active product in your catalogue to create an enquiry.</p>
+        <button 
+          onClick={() => setCurrentPage('products')} 
+          className="bg-primary-600 hover:bg-primary-700 text-white px-5 py-2.5 rounded-xl font-bold text-xs shadow-sm transition-all"
+        >
+          Go to Products
+        </button>
       </div>
     );
   }
 
-  const customerListFiltered = customers.filter(c => 
-    c.name.toLowerCase().includes(custSearch.toLowerCase()) || 
-    c.phone.includes(custSearch)
-  );
-
   return (
-    <div className="flex-grow p-4 md:p-8 space-y-6 max-w-7xl mx-auto w-full font-sans">
+    <div className="flex-grow p-4 sm:p-6 lg:p-8 max-w-2xl mx-auto w-full font-sans space-y-6 animate-fadeIn">
       
-      {/* Header */}
-      <div className="flex items-center gap-4">
+      {/* Top Header & Navigation */}
+      <div className="flex items-center justify-between">
         <button 
-          onClick={() => setCurrentPage('customers')} 
-          className="text-slate-500 hover:text-slate-700 flex items-center gap-1.5 font-bold text-xs"
+          type="button"
+          onClick={() => {
+            if (initialCustomerId) {
+              setSelectedCustomerId(initialCustomerId);
+              setCurrentPage('customer-profile');
+            } else {
+              setCurrentPage('customers');
+            }
+          }} 
+          className="text-slate-500 hover:text-slate-800 flex items-center gap-1.5 font-bold text-xs sm:text-sm transition-colors"
         >
-          <ArrowLeft className="w-4.5 h-4.5" /> Back to Customers
+          <ArrowLeft className="w-4 h-4" /> Back
         </button>
+
+        <span className="text-xs text-slate-400 font-medium">Quick Enquiry</span>
       </div>
 
-      <div className="flex flex-col">
-        <h2 className="text-xl font-bold text-slate-800">New Enquiry</h2>
-        <p className="text-xs text-slate-400">Create a new customer enquiry</p>
+      <div>
+        <h1 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">New Customer Enquiry</h1>
+        <p className="text-xs text-slate-400 mt-0.5">Quickly record a customer product request and follow-up</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
-        {/* Left Side 6-Step Stepper */}
-        <div className="lg:col-span-8 space-y-6">
-          
-          {/* STEP 1: CUSTOMER */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="w-7 h-7 rounded-full bg-primary-500 text-white font-bold text-sm flex items-center justify-center">1</span>
-              <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">Customer</h3>
+      {/* Main Compact Form Card */}
+      <form onSubmit={handleCreateEnquiry} className="bg-white rounded-2xl border border-slate-200/80 shadow-soft p-5 sm:p-7 space-y-6">
+
+        {/* 1. CUSTOMER SECTION */}
+        <div className="space-y-3">
+          <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <User className="w-4 h-4 text-primary-600" />
+            1. Customer <span className="text-rose-500">*</span>
+          </label>
+
+          {/* Selected Customer Card or Search Field */}
+          {currentCustomer && !isChangingCustomer && !showAddCustForm ? (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary-100 text-primary-700 font-black text-sm flex items-center justify-center shrink-0">
+                  {currentCustomer.name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'C'}
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800 text-sm">{currentCustomer.name}</p>
+                  <p className="text-xs text-slate-500 font-medium">{currentCustomer.phone}</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsChangingCustomer(true)}
+                className="text-xs font-bold text-primary-600 hover:text-primary-800 hover:bg-primary-50 px-3 py-1.5 rounded-lg transition-colors shrink-0"
+              >
+                Change
+              </button>
             </div>
-
-            {/* Search Dropdown Selector */}
-            <div className="relative">
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Search existing customer</label>
+          ) : (
+            <div className="space-y-3">
+              {/* Search input with live dropdown */}
               <div className="relative">
                 <input
                   type="text"
-                  placeholder={currentCustomer ? `${currentCustomer.name} (${currentCustomer.phone})` : "Type name or phone number..."}
+                  placeholder="Search customer by name or 10-digit mobile..."
                   value={custSearch}
                   onChange={(e) => {
                     setCustSearch(e.target.value);
                     setShowCustDropdown(true);
                   }}
                   onFocus={() => setShowCustDropdown(true)}
-                  className="w-full bg-slate-50 border border-slate-100 rounded-xl py-2 pl-4 pr-10 text-sm focus:outline-none focus:border-primary-400 focus:bg-white transition-all"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-4 pr-10 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white transition-all"
                 />
-                <Search className="absolute right-3.5 top-2.5 w-4 h-4 text-slate-400" />
+                <Search className="absolute right-3.5 top-3 w-4 h-4 text-slate-400 pointer-events-none" />
+
+                {/* Dropdown search results */}
+                {showCustDropdown && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-20 text-xs">
+                    {customerListFiltered.length > 0 ? (
+                      customerListFiltered.map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => handleSelectCustomer(c.id)}
+                          className="w-full text-left px-4 py-2.5 hover:bg-primary-50/60 flex items-center justify-between border-b border-slate-50 last:border-0 transition-colors"
+                        >
+                          <span className="font-bold text-slate-800">{c.name}</span>
+                          <span className="text-slate-500 font-mono text-[11px]">{c.phone}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3 text-center text-slate-400">No matching customer found</div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {showCustDropdown && custSearch && (
-                <div className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-100 rounded-xl shadow-lg max-h-48 overflow-y-auto z-10 text-sm">
-                  {customerListFiltered.length > 0 ? (
-                    customerListFiltered.map(c => (
-                      <button
-                        key={c.id}
-                        onClick={() => handleCustSelect(c.id)}
-                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 flex items-center justify-between border-b border-slate-50 last:border-0"
-                      >
-                        <span className="font-semibold text-slate-700">{c.name}</span>
-                        <span className="text-xs text-slate-400">{c.phone}</span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="p-3 text-center text-xs text-slate-400">No customers found</div>
+              {/* Add New Customer Action / Sub-form */}
+              {!showAddCustForm ? (
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddCustForm(true);
+                      setIsChangingCustomer(true);
+                    }}
+                    className="text-xs font-bold text-primary-600 hover:text-primary-700 flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> + Add New Customer
+                  </button>
+
+                  {isChangingCustomer && currentCustomer && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsChangingCustomer(false);
+                        setShowCustDropdown(false);
+                      }}
+                      className="text-xs text-slate-400 hover:text-slate-600 font-medium"
+                    >
+                      Keep {currentCustomer.name}
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
-
-            {/* Add New Customer Toggle */}
-            <div className="pt-2 border-t border-slate-50">
-              {!showAddCustForm ? (
-                <button 
-                  onClick={() => setShowAddCustForm(true)}
-                  className="text-xs font-bold text-primary-500 hover:bg-primary-50 border border-primary-200 border-dashed rounded-xl px-4 py-2 flex items-center gap-1.5 transition-all"
-                >
-                  <Plus className="w-4 h-4" /> Add New Customer
-                </button>
               ) : (
-                <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 space-y-3">
-                  <h4 className="text-xs font-bold text-slate-700">Add New Customer Form</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">Quick Add Customer</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddCustForm(false)}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <input
                       type="text"
                       placeholder="Customer Name *"
                       value={newCustName}
                       onChange={(e) => setNewCustName(e.target.value)}
-                      className="bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400"
+                      className="bg-white border border-slate-200 rounded-lg py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-primary-500"
                     />
                     <input
                       type="tel"
-                      placeholder="10-digit Phone *"
+                      placeholder="10-digit Mobile *"
                       value={newCustPhone}
                       onChange={(e) => setNewCustPhone(e.target.value)}
-                      className="bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400 font-mono"
+                      className="bg-white border border-slate-200 rounded-lg py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-primary-500 font-mono"
                     />
                   </div>
-                  <div className="flex gap-2 justify-end">
-                    <button 
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
                       onClick={() => setShowAddCustForm(false)}
-                      className="text-[10px] font-bold text-slate-400 hover:text-slate-600 px-3 py-1.5"
+                      className="px-3 py-1.5 text-xs text-slate-500 font-medium hover:text-slate-700"
                     >
                       Cancel
                     </button>
-                    <button 
+                    <button
+                      type="button"
+                      disabled={isCreatingCust}
                       onClick={handleAddNewCustomerSubmit}
-                      className="text-[10px] font-bold bg-primary-500 text-white hover:bg-primary-600 px-3 py-1.5 rounded-lg shadow-sm"
+                      className="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-xs font-bold shadow-2xs transition-colors flex items-center gap-1 disabled:opacity-50"
                     >
-                      Save Customer
+                      {isCreatingCust ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                      <span>Save Customer</span>
                     </button>
                   </div>
                 </div>
               )}
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* STEP 2: PRODUCT */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="w-7 h-7 rounded-full bg-primary-500 text-white font-bold text-sm flex items-center justify-center">2</span>
-              <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">Product</h3>
-            </div>
-            
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Product *</label>
-              <select
-                value={prodId}
-                onChange={(e) => setProdId(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-100 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-400 focus:bg-white transition-all"
-              >
-                {activeProducts.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            
-            {currentProduct && (
-              <div className="flex flex-col gap-2 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                <div className="flex justify-between items-center text-xs font-medium">
-                  <span className="text-slate-500">Category: <strong className="text-slate-800">{currentProduct.category}</strong></span>
-                  <span className="text-slate-500">Current Price: <strong className="text-slate-800">₹{currentProduct.sellingPrice.toLocaleString('en-IN')}</strong></span>
-                </div>
-                <div className="flex justify-between items-center text-xs font-medium">
-                  <span className="text-slate-500">Available Sizes: <strong className="text-slate-800">{currentProduct.sizes.join(', ') || 'N/A'}</strong></span>
-                  <span className="text-slate-500">Available Colors: <strong className="text-slate-800">{currentProduct.colors.join(', ') || 'N/A'}</strong></span>
-                </div>
+        {/* 2. PRODUCT SECTION */}
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <Package className="w-4 h-4 text-primary-600" />
+            2. Product <span className="text-rose-500">*</span>
+          </label>
+
+          <select
+            value={prodId}
+            onChange={(e) => setProdId(e.target.value)}
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-bold text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white transition-all"
+          >
+            {activeProducts.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.name} {p.category ? `(${p.category})` : ''} — ₹{p.sellingPrice.toLocaleString('en-IN')}
+              </option>
+            ))}
+          </select>
+
+          {/* Product metadata preview */}
+          {currentProduct && (
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-medium">Selling Price:</span>
+                <span className="font-extrabold text-slate-800 text-sm">₹{currentProduct.sellingPrice.toLocaleString('en-IN')}</span>
               </div>
-            )}
-          </div>
 
-          {/* STEP 3: CUSTOMER REQUIREMENT */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="w-7 h-7 rounded-full bg-primary-500 text-white font-bold text-sm flex items-center justify-center">3</span>
-              <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">Customer Requirement</h3>
+              <div className="text-[11px] text-slate-500">
+                {currentProduct.sizes && currentProduct.sizes.length > 0 && (
+                  <span className="mr-3">Sizes: <strong className="text-slate-700">{currentProduct.sizes.join(', ')}</strong></span>
+                )}
+                {currentProduct.colors && currentProduct.colors.length > 0 && (
+                  <span>Colours: <strong className="text-slate-700">{currentProduct.colors.join(', ')}</strong></span>
+                )}
+              </div>
             </div>
+          )}
+        </div>
 
-            {/* Size Stepper Selector */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-2">Size *</label>
-              <div className="flex flex-wrap gap-2">
-                {currentProduct?.sizes?.length ? currentProduct.sizes.map(sz => (
+        {/* 3. CUSTOMER REQUIREMENT SECTION */}
+        <div className="space-y-4 pt-2 border-t border-slate-100">
+          <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+            3. Customer Requirement
+          </label>
+
+          {/* Size Pills */}
+          <div>
+            <span className="block text-xs font-semibold text-slate-600 mb-1.5">Size <span className="text-rose-500">*</span></span>
+            <div className="flex flex-wrap gap-2">
+              {currentProduct?.sizes && currentProduct.sizes.length > 0 ? (
+                currentProduct.sizes.map(sz => (
                   <button
                     key={sz}
+                    type="button"
                     onClick={() => setSize(sz)}
-                    className={`px-4 py-2 text-xs font-bold rounded-lg border transition-all ${
-                      size === sz 
-                        ? 'bg-primary-50 border-primary-500 text-primary-500 shadow-sm' 
-                        : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
+                    className={`px-3.5 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                      size === sz
+                        ? 'bg-primary-50 border-primary-500 text-primary-700 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                     }`}
                   >
                     {sz}
                   </button>
-                )) : <span className="text-xs text-slate-400">N/A</span>}
-              </div>
-            </div>
-
-            {/* Color select dropdown */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Color *</label>
-              {currentProduct?.colors?.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {currentProduct.colors.map(c => (
-                    <button
-                      key={c}
-                      onClick={() => setColor(c)}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg border transition-all ${
-                        color === c 
-                          ? 'bg-primary-50 border-primary-500 text-primary-500 shadow-sm' 
-                          : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              ) : <span className="text-xs text-slate-400">N/A</span>}
-            </div>
-
-            {/* Quantity select counter */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Quantity *</label>
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={() => setQty(prev => Math.max(1, prev - 1))}
-                  className="w-9 h-9 rounded-lg border border-slate-100 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 transition-colors"
-                >
-                  -
-                </button>
-                <span className="w-12 text-center text-sm font-bold text-slate-700">{qty}</span>
-                <button 
-                  onClick={() => setQty(prev => prev + 1)}
-                  className="w-9 h-9 rounded-lg border border-slate-100 flex items-center justify-center text-slate-500 font-bold hover:bg-slate-50 transition-colors"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* STEP 4: FOLLOW-UP STATUS */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-3">
-            <div className="flex items-center gap-3">
-              <span className="w-7 h-7 rounded-full bg-primary-500 text-white font-bold text-sm flex items-center justify-center">4</span>
-              <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">Follow-up Status</h3>
-            </div>
-            
-            <div className="p-4 bg-primary-50/40 border border-primary-100 rounded-xl space-y-1 text-left">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-primary-500 animate-pulse shrink-0" />
-                <span className="font-bold text-xs text-slate-800">Follow-up Required</span>
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed pl-4">
-                This customer has not purchased yet. A follow-up will be created to continue the conversation.
-              </p>
-            </div>
-          </div>
-
-          {/* STEP 5: FOLLOW-UP SCHEDULE */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-            <div className="flex items-center gap-3">
-              <span className="w-7 h-7 rounded-full bg-primary-500 text-white font-bold text-sm flex items-center justify-center">5</span>
-              <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">Follow-up</h3>
-            </div>
-
-            <div className="space-y-4">
-              <label className="flex items-center gap-2.5 text-xs font-semibold text-slate-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={recommendFollowUp}
-                  onChange={(e) => setRecommendFollowUp(e.target.checked)}
-                  className="rounded text-primary-500 focus:ring-primary-400 w-4 h-4 border-slate-200"
-                />
-                Recommend follow-up
-              </label>
-
-              {recommendFollowUp && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Follow-up *</label>
-                  <select
-                    value={followUpDate}
-                    onChange={(e) => setFollowUpDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-100 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-400 focus:bg-white transition-all"
-                  >
-                    <option value="Today">Today</option>
-                    <option value="Tomorrow">Tomorrow</option>
-                    <option value="3 days">3 days</option>
-                    <option value="Next week">Next week</option>
-                    <option value="Custom">Custom</option>
-                  </select>
-                </div>
+                ))
+              ) : (
+                <span className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-semibold text-slate-600">Free Size</span>
               )}
             </div>
           </div>
 
-          {/* Notes field */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-3">
-            <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-1.5">
-              <FileText className="w-4 h-4 text-slate-400" /> Notes
-            </h3>
-            <textarea
-              placeholder="Add any additional notes... (e.g. Customer prefers dark colors...)"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              className="w-full bg-slate-50 border border-slate-100 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-primary-400 focus:bg-white transition-all"
-            />
-          </div>
-
-          {formError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl">
-              {formError}
+          {/* Colour Pills (only when product has colors) */}
+          {currentProduct?.colors && currentProduct.colors.length > 0 && (
+            <div>
+              <span className="block text-xs font-semibold text-slate-600 mb-1.5">Colour (Optional)</span>
+              <div className="flex flex-wrap gap-2">
+                {currentProduct.colors.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setColor(c)}
+                    className={`px-3.5 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                      color === c
+                        ? 'bg-primary-50 border-primary-500 text-primary-700 shadow-2xs'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Stepper Footer actions */}
-          <div className="flex flex-wrap gap-4">
-            <button 
-              type="button"
-              onClick={() => setCurrentPage('dashboard')}
-              className="px-6 py-2.5 border border-slate-100 rounded-xl text-slate-500 text-xs font-semibold hover:bg-slate-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button 
-              type="button"
-              disabled={isSubmittingEnquiry}
-              onClick={handleCreateEnquiry}
-              className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
-            >
-              {isSubmittingEnquiry ? 'Saving...' : 'Create Enquiry'}
-            </button>
-          </div>
-
-        </div>
-
-        {/* Right Side Summary panel & What happens next */}
-        <div className="lg:col-span-4 space-y-6">
-          
-          {/* Summary Panel */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-soft space-y-4">
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Enquiry Summary</h3>
-            
-            {/* Customer info */}
-            {currentCustomer && (
-              <div className="flex items-center gap-3 border-b border-slate-50 pb-3">
-                <div className="w-10 h-10 rounded-full bg-primary-50 text-primary-600 font-extrabold text-sm flex items-center justify-center">
-                  {currentCustomer.name.split(' ').map(n => n[0]).join('')}
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-bold text-slate-800">{currentCustomer.name}</p>
-                  <p className="text-xs text-slate-400">{currentCustomer.phone}</p>
-                  <p className="text-[10px] text-slate-400">{currentCustomer.location}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Product details */}
-            {currentProduct && (
-              <div className="flex justify-between items-center text-xs font-semibold pb-3 border-b border-slate-50">
-                <span className="text-slate-400">Product</span>
-                <span className="text-slate-800 text-right">
-                  <strong className="block text-slate-800">{currentProduct.name}</strong>
-                  <span className="text-[10px] text-slate-400">Category: {currentProduct.category}</span>
-                </span>
-                <span className="text-slate-800 font-bold ml-2">₹{currentProduct.sellingPrice.toLocaleString('en-IN')}</span>
-              </div>
-            )}
-
-            {/* Specs list */}
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Size</span>
-                <span className="font-bold text-slate-700 bg-primary-50 px-2 py-0.5 rounded text-[10px]">{size}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Color</span>
-                <span className="font-semibold text-slate-700 flex items-center gap-1.5">
-                  {color}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Quantity</span>
-                <span className="font-bold text-slate-700">{qty}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Status</span>
-                <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold">Follow-up Required</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Follow-up</span>
-                <span className="font-bold text-slate-700">{recommendFollowUp ? followUpDate : 'No'}</span>
-              </div>
-              {notes && (
-                <div className="flex flex-col gap-1 border-t border-slate-50 pt-2.5">
-                  <span className="text-slate-400 font-semibold">Notes</span>
-                  <span className="text-slate-600 text-xs italic">"{notes}"</span>
-                </div>
-              )}
+          {/* Quantity Controls */}
+          <div>
+            <span className="block text-xs font-semibold text-slate-600 mb-1.5">Quantity</span>
+            <div className="flex items-center gap-2.5">
+              <button 
+                type="button"
+                onClick={() => setQty(prev => Math.max(1, prev - 1))}
+                className="w-8 h-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-600 font-bold hover:bg-slate-50 transition-colors shadow-2xs"
+              >
+                -
+              </button>
+              <span className="w-10 text-center text-sm font-extrabold text-slate-800">{qty}</span>
+              <button 
+                type="button"
+                onClick={() => setQty(prev => prev + 1)}
+                className="w-8 h-8 rounded-lg border border-slate-200 bg-white flex items-center justify-center text-slate-600 font-bold hover:bg-slate-50 transition-colors shadow-2xs"
+              >
+                +
+              </button>
             </div>
           </div>
-
-          {/* What happens next card */}
-          <div className="bg-primary-50/20 p-6 rounded-2xl border border-primary-100/30 space-y-4">
-            <h3 className="text-sm font-bold text-slate-800">What happens next?</h3>
-            <div className="space-y-3.5 text-xs text-slate-600 font-medium">
-              <div className="flex items-start gap-2.5">
-                <div className="p-0.5 bg-primary-100 text-primary-600 rounded-full mt-0.5">
-                  <Check className="w-3.5 h-3.5" />
-                </div>
-                <p>This enquiry will be saved and added to the customer profile</p>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <div className="p-0.5 bg-primary-100 text-primary-600 rounded-full mt-0.5">
-                  <Check className="w-3.5 h-3.5" />
-                </div>
-                <p>You will be reminded on the follow-up date</p>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <div className="p-0.5 bg-primary-100 text-primary-600 rounded-full mt-0.5">
-                  <Check className="w-3.5 h-3.5" />
-                </div>
-                <p>You can track progress in Follow-ups section</p>
-              </div>
-            </div>
-          </div>
-
         </div>
 
-      </div>
+        {/* 4. FOLLOW-UP SECTION */}
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <Calendar className="w-4 h-4 text-primary-600" />
+            4. Follow-up
+          </label>
+
+          <div className="space-y-3">
+            <label className="flex items-center gap-2.5 text-xs font-bold text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={recommendFollowUp}
+                onChange={(e) => setRecommendFollowUp(e.target.checked)}
+                className="rounded text-primary-600 focus:ring-primary-400 w-4 h-4 border-slate-300"
+              />
+              <span>Schedule follow-up reminder</span>
+            </label>
+
+            {recommendFollowUp && (
+              <div className="space-y-2 pt-1 pl-6">
+                <div className="flex flex-wrap gap-2 text-xs font-bold">
+                  {['Tomorrow', 'Today', '3 days', 'Next week', 'Custom'].map(timing => (
+                    <button
+                      key={timing}
+                      type="button"
+                      onClick={() => setFollowUpDate(timing)}
+                      className={`px-3 py-1.5 rounded-lg border transition-all ${
+                        followUpDate === timing
+                          ? 'bg-primary-50 border-primary-500 text-primary-700 shadow-2xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {timing}
+                    </button>
+                  ))}
+                </div>
+
+                {followUpDate === 'Custom' && (
+                  <div className="pt-1">
+                    <input
+                      type="date"
+                      value={customDate}
+                      onChange={(e) => setCustomDate(e.target.value)}
+                      className="bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs text-slate-800 focus:outline-none focus:border-primary-500"
+                    />
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-400 font-medium">
+                  A task will be scheduled automatically in Today's Work for this date.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 5. OPTIONAL NOTE SECTION */}
+        <div className="space-y-2 pt-2 border-t border-slate-100">
+          <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <FileText className="w-4 h-4 text-slate-400" />
+            5. Optional Note
+          </label>
+          <textarea
+            placeholder="Add any specific customer notes or preferences (optional)..."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3.5 text-xs text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white transition-all font-medium"
+          />
+        </div>
+
+        {/* Form Alerts */}
+        {formError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700 flex items-center gap-2 animate-fadeIn">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{formError}</span>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2 animate-fadeIn">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            <span>{successMessage}</span>
+          </div>
+        )}
+
+        {/* 6. SUBMISSION ACTIONS */}
+        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+          <button 
+            type="button"
+            onClick={() => {
+              if (initialCustomerId) {
+                setSelectedCustomerId(initialCustomerId);
+                setCurrentPage('customer-profile');
+              } else {
+                setCurrentPage('customers');
+              }
+            }}
+            className="px-5 py-2.5 border border-slate-200 text-slate-600 text-xs sm:text-sm font-bold rounded-xl hover:bg-slate-50 transition-colors"
+          >
+            Cancel
+          </button>
+
+          <button 
+            type="submit"
+            disabled={isSubmittingEnquiry}
+            className="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold rounded-xl shadow-sm transition-all flex items-center gap-2"
+          >
+            {isSubmittingEnquiry ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Saving...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" />
+                <span>Create Enquiry</span>
+              </>
+            )}
+          </button>
+        </div>
+
+      </form>
+
     </div>
   );
 };

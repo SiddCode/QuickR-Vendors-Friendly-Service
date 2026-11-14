@@ -62,6 +62,7 @@ interface AppContextType {
     }>;
   }>;
   addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
+  updateCustomer: (id: string, data: Partial<Customer>) => Promise<Customer | null>;
   deleteCustomer: (id: string) => Promise<boolean>;
   bulkDeleteCustomers: (ids: string[]) => Promise<{ success: boolean; message: string }>;
   addEnquiry: (enquiry: Omit<Enquiry, 'id' | 'createdAt'>) => Promise<Enquiry | null>;
@@ -393,6 +394,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return created;
     } catch (err: any) {
       alert(`Unable to save customer: ${err.message || 'Server error'}`);
+      return null;
+    }
+  };
+
+  const updateCustomer = async (id: string, data: Partial<Customer>): Promise<Customer | null> => {
+    try {
+      const updated = await api.updateCustomer(id, data);
+      setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updated } : c));
+      return updated;
+    } catch (err: any) {
+      alert(`Unable to update customer: ${err.message || 'Server error'}`);
       return null;
     }
   };
@@ -736,6 +748,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     bulkDeleteProducts,
     importProducts,
     addCustomer,
+    updateCustomer,
     deleteCustomer,
     bulkDeleteCustomers,
     addEnquiry,
