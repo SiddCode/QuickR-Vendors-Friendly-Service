@@ -87,7 +87,7 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
           setSize('');
         }
       } else {
-        setSize('Free Size');
+        setSize('');
       }
 
       if (currentProduct.colors && currentProduct.colors.length > 0) {
@@ -473,8 +473,10 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
               </div>
 
               <div className="text-[11px] text-slate-500">
-                {currentProduct.sizes && currentProduct.sizes.length > 0 && (
+                {currentProduct.sizes && currentProduct.sizes.length > 0 ? (
                   <span className="mr-3">Sizes: <strong className="text-slate-700">{currentProduct.sizes.join(', ')}</strong></span>
+                ) : (
+                  <span className="mr-3 text-slate-400">Sizes: <strong className="text-slate-500 font-normal">None configured</strong></span>
                 )}
                 {currentProduct.colors && currentProduct.colors.length > 0 && (
                   <span>Colours: <strong className="text-slate-700">{currentProduct.colors.join(', ')}</strong></span>
@@ -494,7 +496,11 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <span className="block text-xs font-semibold text-slate-700">
-                Size <span className="text-rose-500">*</span>
+                Size {currentProduct?.sizes && currentProduct.sizes.length > 0 ? (
+                  <span className="text-rose-500">*</span>
+                ) : (
+                  <span className="text-slate-400 font-normal text-[11px]">(Optional)</span>
+                )}
               </span>
               {currentProduct?.sizes && currentProduct.sizes.length > 0 && !size && (
                 <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 border border-amber-200/60 px-2 py-0.5 rounded-md">
@@ -526,8 +532,8 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
                   );
                 })
               ) : (
-                <span className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200">
-                  Free Size
+                <span className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-semibold text-slate-500 border border-slate-200">
+                  No sizes configured
                 </span>
               )}
             </div>
