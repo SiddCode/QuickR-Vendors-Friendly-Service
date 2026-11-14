@@ -59,7 +59,7 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
   const currentProduct = activeProducts.find(p => p.id === prodId) || activeProducts[0];
 
   // 3. Customer Requirement State
-  const [size, setSize] = useState<string>('Free Size');
+  const [size, setSize] = useState<string>('');
   const [color, setColor] = useState<string>('Standard');
   const [qty, setQty] = useState(1);
 
@@ -82,8 +82,9 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
   useEffect(() => {
     if (currentProduct) {
       if (currentProduct.sizes && currentProduct.sizes.length > 0) {
+        // Start with no size selected; do not auto-select first size (e.g. 'S')
         if (!currentProduct.sizes.includes(size)) {
-          setSize(currentProduct.sizes[0]);
+          setSize('');
         }
       } else {
         setSize('Free Size');
@@ -169,6 +170,12 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
     }
     if (!prodId) {
       setFormError('Please select a product.');
+      return;
+    }
+
+    // Explicit size selection required when product has available sizes
+    if (currentProduct?.sizes && currentProduct.sizes.length > 0 && !size.trim()) {
+      setFormError('Please select a size for this product.');
       return;
     }
 
@@ -444,7 +451,10 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
 
           <select
             value={prodId}
-            onChange={(e) => setProdId(e.target.value)}
+            onChange={(e) => {
+              setProdId(e.target.value);
+              setSize('');
+            }}
             className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3.5 text-xs sm:text-sm font-bold text-slate-800 focus:outline-none focus:border-primary-500 focus:bg-white transition-all"
           >
             {activeProducts.map(p => (
@@ -482,25 +492,43 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
 
           {/* Size Pills */}
           <div>
-            <span className="block text-xs font-semibold text-slate-600 mb-1.5">Size <span className="text-rose-500">*</span></span>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="block text-xs font-semibold text-slate-700">
+                Size <span className="text-rose-500">*</span>
+              </span>
+              {currentProduct?.sizes && currentProduct.sizes.length > 0 && !size && (
+                <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 border border-amber-200/60 px-2 py-0.5 rounded-md">
+                  Please select a size
+                </span>
+              )}
+            </div>
+
             <div className="flex flex-wrap gap-2">
               {currentProduct?.sizes && currentProduct.sizes.length > 0 ? (
-                currentProduct.sizes.map(sz => (
-                  <button
-                    key={sz}
-                    type="button"
-                    onClick={() => setSize(sz)}
-                    className={`px-3.5 py-1.5 text-xs font-bold rounded-lg border transition-all ${
-                      size === sz
-                        ? 'bg-primary-50 border-primary-500 text-primary-700 shadow-2xs'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {sz}
-                  </button>
-                ))
+                currentProduct.sizes.map(sz => {
+                  const isSelected = size === sz;
+                  return (
+                    <button
+                      key={sz}
+                      type="button"
+                      onClick={() => {
+                        setSize(sz);
+                        if (formError) setFormError(null);
+                      }}
+                      className={`px-3.5 py-1.5 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-primary-600 border-primary-600 text-white shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                      }`}
+                    >
+                      {sz}
+                    </button>
+                  );
+                })
               ) : (
-                <span className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-semibold text-slate-600">Free Size</span>
+                <span className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-semibold text-slate-600 border border-slate-200">
+                  Free Size
+                </span>
               )}
             </div>
           </div>

@@ -6,7 +6,7 @@ const customerSchema = new mongoose.Schema(
     name: { type: String, required: true },
     phone: { type: String, required: true },
     email: { type: String, default: '' },
-    location: { type: String, default: 'Chennai, Tamil Nadu' },
+    location: { type: String, default: '' },
     preferences: {
       interestedIn: { type: String, default: '' },
       preferredSize: { type: String, default: '' },

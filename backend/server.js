@@ -1216,8 +1216,18 @@ app.post('/api/customers', requireAuth, async (req, res) => {
       name: String(name).trim(),
       phone: normalizedPhone,
       email: typeof email === 'string' ? email.trim() : '',
-      location: typeof location === 'string' && location.trim() ? location.trim() : 'Chennai, Tamil Nadu',
-      preferences: preferences && typeof preferences === 'object' ? preferences : {},
+      location: typeof location === 'string' ? location.trim() : '',
+      preferences: preferences && typeof preferences === 'object' ? {
+        interestedIn: typeof preferences.interestedIn === 'string' ? preferences.interestedIn.trim() : '',
+        preferredSize: typeof preferences.preferredSize === 'string' ? preferences.preferredSize.trim() : '',
+        preferredColors: Array.isArray(preferences.preferredColors) ? preferences.preferredColors.map(c => String(c).trim()).filter(Boolean) : [],
+        lastPurchase: typeof preferences.lastPurchase === 'string' ? preferences.lastPurchase.trim() : ''
+      } : {
+        interestedIn: '',
+        preferredSize: '',
+        preferredColors: [],
+        lastPurchase: ''
+      },
       status: 'Active',
       shopId: req.user.shopId
     });
@@ -2036,6 +2046,10 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Referenced customer or product not found for your shop' });
     }
 
+    if (product.sizes && product.sizes.length > 0 && (!size || !String(size).trim())) {
+      return res.status(400).json({ error: 'Please choose a size for this product' });
+    }
+
     const suffix = crypto.randomBytes(2).toString('hex');
     const enqId = `ENQ-${Date.now()}-${suffix}`;
     const newEnquiry = new Enquiry({
@@ -2045,8 +2059,8 @@ app.post('/api/enquiries', requireAuth, async (req, res) => {
       productName: product.name,
       productCategory: product.category,
       priceAtEnquiry: product.sellingPrice,
-      size: size || 'Free Size',
-      color: color || 'Standard',
+      size: typeof size === 'string' && size.trim() ? size.trim() : 'Free Size',
+      color: typeof color === 'string' && color.trim() ? color.trim() : 'Standard',
       quantity: Math.max(1, Number(quantity) || 1),
       interest: interest || 'Interested',
       purchaseStatus: purchaseStatus || 'Pending',
