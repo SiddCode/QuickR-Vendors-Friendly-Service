@@ -32,7 +32,6 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
   const [showAddCustForm, setShowAddCustForm] = useState(false);
   const [newCustName, setNewCustName] = useState('');
   const [newCustPhone, setNewCustPhone] = useState('');
-  const [newCustLoc, setNewCustLoc] = useState('Chennai, Tamil Nadu');
 
   // Step state
   const activeProducts = useMemo(
@@ -84,12 +83,8 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
         name: newCustName.trim(),
         phone: newCustPhone.trim(),
         email: '',
-        location: newCustLoc.trim() || 'Tamil Nadu',
-        preferences: {
-          interestedIn: 'Shirts',
-          preferredSize: 'XL',
-          preferredColors: ['Dark']
-        },
+        location: '',
+        preferences: {},
         status: 'Active'
       });
 
@@ -248,26 +243,19 @@ export const NewEnquiry: React.FC<NewEnquiryProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <input
                       type="text"
-                      placeholder="Name"
+                      placeholder="Customer Name *"
                       value={newCustName}
                       onChange={(e) => setNewCustName(e.target.value)}
-                      className="bg-white border border-slate-100 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400"
+                      className="bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400"
                     />
                     <input
-                      type="text"
-                      placeholder="Phone"
+                      type="tel"
+                      placeholder="10-digit Phone *"
                       value={newCustPhone}
                       onChange={(e) => setNewCustPhone(e.target.value)}
-                      className="bg-white border border-slate-100 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400"
+                      className="bg-white border border-slate-200 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400 font-mono"
                     />
                   </div>
-                  <input
-                    type="text"
-                    placeholder="Location (e.g. Chennai, Tamil Nadu)"
-                    value={newCustLoc}
-                    onChange={(e) => setNewCustLoc(e.target.value)}
-                    className="w-full bg-white border border-slate-100 rounded-lg py-1.5 px-3 text-xs focus:outline-none focus:border-primary-400"
-                  />
                   <div className="flex gap-2 justify-end">
                     <button 
                       onClick={() => setShowAddCustForm(false)}

@@ -1178,13 +1178,13 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
   };
 
   return (
-    <div className="flex-grow p-4 lg:p-6 space-y-6 bg-[#f4f7fb] min-h-screen font-sans">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="flex-grow p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6 bg-[#f4f7fb] min-h-screen font-sans">
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
 
         {/* ─── SESSION HEADER ─── */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="bg-white rounded-2xl border border-slate-200 p-3.5 sm:p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
           <div className="space-y-1">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <h1 className="text-xl font-bold text-slate-800">Sales Session</h1>
               <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
                 salesSessionActive 
@@ -1195,7 +1195,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 {salesSessionActive ? 'Session Active' : 'Session Inactive'}
               </span>
             </div>
-            <p className="text-xs text-slate-500 font-semibold flex items-center gap-2">
+            <p className="text-xs text-slate-500 font-semibold flex flex-wrap items-center gap-1.5 sm:gap-2">
               <UserIcon className="w-3.5 h-3.5 text-slate-400" />
               Staff Name: <strong className="text-slate-700 font-bold">{currentUser?.name || 'Staff Member'}</strong>
               <span className="text-slate-300">•</span>
@@ -1203,7 +1203,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={() => setShowKeyboardHelp(true)}
               className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors border border-slate-200"
@@ -1221,14 +1221,14 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   }
                   endSalesSession();
                 }}
-                className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs transition-colors shadow-2xs"
+                className="flex items-center gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs transition-colors shadow-2xs"
               >
                 <Power className="w-4 h-4" /> End Sales Session
               </button>
             ) : (
               <button
                 onClick={startSalesSession}
-                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition-colors shadow-sm"
+                className="flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition-colors shadow-sm"
               >
                 <Play className="w-4 h-4" /> Start Sales Session
               </button>
@@ -1306,13 +1306,13 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
             )}
 
             {/* ─── TWO-COLUMN ACTIVE BILLING WORKSPACE ─── */}
-            <div className="flex flex-col lg:flex-row gap-6 items-start">
+            <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 items-start">
 
               {/* ─── LEFT COLUMN (approx. 62% width on desktop) ─── */}
-              <div className="w-full lg:w-[62%] space-y-6">
+              <div className="w-full lg:w-[62%] space-y-4 sm:space-y-6">
 
                 {/* 2. LEFT TOP — CUSTOMER DETAILS */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3.5 sm:p-5 space-y-3.5 sm:space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
                       <UserIcon className="w-4 h-4 text-blue-600" /> Customer Details
@@ -1321,8 +1321,8 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   </div>
 
                   {/* Walk-in vs Existing radio buttons */}
-                  <div className="flex items-center gap-6">
-                    <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer">
+                  <div className="flex flex-wrap items-center gap-3.5 sm:gap-6">
+                    <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer py-0.5">
                       <input 
                         type="radio" 
                         checked={isWalkIn} 
@@ -1331,7 +1331,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                       />
                       Walk-in Customer
                     </label>
-                    <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer">
+                    <label className="flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-700 cursor-pointer py-0.5">
                       <input 
                         type="radio" 
                         checked={!isWalkIn} 
@@ -1343,12 +1343,13 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                   </div>
 
                   {isWalkIn ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <div>
                         <label className="block text-xs font-semibold text-slate-500 mb-1">Customer Name</label>
                         <input 
                           ref={walkinCustomerNameRef}
                           type="text" 
+                          inputMode="text"
                           placeholder="e.g. Ramesh"
                           value={customerName}
                           onChange={e => setCustomerName(e.target.value)}
@@ -1360,6 +1361,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                         <input 
                           ref={walkinCustomerPhoneRef}
                           type="tel" 
+                          inputMode="tel"
                           placeholder="e.g. 9876543210"
                           value={customerPhone}
                           onChange={e => setCustomerPhone(e.target.value)}
@@ -1378,6 +1380,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           <input
                             ref={customerSearchInputRef}
                             type="text"
+                            inputMode="search"
                             placeholder="Search by customer name or phone..."
                             value={isDropdownOpen ? customerSearchQuery : (selectedCustomerObj ? `${selectedCustomerObj.name} (${selectedCustomerObj.phone})` : customerSearchQuery)}
                             onFocus={() => {
@@ -1490,36 +1493,36 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 </div>
 
                 {/* 3. LEFT MIDDLE — PRODUCTS IN CART */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3.5 sm:p-5 space-y-3.5 sm:space-y-4">
                   {/* Cart Header */}
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <div className="flex items-center gap-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-100">
+                    <div className="flex items-center justify-between sm:justify-start gap-2.5">
                       <h2 className="text-base sm:text-lg font-bold text-slate-800">
                         Products in Cart
                       </h2>
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100 shrink-0">
                         {items.length} {items.length === 1 ? 'item' : 'items'}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
                       <button
                         type="button"
                         onClick={handleAddItem}
-                        className="flex items-center gap-1 px-2.5 py-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 min-h-[38px] sm:min-h-[32px] min-w-[120px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 bg-blue-50/50 sm:bg-transparent rounded-xl text-xs font-bold transition-colors cursor-pointer"
                         title="Focus product search (/)"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5 shrink-0" />
                         <span>Add Product</span>
                       </button>
                       {barcodeEnabled && (
                         <button
                           type="button"
                           onClick={() => setIsCameraScannerOpen(true)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                          className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 min-h-[38px] sm:min-h-[32px] min-w-[120px] bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                           title="Scan Barcode (S)"
                         >
-                          <Camera className="w-3.5 h-3.5" />
+                          <Camera className="w-3.5 h-3.5 shrink-0" />
                           <span>Scan Barcode</span>
                         </button>
                       )}
@@ -1572,7 +1575,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           <div
                             key={item.id}
                             onClick={() => setSelectedCartItemId(item.id)}
-                            className={`p-3.5 sm:p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all cursor-pointer ${
+                            className={`p-3.5 sm:p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 transition-all cursor-pointer ${
                               isCartSelected
                                 ? 'bg-blue-50/40 border-blue-400 shadow-2xs ring-1 ring-blue-300'
                                 : 'bg-white border-slate-200/80 hover:bg-slate-50/80'
@@ -1580,20 +1583,20 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           >
                             {/* Left side: Product Name & Colour/Size (TEXT ONLY) */}
                             <div className="min-w-0 flex-1">
-                              <h4 className="text-[16px] font-semibold text-slate-800 leading-snug truncate">
+                              <h4 className="text-[16px] font-semibold text-slate-800 leading-snug break-words">
                                 {prod?.name || 'Selected Product'}
                               </h4>
                               {variantText && (
-                                <p className="text-[13px] text-slate-500 font-normal mt-0.5 truncate">
+                                <p className="text-[13px] text-slate-500 font-normal mt-0.5 break-words">
                                   {variantText}
                                 </p>
                               )}
                             </div>
 
                             {/* Right side: Quantity Controls, Item Price, Remove button */}
-                            <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 shrink-0">
+                            <div className="flex items-center justify-between sm:justify-end gap-2.5 sm:gap-4 shrink-0 w-full sm:w-auto pt-2 sm:pt-0 border-t border-slate-100 sm:border-t-0">
                               {isLen && (
-                                <div className="flex bg-slate-200 p-0.5 rounded-lg text-xs font-bold">
+                                <div className="flex bg-slate-200 p-0.5 rounded-lg text-xs font-bold shrink-0">
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -1618,7 +1621,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                               )}
 
                               {/* Quantity Controls */}
-                              <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
+                              <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50 shrink-0">
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -1636,6 +1639,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
                                 <input
                                   type="number"
+                                  inputMode="decimal"
                                   min={isLen ? "0.01" : "1"}
                                   step={isLen ? (item.sellingUnit === 'cm' ? "1" : "0.01") : "1"}
                                   value={item.quantity}
@@ -1663,7 +1667,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                               </div>
 
                               {/* Item Price & Editable Unit Selling Price */}
-                              <div className="min-w-[120px] text-right flex flex-col items-end">
+                              <div className="min-w-[100px] sm:min-w-[120px] text-right flex flex-col items-end shrink-0">
                                 {editingPriceItemId === item.id ? (
                                   <div className="flex flex-col items-end" onClick={(e) => e.stopPropagation()}>
                                     <div className="flex items-center gap-1">
@@ -1671,6 +1675,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                         <span className="absolute left-1.5 text-xs font-bold text-slate-400 pointer-events-none">₹</span>
                                         <input
                                           type="number"
+                                          inputMode="decimal"
                                           step="any"
                                           min="0"
                                           autoFocus
@@ -1695,7 +1700,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                       <button
                                         type="button"
                                         onClick={() => handleSavePrice(item.id)}
-                                        className="p-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md shadow-2xs transition-colors cursor-pointer"
+                                        className="p-1 sm:p-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md shadow-2xs transition-colors cursor-pointer"
                                         title="Save price (Enter)"
                                       >
                                         <Check className="w-3.5 h-3.5" />
@@ -1703,7 +1708,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                       <button
                                         type="button"
                                         onClick={handleCancelEditPrice}
-                                        className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-colors cursor-pointer"
+                                        className="p-1 sm:p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-colors cursor-pointer"
                                         title="Cancel (Esc)"
                                       >
                                         <X className="w-3.5 h-3.5" />
@@ -1716,7 +1721,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                 ) : (
                                   <div className="flex flex-col items-end">
                                     {/* Unit selling price with edit trigger */}
-                                    <div className="flex items-center gap-1 text-[11px]">
+                                    <div className="flex items-center gap-1 text-[11px] flex-wrap justify-end">
                                       {isPriceModified && (
                                         <span className="text-slate-400 line-through text-[11px] font-medium" title="Catalogue Price">
                                           ₹{cataloguePrice.toLocaleString('en-IN')}
@@ -1760,7 +1765,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                                   e.stopPropagation();
                                   handleRemoveItem(item.id);
                                 }}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                className="p-1.5 sm:p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
                                 title="Remove product"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1774,7 +1779,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
 
                   {/* Cart Summary (At the bottom of Cart card) */}
                   {items.length > 0 && (
-                    <div className="pt-4 border-t border-slate-200 space-y-2 bg-slate-50/60 -mx-5 -mb-5 p-5 rounded-b-2xl">
+                    <div className="pt-3.5 sm:pt-4 border-t border-slate-200 space-y-2 bg-slate-50/60 -mx-3.5 -mb-3.5 sm:-mx-5 sm:-mb-5 p-3.5 sm:p-5 rounded-b-2xl">
                       <div className="flex justify-between items-center text-[14px] text-slate-600 font-medium">
                         <span>Subtotal</span>
                         <span className="font-semibold text-slate-800">
@@ -1807,7 +1812,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 <div 
                   ref={paymentMethodContainerRef}
                   tabIndex={0}
-                  className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3.5 sm:p-5 space-y-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 >
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
@@ -1816,7 +1821,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                     <span className="text-[11px] text-slate-400 font-medium">F8 / P</span>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
                     {[
                       { id: 'Cash', label: 'Cash', icon: Banknote },
                       { id: 'UPI', label: 'UPI', icon: Smartphone },
@@ -1829,7 +1834,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           key={id}
                           type="button"
                           onClick={() => setPaymentMethod(id)}
-                          className={`py-3 px-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all text-xs font-bold cursor-pointer ${
+                          className={`min-h-[50px] py-2.5 px-2 sm:py-3 sm:px-3 rounded-xl border flex flex-col items-center justify-center gap-1 sm:gap-1.5 transition-all text-xs font-bold cursor-pointer ${
                             isSelected
                               ? 'bg-blue-50 border-2 border-blue-600 text-blue-700 shadow-xs ring-2 ring-blue-100 font-extrabold'
                               : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
@@ -1846,14 +1851,14 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
               </div>
 
               {/* ─── RIGHT COLUMN (approx. 38% width on desktop) ─── */}
-              <div className="w-full lg:w-[38%] space-y-6 lg:sticky lg:top-6">
+              <div className="w-full lg:w-[38%] space-y-4 sm:space-y-6 lg:sticky lg:top-6">
 
                 {/* 5. RIGHT TOP — LARGE TOTAL AMOUNT */}
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl sm:rounded-3xl p-6 sm:p-7 text-white shadow-md shadow-blue-500/15">
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl sm:rounded-3xl p-4 sm:p-7 text-white shadow-md shadow-blue-500/15">
                   <span className="text-xs font-bold uppercase tracking-wider text-blue-100 block">
                     Total Amount
                   </span>
-                  <div className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white mt-1.5 flex items-baseline">
+                  <div className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight text-white mt-1.5 flex items-baseline break-words">
                     ₹{grandTotalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <p className="text-[12px] text-blue-100/80 mt-1 font-medium">
@@ -1862,7 +1867,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                 </div>
 
                 {/* 6. RIGHT BOTTOM — PAYMENT SUMMARY & ACTIONS */}
-                <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-2xs p-6 space-y-5">
+                <div className="bg-white rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-2xs p-4 sm:p-6 space-y-4 sm:space-y-5">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
                       Payment Summary
@@ -1929,6 +1934,7 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                         <input
                           ref={discountInputRef}
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           max={discountType === 'percentage' ? 100 : subtotal}
                           step="any"
@@ -1976,9 +1982,9 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                       ref={completeSaleBtnRef}
                       onClick={handleCompleteSale}
                       disabled={isSubmitting || items.length === 0 || connectingMsg !== null}
-                      className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-base rounded-xl shadow-md shadow-emerald-600/20 transition-all flex justify-center items-center gap-2 disabled:opacity-50 cursor-pointer focus:outline-none focus:ring-4 focus:ring-emerald-200"
+                      className="w-full py-3.5 sm:py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-base rounded-xl shadow-md shadow-emerald-600/20 transition-all flex justify-center items-center gap-2 disabled:opacity-50 cursor-pointer focus:outline-none focus:ring-4 focus:ring-emerald-200 min-h-[48px]"
                     >
-                      <Receipt className="w-5 h-5" />
+                      <Receipt className="w-5 h-5 shrink-0" />
                       <span>
                         {connectingMsg
                           ? connectingMsg
@@ -1988,11 +1994,11 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                               ? 'Verify & Complete Sale'
                               : 'Complete Sale'}
                       </span>
-                      <span className="bg-emerald-800/60 text-emerald-100 text-xs px-2 py-0.5 rounded font-mono font-bold">F10</span>
+                      <span className="bg-emerald-800/60 text-emerald-100 text-xs px-2 py-0.5 rounded font-mono font-bold shrink-0">F10</span>
                     </button>
 
                     {/* Print Bill & WhatsApp Sharing */}
-                    <div className="flex gap-3">
+                    <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -2015,9 +2021,9 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                             shopName
                           );
                         }}
-                        className="flex-1 py-2.5 px-3 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                        className="flex-1 py-2.5 px-3 min-h-[44px] bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
                       >
-                        <Printer className="w-4 h-4 text-slate-600" />
+                        <Printer className="w-4 h-4 text-slate-600 shrink-0" />
                         <span>Print Bill</span>
                       </button>
 
@@ -2043,9 +2049,9 @@ export const SalesSession: React.FC<SalesSessionProps> = ({ setCurrentPage, bill
                           const billMsg = buildWhatsAppBillMessage(shopName, saleToShare.customerName || 'Customer', saleToShare);
                           openWhatsApp(phone, billMsg, shopName, saleToShare.customerName || 'Customer');
                         }}
-                        className="flex-1 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                        className="flex-1 py-2.5 px-3 min-h-[44px] bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
                       >
-                        <MessageSquare className="w-4 h-4 text-emerald-600" />
+                        <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
                         <span>Share via WhatsApp</span>
                       </button>
                     </div>

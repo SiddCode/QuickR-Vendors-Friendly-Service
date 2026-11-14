@@ -131,7 +131,7 @@ export const InlineProductSearch = forwardRef<InlineProductSearchRef, InlineProd
   return (
     <div 
       ref={containerRef}
-      className={`bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3.5 sm:p-4 space-y-3 transition-all ${className}`}
+      className={`bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3 sm:p-4 space-y-3 transition-all ${className}`}
     >
       {/* Search Input Bar */}
       <div>
@@ -140,6 +140,7 @@ export const InlineProductSearch = forwardRef<InlineProductSearchRef, InlineProd
           <input
             ref={internalInputRef}
             type="text"
+            inputMode="search"
             placeholder={placeholder}
             value={searchQuery}
             onFocus={() => setIsOpen(true)}
@@ -190,7 +191,7 @@ export const InlineProductSearch = forwardRef<InlineProductSearchRef, InlineProd
 
         {/* Count / Status Info (Only visible when list is open) */}
         {isOpen && (
-          <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 pt-2 font-medium">
+          <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-slate-400 px-1 pt-2 font-medium">
             <span>
               {searchQuery.trim() ? (
                 <>Found <strong className="text-slate-700 font-bold">{filteredProducts.length}</strong> matching {filteredProducts.length === 1 ? 'product' : 'products'}</>
